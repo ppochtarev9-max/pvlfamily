@@ -1,75 +1,70 @@
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from typing import Optional, List
 from datetime import datetime
 
-# --- User Schemas ---
-class UserCreate(BaseModel):
+# --- User ---
+class UserBase(BaseModel):
     name: str
 
-class UserOut(BaseModel):
-    id: int
-    name: str
-    class Config:
-        from_attributes = True
-
-# --- Category Schemas ---
-class CategoryBase(BaseModel):
-    name: str
-    type: str # income, expense, transfer
-    parent_id: Optional[int] = None
-
-class CategoryCreate(CategoryBase):
+class UserCreate(UserBase):
     pass
 
-class CategoryResponse(CategoryBase):
+class UserOut(UserBase):
     id: int
-    children: List["CategoryResponse"] = []
+    created_at: datetime
     
     class Config:
         from_attributes = True
 
-class CategoryUpdate(BaseModel):
-    name: Optional[str] = None
-    type: Optional[str] = None
-    # parent_id менять опасно, если уже есть дети, но пока разрешим
+# --- Category ---
+class CategoryBase(BaseModel):
+    name: str
+    type: str
+
+class CategoryCreate(CategoryBase):
     parent_id: Optional[int] = None
 
-# Обновляем forward reference для рекурсивной структуры детей
-CategoryResponse.update_forward_refs()
+class CategoryOut(CategoryBase):
+    id: int
+    parent_id: Optional[int] = None
+    
+    class Config:
+        from_attributes = True
 
-# --- Transaction Schemas ---
+# --- Transaction ---
 class TransactionBase(BaseModel):
     amount: float
-    transaction_type: str # income, expense, transfer
+    transaction_type: str
     category_id: int
     description: Optional[str] = None
-    date: Optional[datetime] = None
+    date: datetime
 
 class TransactionCreate(TransactionBase):
     pass
 
 class TransactionUpdate(BaseModel):
     amount: Optional[float] = None
-    transaction_type: Optional[str] = None
     category_id: Optional[int] = None
     description: Optional[str] = None
     date: Optional[datetime] = None
+    transaction_type: Optional[str] = None
 
-class TransactionResponse(TransactionBase):
+class TransactionOut(TransactionBase):
     id: int
-    date: datetime
     created_by_user_id: Optional[int] = None
-    creator_name: Optional[str] = None
+    # Дополнительные поля для отображения (заполняются вручную в роуте)
     category_name: Optional[str] = None
+    full_category_path: str = ""
+    creator_name: Optional[str] = None
     
     class Config:
         from_attributes = True
 
-# --- Event Schemas (КАЛЕНДАРЬ) ---
+# --- Calendar Events (необходимо для calendar.py) ---
 class EventBase(BaseModel):
     title: str
-    event_type: str = "general" # general, birthday, reminder
-    event_date: datetime
+    start_date: datetime
+    end_date: Optional[datetime] = None
     description: Optional[str] = None
 
 class EventCreate(EventBase):
@@ -77,14 +72,34 @@ class EventCreate(EventBase):
 
 class EventUpdate(BaseModel):
     title: Optional[str] = None
-    event_type: Optional[str] = None
-    event_date: Optional[datetime] = None
+    start_date: Optional[datetime] = None
+    end_date: Optional[datetime] = None
     description: Optional[str] = None
 
 class EventResponse(EventBase):
     id: int
     created_by_user_id: Optional[int] = None
-    creator_name: Optional[str] = None
     
     class Config:
         from_attributes = True
+
+# --- Calendar ---
+class EventBase(BaseModel):
+    title: str
+    description: Optional[str] = None
+    event_date: datetime
+
+class EventCreate(EventBase):
+    pass
+
+class EventResponse(EventBase):
+    id: int
+    user_id: Optional[int] = None
+    
+    class Config:
+        from_attributes = True
+
+class CategoryUpdate(BaseModel):
+    name: Optional[str] = None
+    type: Optional[str] = None
+    parent_id: Optional[int] = None

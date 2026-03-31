@@ -1,167 +1,115 @@
-import csv
-import re
+import csv, re, os
 from datetime import datetime
-from app.database import SessionLocal, engine, Base
-from app.models import User, Category, Transaction, TransactionType
 
-# НАСТРОЙКИ
-USER_NAME = "Паша"  # Имя пользователя в базе
+USER_NAME = "Паша"
 CSV_FILE = "history.csv"
 
-def parse_amount(amount_str):
-    """Очистка строки суммы от мусора (₽, пробелы) и преобразование в float."""
-    if not amount_str:
-        return 0.0
-    # Удаляем все кроме цифр, точки, запятой и минуса
-    clean_str = re.sub(r'[^\d,.-]', '', str(amount_str))
-    # Заменяем запятую на точку
-    clean_str = clean_str.replace(',', '.')
-    try:
-        return float(clean_str)
-    except ValueError:
-        return 0.0
+def parse_amount(s):
+    if not s: return 0.0
+    return float(re.sub(r'[^\d,.+-]', '', str(s)).replace(',', '.'))
 
-def get_or_create_category(db, name, type_str, parent_id=None):
-    """Находит категорию или создает новую."""
-    category = db.query(Category).filter(
-        Category.name == name,
-        Category.type == type_str,
-        Category.parent_id == parent_id
-    ).first()
-    
-    if not category:
-        category = Category(name=name, type=type_str, parent_id=parent_id)
-        db.add(category)
-        db.flush()  # Получаем ID сразу
-        print(f"   [+] Создана категория: {name} ({type_str})")
-    return category
+def detect_encoding(path):
+    with open(path, 'rb') as f:
+        chunk = f.read(2048)
+        if chunk.startswith(b'\xef\xbb\xbf'): return 'utf-8-sig'
+        try:
+            chunk.decode('utf-8')
+            return 'utf-8'
+        except: return 'windows-1251'
 
 def main():
-    print(f"=== ЗАГРУЗКА ИСТОРИЧЕСКИХ ДАННЫХ ===")
-    print(f"Пользователь: {USER_NAME}")
-    print(f"Файл: {CSV_FILE}")
-    
-    # Создаем таблицы, если их нет
-    Base.metadata.create_all(bind=engine)
+    print(f"=== ЗАГРУЗКА ИСТОРИИ ({USER_NAME}) ===")
+    from app.database import SessionLocal
+    from app.models import User, Category, Transaction
     
     db = SessionLocal()
-    
     try:
-        # 1. Находим пользователя
         user = db.query(User).filter(User.name == USER_NAME).first()
         if not user:
-            # Если не нашли по имени "Паша", пробуем "Pavel"
-            user = db.query(User).filter(User.name == "Pavel").first()
+            print(f"❌ Пользователь '{USER_NAME}' не найден!")
+            return
         
-        if not user:
-            print(f"❌ Ошибка: Пользователь '{USER_NAME}' не найден в базе.")
-            print("Создадим тестового пользователя для демонстрации...")
-            user = User(name=USER_NAME)
-            db.add(user)
-            db.commit()
-            db.refresh(user)
-            print(f"✅ Пользователь создан: {user.name} (ID: {user.id})")
-        else:
-            print(f"✅ Пользователь найден: {user.name} (ID: {user.id})")
-
-        # 2. ОЧИСТКА данных пользователя
-        print(f"\n⚠️ Очистка старых данных для пользователя {user.name}...")
-        
-        # Удаляем транзакции
-        deleted_trans = db.query(Transaction).filter(Transaction.created_by_user_id == user.id).delete(synchronize_session=False)
-        
-        # Удаляем категории (сначала дочерние, потом родительские - SQLAlchemy справится с FK)
-        # Но лучше удалять все категории пользователя
-        # В данной схеме у категорий нет явного owner_id, они общие? 
-        # Проверим схему: в models.py у Category нет owner_id. 
-        # Значит категории общие для всех. Нам нужно удалить только те, которые мы создадим, 
-        # ИЛИ очистить всю таблицу категорий и транзакций полностью перед импортом.
-        # По ТЗ: "все текущие данные в бд надо будет очистить предварительно".
-        # Очищаем ВСЕ транзакции и ВСЕ категории.
-        
-        deleted_cats = db.query(Category).delete(synchronize_session=False)
-        
+        print("🧹 Очистка данных...")
+        db.query(Transaction).filter(Transaction.created_by_user_id == user.id).delete()
+        db.query(Category).filter().delete()
         db.commit()
-        print(f"   Удалено транзакций: {deleted_trans}")
-        print(f"   Удалено категорий: {deleted_cats}")
-
-        # 3. Чтение CSV и импорт
-        print(f"\n📥 Чтение файла {CSV_FILE}...")
         
-        created_cats_count = 0
-        created_trans_count = 0
-        category_cache = {} # Кэш: (name, type, parent_id) -> id
+        if not os.path.exists(CSV_FILE):
+            print(f"❌ Файл {CSV_FILE} не найден")
+            return
 
-        with open(CSV_FILE, mode='r', encoding='utf-8') as file:
-            reader = csv.DictReader(file, delimiter=';')
-            
-            for row in reader:
-                date_str = row.get('Дата', '').strip()
-                view_str = row.get('Вид', '').strip() # Расход / Доход
-                cat_name = row.get('Категория', '').strip()
-                subcat_name = row.get('Подкатегория', '').strip()
-                amount_raw = row.get('Сумма', '0')
+        enc = detect_encoding(CSV_FILE)
+        print(f"📂 Чтение файла (кодировка: {enc})...")
+        
+        cat_cache = {}
+        cnt_cat = 0
+        cnt_tx = 0
 
-                # Парсинг даты
-                try:
-                    dt = datetime.strptime(date_str, "%d.%m.%Y")
-                except ValueError:
-                    print(f"⚠️ Пропущена строка с неверной датой: {date_str}")
-                    continue
+        with open(CSV_FILE, 'r', encoding=enc) as f:
+            reader = csv.DictReader(f, delimiter=';')
+            for i, row in enumerate(reader, 2):
+                d_str = row.get('Дата', '').strip()
+                v_str = row.get('Вид', '').strip()
+                c_name = row.get('Категория', '').strip()
+                s_name = row.get('Подкатегория', '').strip()
+                a_str = row.get('Сумма', '0')
 
-                # Парсинг суммы и знака
-                amount = parse_amount(amount_raw)
-                if view_str == 'Расход':
-                    amount = -abs(amount)
-                    type_str = "expense"
-                elif view_str == 'Доход':
-                    amount = abs(amount)
-                    type_str = "income"
-                else:
-                    type_str = "expense" # По умолчанию
+                if not d_str: continue
+                try: dt = datetime.strptime(d_str, "%d.%m.%Y")
+                except: continue
 
-                # Обработка категорий
-                parent_id = None
+                amt = parse_amount(a_str)
+                is_income = 'Доход' in v_str
+                if is_income: amt = abs(amt)
+                else: amt = -abs(amt)
                 
-                # Создаем/находим родительскую категорию
-                if cat_name:
-                    cache_key_parent = (cat_name, type_str, None)
-                    if cache_key_parent not in category_cache:
-                        parent_cat = get_or_create_category(db, cat_name, type_str, parent_id=None)
-                        category_cache[cache_key_parent] = parent_cat.id
-                        created_cats_count += 1
-                    parent_id = category_cache[cache_key_parent]
+                tx_type = "income" if is_income else "expense"
 
-                final_cat_id = parent_id
+                # Категория
+                cat_id = None
+                if c_name:
+                    key = (c_name, None)
+                    if key not in cat_cache:
+                        existing = db.query(Category).filter(Category.name==c_name, Category.parent_id.is_(None)).first()
+                        if not existing:
+                            existing = Category(name=c_name, type=tx_type, parent_id=None)
+                            db.add(existing)
+                            db.flush()
+                            cnt_cat += 1
+                        cat_cache[key] = existing.id
+                    cat_id = cat_cache[key]
 
-                # Создаем/находим подкатегорию, если есть
-                # Исключаем случаи типа "Я" в подкатегории дохода, если это не реальная подкатегория
-                if subcat_name and subcat_name.lower() != 'я' and subcat_name:
-                    if parent_id:
-                        cache_key_sub = (subcat_name, type_str, parent_id)
-                        if cache_key_sub not in category_cache:
-                            sub_cat = get_or_create_category(db, subcat_name, type_str, parent_id=parent_id)
-                            category_cache[cache_key_sub] = sub_cat.id
-                            created_cats_count += 1
-                        final_cat_id = category_cache[cache_key_sub]
+                # Подкатегория
+                # ИСПРАВЛЕНО: Убрано исключение для 'я'. Теперь создаются все подкатегории.
+                final_id = cat_id
+                if s_name and cat_id: 
+                    # Пропускаем только совсем пустые строки после trim
+                    if s_name.strip() == "": 
+                        pass
+                    else:
+                        key_s = (s_name, cat_id)
+                        if key_s not in cat_cache:
+                            existing_s = db.query(Category).filter(Category.name==s_name, Category.parent_id==cat_id).first()
+                            if not existing_s:
+                                parent = db.get(Category, cat_id)
+                                p_type = parent.type if parent else tx_type
+                                existing_s = Category(name=s_name, type=p_type, parent_id=cat_id)
+                                db.add(existing_s)
+                                db.flush()
+                                cnt_cat += 1
+                            cat_cache[key_s] = existing_s.id
+                        final_id = cat_cache[key_s]
 
-                # Создаем транзакцию
-                new_trans = Transaction(
-                    amount=amount,
-                    transaction_type=type_str,
-                    category_id=final_cat_id,
-                    description=f"Импорт: {view_str}",
-                    date=dt,
-                    created_by_user_id=user.id
-                )
-                db.add(new_trans)
-                created_trans_count += 1
+                if final_id:
+                    tx = Transaction(
+                        amount=amt, date=dt, category_id=final_id,
+                        transaction_type=tx_type, created_by_user_id=user.id
+                    )
+                    db.add(tx)
+                    cnt_tx += 1
 
         db.commit()
-        
-        print("\n=== ИМПОРТ ЗАВЕРШЕН ===")
-        print(f"✅ Создано категорий: {created_cats_count}")
-        print(f"✅ Создано транзакций: {created_trans_count}")
+        print(f"✅ Готово! Категорий: {cnt_cat}, Транзакций: {cnt_tx}")
 
     except Exception as e:
         db.rollback()

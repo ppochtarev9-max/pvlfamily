@@ -9,55 +9,82 @@ class UserCreate(BaseModel):
 class UserOut(BaseModel):
     id: int
     name: str
-    
     class Config:
         from_attributes = True
 
 # --- Category Schemas ---
-class CategoryCreate(BaseModel):
+class CategoryBase(BaseModel):
     name: str
-    type: str
+    type: str # income, expense, transfer
+    parent_id: Optional[int] = None
 
-class CategoryResponse(BaseModel):
+class CategoryCreate(CategoryBase):
+    pass
+
+class CategoryResponse(CategoryBase):
     id: int
-    name: str
-    type: str
+    children: List["CategoryResponse"] = []
     
     class Config:
         from_attributes = True
+
+class CategoryUpdate(BaseModel):
+    name: Optional[str] = None
+    type: Optional[str] = None
+    # parent_id менять опасно, если уже есть дети, но пока разрешим
+    parent_id: Optional[int] = None
+
+# Обновляем forward reference для рекурсивной структуры детей
+CategoryResponse.update_forward_refs()
 
 # --- Transaction Schemas ---
-# Убрали вложенность CategoryResponse, чтобы избежать ошибок порядка объявления
-class TransactionCreate(BaseModel):
+class TransactionBase(BaseModel):
     amount: float
+    transaction_type: str # income, expense, transfer
     category_id: int
     description: Optional[str] = None
+    date: Optional[datetime] = None
 
-class TransactionResponse(BaseModel):
+class TransactionCreate(TransactionBase):
+    pass
+
+class TransactionUpdate(BaseModel):
+    amount: Optional[float] = None
+    transaction_type: Optional[str] = None
+    category_id: Optional[int] = None
+    description: Optional[str] = None
+    date: Optional[datetime] = None
+
+class TransactionResponse(TransactionBase):
     id: int
-    amount: float
-    description: Optional[str]
     date: datetime
-    category_id: int
-    category_name: str  # Передаем имя категории плоским полем
-    category_type: str  # И тип категории
+    created_by_user_id: Optional[int] = None
+    creator_name: Optional[str] = None
+    category_name: Optional[str] = None
     
     class Config:
         from_attributes = True
 
-# --- Event Schemas ---
-class EventCreate(BaseModel):
+# --- Event Schemas (КАЛЕНДАРЬ) ---
+class EventBase(BaseModel):
     title: str
-    event_type: str = "general"
+    event_type: str = "general" # general, birthday, reminder
     event_date: datetime
     description: Optional[str] = None
 
-class EventResponse(BaseModel):
+class EventCreate(EventBase):
+    pass
+
+class EventUpdate(BaseModel):
+    title: Optional[str] = None
+    event_type: Optional[str] = None
+    event_date: Optional[datetime] = None
+    description: Optional[str] = None
+
+class EventResponse(EventBase):
     id: int
-    title: str
-    event_type: str
-    event_date: datetime
-    description: Optional[str]
+    created_by_user_id: Optional[int] = None
+    creator_name: Optional[str] = None
     
     class Config:
         from_attributes = True

@@ -1,0 +1,16 @@
+# Python
+venv/
+__pycache__/
+*.pyc
+*.db
+.DS_Store
+
+# Xcode
+DerivedData/
+*.xcuserdata
+*.xcscheme
+.project.pbxproj.user
+
+# IDE
+.idea/
+.vscode/

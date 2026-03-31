@@ -1,16 +1,48 @@
+```
 # Python
-venv/
 __pycache__/
 *.pyc
+*.pyo
+*.pyd
+
+# Database
 *.db
-.DS_Store
 
-# Xcode
-DerivedData/
-*.xcuserdata
-*.xcscheme
-.project.pbxproj.user
+# CSV files
+*.csv
 
-# IDE
-.idea/
+# Logs
+*.log
+
+# Environment
+.env
+.env.local
+*.env.*
+
+# Dependencies
+.venv/
+venv/
+node_modules/
+
+# Build artifacts
+dist/
+build/
+target/
+
+# Editors
 .vscode/
+.idea/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Coverage
+.coverage
+coverage/
+htmlcov/
+
+# Testing
+.pytest_cache/
+.mypy_cache/
+```

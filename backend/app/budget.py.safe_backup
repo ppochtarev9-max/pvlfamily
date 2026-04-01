@@ -59,53 +59,6 @@ def delete_category(cat_id: int, db: Session = Depends(get_db)):
     db.commit()
     return {"status": "deleted"}
 
-
-# ==========================================
-# СКРЫТИЕ КАТЕГОРИЙ (РЕКУРСИВНОЕ)
-# ==========================================
-
-def get_all_descendants(db: Session, parent_id: int) -> List[int]:
-    """Рекурсивно собирает ID всех подкатегорий"""
-    ids = []
-    children = db.query(models.Category).filter(models.Category.parent_id == parent_id).all()
-    for child in children:
-        ids.append(child.id)
-        ids.extend(get_all_descendants(db, child.id))
-    return ids
-
-@router.post("/categories/{cat_id}/hide")
-def hide_category(cat_id: int, db: Session = Depends(get_db)):
-    obj = db.query(models.Category).filter(models.Category.id == cat_id).first()
-    if not obj: raise HTTPException(404, "Not found")
-    
-    obj.is_hidden = True
-    db.commit()
-    
-    descendant_ids = get_all_descendants(db, cat_id)
-    if descendant_ids:
-        db.query(models.Category).filter(models.Category.id.in_(descendant_ids)).update({"is_hidden": True}, synchronize_session=False)
-        db.commit()
-    return {"status": "hidden"}
-
-@router.post("/categories/{cat_id}/unhide")
-def unhide_category(cat_id: int, db: Session = Depends(get_db)):
-    obj = db.query(models.Category).filter(models.Category.id == cat_id).first()
-    if not obj: raise HTTPException(404, "Not found")
-    
-    if obj.parent_id:
-        parent = db.get(models.Category, obj.parent_id)
-        if parent and parent.is_hidden:
-            raise HTTPException(400, detail="Сначала восстановите родителя")
-    
-    obj.is_hidden = False
-    db.commit()
-    
-    descendant_ids = get_all_descendants(db, cat_id)
-    if descendant_ids:
-        db.query(models.Category).filter(models.Category.id.in_(descendant_ids)).update({"is_hidden": False}, synchronize_session=False)
-        db.commit()
-    return {"status": "visible"}
-
 # ==========================================
 # ТРАНЗАКЦИИ
 # ==========================================
@@ -201,9 +154,3 @@ def delete_transaction(tx_id: int, db: Session = Depends(get_db)):
     time.sleep(0.15)
     
     return {"status": "deleted"}
-
-
-
-
-
-

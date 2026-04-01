@@ -17,6 +17,7 @@ class Category(Base):
     name = Column(String, nullable=False)
     type = Column(String, nullable=False)
     parent_id = Column(Integer, ForeignKey("categories.id"), nullable=True)
+    is_hidden = Column(Boolean, default=False)
     parent = relationship("Category", remote_side=[id], backref="children")
     transactions = relationship("Transaction", back_populates="category")
 

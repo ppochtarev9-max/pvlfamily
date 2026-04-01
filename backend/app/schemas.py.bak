@@ -11,7 +11,6 @@ class UserOut(UserBase):
 class CategoryBase(BaseModel): name: str; type: str
 class CategoryCreate(CategoryBase): parent_id: Optional[int] = None
 class CategoryOut(CategoryBase):
-    is_hidden: bool = False
     id: int; parent_id: Optional[int] = None
     class Config: from_attributes = True
 

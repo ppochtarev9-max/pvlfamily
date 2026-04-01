@@ -6,47 +6,137 @@ struct CategoriesManagerView: View {
     @State private var showingAddSheet = false
     @State private var editingCategory: BudgetView.Category? = nil
     
+    // Настройки отображения
+    @State private var showHiddenToggle = false
+    
+    // Состояние для алерта ошибки
+    @State private var showErrorAlert = false
+    @State private var errorMessage = ""
+    
+    // Плоский список для отображения
+    var displayList: [FlatCategoryItem] {
+        return buildFlatList(from: categories, showHidden: showHiddenToggle)
+    }
+    
     var body: some View {
         List {
-            Section(header: Text("Категории")) {
-                // Находим только корневые категории
-                let roots = categories.filter { $0.parent_id == nil }
-                ForEach(roots) { root in
-                    CategoryTreeNode(category: root, allCategories: categories, onEdit: { editingCategory = root }, onDelete: deleteCat)
+            Section(header: HStack {
+                Text("Категории")
+                Spacer()
+                Toggle(isOn: $showHiddenToggle) {
+                    Text(showHiddenToggle ? "Скрытые: ВКЛ" : "Скрытые: ВЫКЛ")
+                        .font(.caption)
+                        .foregroundColor(.gray)
+                }
+                .toggleStyle(.switch)
+                .scaleEffect(0.8)
+            }) {
+                ForEach(displayList) { item in
+                    CategoryRow(item: item, onEdit: { handleEdit(item.category) }, onAction: { action in
+                        handleAction(action, for: item.category)
+                    })
+                    .padding(.leading, CGFloat(item.level * 20))
                 }
             }
         }
         .navigationTitle("Управление")
         .toolbar {
             ToolbarItem(placement: .topBarTrailing) {
-                Button(action: { editingCategory = nil; showingAddSheet = true }) { Image(systemName: "plus") }
+                Button(action: { editingCategory = nil; showingAddSheet = true }) {
+                    Image(systemName: "plus").font(.system(size: 20))
+                }
             }
         }
         .sheet(isPresented: $showingAddSheet) {
             CategoryForm(isPresented: $showingAddSheet, categories: categories, editCat: editingCategory, onSave: saveCat)
         }
+        // Алерт об ошибке (например, если родитель скрыт)
+        .alert("Ошибка", isPresented: $showErrorAlert) {
+            Button("OK", role: .cancel) { }
+        } message: {
+            Text(errorMessage)
+        }
         .onAppear { loadCats() }
+    }
+    
+    // --- ЛОГИКА ---
+    
+    func handleEdit(_ cat: BudgetView.Category) {
+        editingCategory = cat
+        showingAddSheet = true
+    }
+    
+    func handleAction(_ action: CategoryAction, for cat: BudgetView.Category) {
+        switch action {
+        case .edit:
+            handleEdit(cat)
+        case .hide:
+            hideCategory(cat)
+        case .unhide:
+            unhideCategory(cat)
+        case .delete:
+            deleteCategoryForever(cat)
+        }
+    }
+    
+    func hideCategory(_ cat: BudgetView.Category) {
+        guard let token = authManager.token else { return }
+        var req = URLRequest(url: URL(string: "\(authManager.baseURL)/budget/categories/\(cat.id)/hide")!)
+        req.httpMethod = "POST"
+        req.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        req.httpBody = Data()
+        
+        URLSession.shared.dataTask(with: req) { _, _, _ in
+            DispatchQueue.main.async { loadCats() }
+        }.resume()
+    }
+    
+    func unhideCategory(_ cat: BudgetView.Category) {
+        guard let token = authManager.token else { return }
+        var req = URLRequest(url: URL(string: "\(authManager.baseURL)/budget/categories/\(cat.id)/unhide")!)
+        req.httpMethod = "POST"
+        req.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        req.httpBody = Data()
+        
+        URLSession.shared.dataTask(with: req) { data, resp, error in
+            DispatchQueue.main.async {
+                if let http = resp as? HTTPURLResponse, http.statusCode == 400 {
+                    // Показываем красивый алерт вместо print
+                    self.errorMessage = "Нельзя восстановить эту категорию, потому что её родитель («\(cat.name)») всё ещё скрыт. Сначала восстановите родителя."
+                    self.showErrorAlert = true
+                } else if error != nil {
+                    self.errorMessage = "Ошибка сети: \(error!.localizedDescription)"
+                    self.showErrorAlert = true
+                } else {
+                    loadCats()
+                }
+            }
+        }.resume()
+    }
+    
+    func deleteCategoryForever(_ cat: BudgetView.Category) {
+        guard let token = authManager.token else { return }
+        var req = URLRequest(url: URL(string: "\(authManager.baseURL)/budget/categories/\(cat.id)")!)
+        req.httpMethod = "DELETE"
+        req.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        
+        URLSession.shared.dataTask(with: req) { _, _, _ in
+            DispatchQueue.main.async { loadCats() }
+        }.resume()
     }
     
     func loadCats() {
         guard let token = authManager.token else { return }
-        let url = "\(authManager.baseURL)/budget/categories"
-        var req = URLRequest(url: URL(string: url)!)
+        var req = URLRequest(url: URL(string: "\(authManager.baseURL)/budget/categories")!)
         req.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        req.cachePolicy = .reloadIgnoringLocalCacheData
+        
         URLSession.shared.dataTask(with: req) { data, _, _ in
             guard let data = data,
                   let list = try? JSONDecoder().decode([BudgetView.Category].self, from: data) else { return }
-            DispatchQueue.main.async { self.categories = list }
-        }.resume()
-    }
-    
-    func deleteCat(id: Int) {
-        guard let token = authManager.token else { return }
-        var req = URLRequest(url: URL(string: "\(authManager.baseURL)/budget/categories/\(id)")!)
-        req.httpMethod = "DELETE"
-        req.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
-        URLSession.shared.dataTask(with: req) { _, _, _ in
-            DispatchQueue.main.async { loadCats() }
+            DispatchQueue.main.async {
+                self.categories = list
+            }
         }.resume()
     }
     
@@ -59,6 +149,7 @@ struct CategoriesManagerView: View {
         }
         req.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
         req.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        
         var body: [String: Any] = ["name": name, "type": type]
         if let pid = parentId { body["parent_id"] = pid }
         req.httpBody = try? JSONSerialization.data(withJSONObject: body)
@@ -73,42 +164,106 @@ struct CategoriesManagerView: View {
     }
 }
 
-// Рекурсивный компонент для отрисовки дерева
-struct CategoryTreeNode: View {
+// --- МОДЕЛИ И СПИСКИ ---
+
+enum CategoryAction {
+    case edit
+    case hide
+    case unhide
+    case delete
+}
+
+struct FlatCategoryItem: Identifiable {
+    let id = UUID()
     let category: BudgetView.Category
-    let allCategories: [BudgetView.Category]
-    let onEdit: () -> Void
-    let onDelete: (Int) -> Void
+    let level: Int
+}
+
+func buildFlatList(from categories: [BudgetView.Category], showHidden: Bool) -> [FlatCategoryItem] {
+    var lookup: [Int: [BudgetView.Category]] = [:]
+    var roots: [BudgetView.Category] = []
     
-    var children: [BudgetView.Category] {
-        allCategories.filter { $0.parent_id == category.id }
+    for cat in categories {
+        if let pid = cat.parent_id {
+            if lookup[pid] == nil { lookup[pid] = [] }
+            lookup[pid]?.append(cat)
+        } else {
+            roots.append(cat)
+        }
     }
     
-    var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            // Строка самой категории
-            HStack {
-                VStack(alignment: .leading) {
-                    Text(category.name).font(.body).fontWeight(.medium)
-                    Text(category.type).font(.caption).foregroundColor(.gray)
-                }
-                Spacer()
-                Button(action: onEdit) { Image(systemName: "pencil").foregroundColor(.blue) }
-                Button(role: .destructive, action: { onDelete(category.id) }) { Image(systemName: "trash") }
+    var result: [FlatCategoryItem] = []
+    
+    func traverse(_ cats: [BudgetView.Category], level: Int) {
+        for cat in cats {
+            if cat.is_hidden == true && !showHidden {
+                continue
             }
-            
-            // Рекурсивный вызов для детей
-            if !children.isEmpty {
-                VStack(alignment: .leading, spacing: 8) {
-                    ForEach(children) { child in
-                        CategoryTreeNode(category: child, allCategories: allCategories, onEdit: onEdit, onDelete: onDelete)
-                            .padding(.leading, 20) // Отступ для подкатегорий
-                    }
-                }
+            result.append(FlatCategoryItem(category: cat, level: level))
+            if let children = lookup[cat.id] {
+                traverse(children, level: level + 1)
             }
         }
     }
+    
+    traverse(roots, level: 0)
+    return result
 }
+
+// --- ЯЧЕЙКА С МЕНЮ ---
+// Исправлено: используем label с пустым заголовком для Menu, чтобы избежать багов SwiftUI
+
+struct CategoryRow: View {
+    let item: FlatCategoryItem
+    let onEdit: () -> Void
+    let onAction: (CategoryAction) -> Void
+    
+    var body: some View {
+        HStack(spacing: 12) {
+            VStack(alignment: .leading) {
+                Text(item.category.name)
+                    .font(.body)
+                    .strikethrough(item.category.is_hidden == true)
+                    .foregroundColor(item.category.is_hidden == true ? .gray : .primary)
+                Text(item.category.type)
+                    .font(.caption)
+                    .foregroundColor(.gray)
+            }
+            Spacer()
+            
+            // Используем Menu с явным Label
+            Menu {
+                Button(action: { onAction(.edit) }) {
+                    Label("Редактировать", systemImage: "pencil")
+                }
+                
+                if item.category.is_hidden == true {
+                    Button(action: { onAction(.unhide) }) {
+                        Label("Вернуть в список", systemImage: "arrow.uturn.backward")
+                    }
+                } else {
+                    Button(action: { onAction(.hide) }) {
+                        Label("Скрыть", systemImage: "eye.slash")
+                    }
+                }
+                
+                Divider()
+                
+                Button(role: .destructive, action: { onAction(.delete) }) {
+                    Label("Удалить навсегда", systemImage: "trash")
+                }
+            } label: {
+                // Явная кнопка-обертка для стабильности
+                Image(systemName: "ellipsis.circle")
+                    .font(.system(size: 22))
+                    .foregroundColor(.blue)
+            }
+        }
+        .contentShape(Rectangle())
+    }
+}
+
+// --- ФОРМА ---
 
 struct CategoryForm: View {
     @Binding var isPresented: Bool

@@ -1,43 +1,36 @@
-from fastapi import APIRouter, Depends, HTTPException, Header
+from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 from typing import List
-from jose import jwt
-
 from . import models, schemas
 from .database import get_db
+from datetime import datetime
 
 router = APIRouter()
-SECRET_KEY = "simple-family-secret-key-change-later"
 
-def get_current_user_id(authorization: str = Header(None)):
-    if not authorization:
-        raise HTTPException(status_code=401, detail="Token missing")
-    
-    # Ожидаем формат "Bearer <token>"
-    scheme, _, token = authorization.partition(" ")
-    if scheme.lower() != "bearer":
-        raise HTTPException(status_code=401, detail="Invalid authentication scheme")
-        
-    try:
-        payload = jwt.decode(token, SECRET_KEY, algorithms=["HS256"])
-        return int(payload.get("sub"))
-    except:
-        raise HTTPException(status_code=401, detail="Invalid token")
-        
 @router.get("/events", response_model=List[schemas.EventResponse])
 def get_events(db: Session = Depends(get_db)):
-    return db.query(models.CalendarEvent).order_by(models.CalendarEvent.event_date).all()
+    return db.query(models.CalendarEvent).order_by(models.CalendarEvent.event_date.desc()).all()
 
 @router.post("/events", response_model=schemas.EventResponse)
-def create_event(event: schemas.EventCreate, db: Session = Depends(get_db), user_id: int = Depends(get_current_user_id)):
+def create_event(event: schemas.EventCreate, db: Session = Depends(get_db)):
+    # Создаем событие БЕЗ created_by_user_id, так как в модели этого поля нет
     db_event = models.CalendarEvent(
         title=event.title,
-        event_type=event.event_type,
-        event_date=event.event_date,
         description=event.description,
-        created_by_user_id=user_id
+        event_date=event.event_date,
+        event_type=event.event_type,
+        user_id=None # Можно привязать к пользователю позже, если добавить поле в модель
     )
     db.add(db_event)
     db.commit()
     db.refresh(db_event)
     return db_event
+
+@router.delete("/events/{event_id}")
+def delete_event(event_id: int, db: Session = Depends(get_db)):
+    db_event = db.query(models.CalendarEvent).filter(models.CalendarEvent.id == event_id).first()
+    if not db_event:
+        raise HTTPException(status_code=404, detail="Event not found")
+    db.delete(db_event)
+    db.commit()
+    return {"status": "deleted"}

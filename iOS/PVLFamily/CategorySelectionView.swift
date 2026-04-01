@@ -4,31 +4,40 @@ struct CategorySelectionView: View {
     @Environment(\.dismiss) var dismiss
     let categories: [BudgetView.Category]
     @Binding var selectedId: Int?
-    let filterType: String // "income" или "expense"
+    let filterType: String
     let onSelect: () -> Void
     
-    // Фильтруем только корневые категории нужного типа
-    var filteredRoots: [BudgetView.Category] {
+    // Фильтруем только корни нужного типа
+    var rootCategories: [BudgetView.Category] {
         categories.filter { $0.parent_id == nil && $0.type == filterType }
     }
     
     var body: some View {
         NavigationStack {
             List {
-                if filteredRoots.isEmpty {
+                if rootCategories.isEmpty {
                     Text("Нет категорий типа '\(filterType == "income" ? "Доход" : "Расход")'")
                         .foregroundColor(.gray)
-                        .italic()
                 } else {
-                    ForEach(filteredRoots) { cat in
-                        CategoryNodeView(category: cat, allCategories: categories, filterType: filterType, selectedId: $selectedId, onSelect: {
+                    ForEach(rootCategories) { root in
+                        // Корневая категория
+                        CategoryChoiceRow(category: root, selectedId: $selectedId, level: 0, onSelect: {
                             dismiss()
                             onSelect()
                         })
+                        
+                        // Дети
+                        let children = categories.filter { $0.parent_id == root.id && $0.type == filterType }
+                        ForEach(children) { child in
+                            CategoryChoiceRow(category: child, selectedId: $selectedId, level: 1, onSelect: {
+                                dismiss()
+                                onSelect()
+                            })
+                        }
                     }
                 }
             }
-            .navigationTitle("Выбор категории")
+            .navigationTitle("Выберите категорию")
             .toolbar {
                 ToolbarItem(placement: .confirmationAction) {
                     Button("Готово") {
@@ -41,42 +50,30 @@ struct CategorySelectionView: View {
     }
 }
 
-struct CategoryNodeView: View {
+struct CategoryChoiceRow: View {
     let category: BudgetView.Category
-    let allCategories: [BudgetView.Category]
-    let filterType: String
     @Binding var selectedId: Int?
+    let level: Int
     let onSelect: () -> Void
     
-    // Дети тоже фильтруются по типу
-    var children: [BudgetView.Category] {
-        allCategories.filter { $0.parent_id == category.id && $0.type == filterType }
-    }
-    
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Button(action: {
-                selectedId = category.id
-                onSelect()
-            }) {
-                HStack {
-                    Text(category.name)
-                        .fontWeight(selectedId == category.id ? .bold : .regular)
-                    Spacer()
-                    if selectedId == category.id {
-                        Image(systemName: "checkmark").foregroundColor(.blue)
-                    }
+        Button(action: onSelect) {
+            HStack {
+                if level > 0 {
+                    Text("↳")
+                        .foregroundColor(.gray)
+                        .frame(width: 20)
                 }
-            }
-            
-            if !children.isEmpty {
-                VStack(alignment: .leading, spacing: 8) {
-                    ForEach(children) { child in
-                        CategoryNodeView(category: child, allCategories: allCategories, filterType: filterType, selectedId: $selectedId, onSelect: onSelect)
-                            .padding(.leading, 20)
-                    }
+                Text(category.name)
+                    .fontWeight(selectedId == category.id ? .bold : .regular)
+                    .foregroundColor(.primary)
+                Spacer()
+                if selectedId == category.id {
+                    Image(systemName: "checkmark")
+                        .foregroundColor(.blue)
                 }
             }
         }
+        .padding(.leading, CGFloat(level * 20))
     }
 }

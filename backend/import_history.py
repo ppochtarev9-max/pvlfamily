@@ -29,7 +29,7 @@ def main():
             print(f"❌ Пользователь '{USER_NAME}' не найден!")
             return
         
-        print("🧹 Очистка данных...")
+        print("🧹 Полная очистка данных...")
         db.query(Transaction).filter(Transaction.created_by_user_id == user.id).delete()
         db.query(Category).filter().delete()
         db.commit()
@@ -65,7 +65,7 @@ def main():
                 
                 tx_type = "income" if is_income else "expense"
 
-                # Категория
+                # 1. Создаем/ищем Родителя
                 cat_id = None
                 if c_name:
                     key = (c_name, None)
@@ -76,27 +76,27 @@ def main():
                             db.add(existing)
                             db.flush()
                             cnt_cat += 1
+                            print(f"   + Категория: {c_name}")
                         cat_cache[key] = existing.id
                     cat_id = cat_cache[key]
 
-                # Подкатегория
-                # ИСПРАВЛЕНО: Убрано исключение для 'я'. Теперь создаются все подкатегории.
+                # 2. Создаем/ищем Подкатегорию (ВСЕ, включая "Я")
                 final_id = cat_id
-                if s_name and cat_id: 
-                    # Пропускаем только совсем пустые строки после trim
-                    if s_name.strip() == "": 
-                        pass
-                    else:
-                        key_s = (s_name, cat_id)
+                if s_name and cat_id:
+                    # Игнорируем только пустые или пробелы
+                    clean_sub = s_name.strip()
+                    if clean_sub:
+                        key_s = (clean_sub, cat_id)
                         if key_s not in cat_cache:
-                            existing_s = db.query(Category).filter(Category.name==s_name, Category.parent_id==cat_id).first()
+                            existing_s = db.query(Category).filter(Category.name==clean_sub, Category.parent_id==cat_id).first()
                             if not existing_s:
                                 parent = db.get(Category, cat_id)
                                 p_type = parent.type if parent else tx_type
-                                existing_s = Category(name=s_name, type=p_type, parent_id=cat_id)
+                                existing_s = Category(name=clean_sub, type=p_type, parent_id=cat_id)
                                 db.add(existing_s)
                                 db.flush()
                                 cnt_cat += 1
+                                print(f"      + Подкатегория: {clean_sub}")
                             cat_cache[key_s] = existing_s.id
                         final_id = cat_cache[key_s]
 
@@ -109,7 +109,7 @@ def main():
                     cnt_tx += 1
 
         db.commit()
-        print(f"✅ Готово! Категорий: {cnt_cat}, Транзакций: {cnt_tx}")
+        print(f"\n✅ ГОТОВО! Категорий: {cnt_cat}, Транзакций: {cnt_tx}")
 
     except Exception as e:
         db.rollback()

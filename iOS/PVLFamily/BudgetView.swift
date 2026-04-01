@@ -23,7 +23,7 @@ struct BudgetView: View {
         let id: Int
         let name: String
         let type: String
-        let parent_id: Int?
+        let parent_id: Int? // Должно быть Int?
         var children: [Category]? = []
     }
     
@@ -31,17 +31,16 @@ struct BudgetView: View {
         NavigationStack {
             Group {
                 if transactions.isEmpty {
-                    ContentUnavailableView("Нет записей", systemImage: "list.bullet.rectangle", description: Text("Нажмите +, чтобы добавить операцию"))
+                    ContentUnavailableView("Нет записей", systemImage: "list.bullet.rectangle", description: Text("Нажмите +"))
                 } else {
                     List {
                         ForEach(transactions) { t in
-                            VStack(alignment: .leading, spacing: 6) {
+                            VStack(alignment: .leading, spacing: 4) {
                                 HStack {
                                     Text(t.category_name ?? "Без категории").font(.headline)
                                     Spacer()
                                     Text(formatAmount(t.amount, type: t.transaction_type))
-                                        .fontWeight(.bold)
-                                        .foregroundColor(colorForType(t.transaction_type))
+                                        .fontWeight(.bold).foregroundColor(colorForType(t.transaction_type))
                                 }
                                 if let desc = t.description, !desc.isEmpty {
                                     Text(desc).font(.subheadline).foregroundColor(.secondary)
@@ -49,7 +48,7 @@ struct BudgetView: View {
                                 HStack {
                                     Text(formatDate(t.date)).font(.caption2).foregroundColor(.gray)
                                     Text("•").font(.caption2).foregroundColor(.gray)
-                                    Text(t.creator_name ?? "Неизвестно").font(.caption2).foregroundColor(.gray)
+                                    Text(t.creator_name ?? "?").font(.caption2).foregroundColor(.gray)
                                 }
                             }
                             .swipeActions {
@@ -88,18 +87,34 @@ struct BudgetView: View {
     }
     
     func colorForType(_ type: String) -> Color {
-        switch type { case "income": return .green; case "expense": return .red; default: return .primary }
+        type == "income" ? .green : (type == "expense" ? .red : .primary)
     }
     func formatAmount(_ amount: Double, type: String) -> String {
-        let sign = (type == "income") ? "+" : (type == "expense" ? "-" : "")
-        return "\(sign)\(String(format: "%.2f", amount)) ₽"
+        let sign = type == "income" ? "+" : "-"
+        return "\(sign)\(String(format: "%.2f", abs(amount))) ₽"
     }
+    
     func formatDate(_ string: String) -> String {
+        let formatters: [String] = [
+            "yyyy-MM-dd'T'HH:mm:ss.SSSSSS", "yyyy-MM-dd'T'HH:mm:ss", "yyyy-MM-dd HH:mm:ss", "yyyy-MM-dd'T'HH:mm:ss.SSSZ"
+        ]
         let iso = ISO8601DateFormatter()
         iso.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
-        if let date = iso.date(from: string) {
-            let f = DateFormatter(); f.locale = Locale(identifier: "ru_RU"); f.dateStyle = .short; f.timeStyle = .short
-            return f.string(from: date)
+        
+        var date: Date? = iso.date(from: string)
+        if date == nil {
+            for fmt in formatters {
+                let df = DateFormatter()
+                df.locale = Locale(identifier: "en_US_POSIX")
+                df.dateFormat = fmt
+                if let d = df.date(from: string) { date = d; break }
+            }
+        }
+        if let d = date {
+            let out = DateFormatter()
+            out.locale = Locale(identifier: "ru_RU")
+            out.dateStyle = .short; out.timeStyle = .short
+            return out.string(from: d)
         }
         return string
     }
@@ -138,7 +153,10 @@ struct BudgetView: View {
         req.setValue("application/json", forHTTPHeaderField: "Content-Type")
         
         let iso = ISO8601DateFormatter()
-        var body: [String: Any] = ["amount": amount, "transaction_type": type, "category_id": categoryId, "description": description, "date": iso.string(from: date)]
+        let body: [String: Any] = [
+            "amount": amount, "transaction_type": type, "category_id": categoryId,
+            "description": description, "date": iso.string(from: date)
+        ]
         req.httpBody = try? JSONSerialization.data(withJSONObject: body)
         
         URLSession.shared.dataTask(with: req) { _, _, _ in

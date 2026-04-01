@@ -125,9 +125,13 @@ struct BudgetView: View {
         guard let token = authManager.token else { return }
         var req = URLRequest(url: URL(string: "\(authManager.baseURL)/budget/transactions")!)
         req.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
-        URLSession.shared.dataTask(with: req) { data, _, _ in
+        // ВАЖНО: Игнорируем локальный кэш
+        req.cachePolicy = .reloadIgnoringLocalCacheData
+        
+        URLSession.shared.dataTask(with: req) { data, _, error in
+            if let error = error { print("Error: \(error)"); return }
             guard let data = data, let list = try? JSONDecoder().decode([Transaction].self, from: data) else { return }
-            DispatchQueue.main.async { transactions = list }
+            DispatchQueue.main.async { self.transactions = list }
         }.resume()
     }
     
@@ -135,9 +139,13 @@ struct BudgetView: View {
         guard let token = authManager.token else { return }
         var req = URLRequest(url: URL(string: "\(authManager.baseURL)/budget/categories")!)
         req.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
-        URLSession.shared.dataTask(with: req) { data, _, _ in
-            guard let data = data, let list = try? JSONDecoder().decode([Category].self, from: data) else { return }
-            DispatchQueue.main.async { categories = list }
+        // ВАЖНО: Игнорируем локальный кэш
+        req.cachePolicy = .reloadIgnoringLocalCacheData
+
+        URLSession.shared.dataTask(with: req) { data, _, error in
+            if let error = error { print("Error: \(error)"); return }
+            guard let data = data, let list = try? JSONDecoder().decode([BudgetView.Category].self, from: data) else { return }
+            DispatchQueue.main.async { self.categories = list }
         }.resume()
     }
     
@@ -166,11 +174,28 @@ struct BudgetView: View {
     
     func deleteTransaction(id: Int) {
         guard let token = authManager.token else { return }
+        
+        // 1. Находим индекс, чтобы потом удалить локально
+        guard let index = transactions.firstIndex(where: { $0.id == id }) else { return }
+        
         var req = URLRequest(url: URL(string: "\(authManager.baseURL)/budget/transactions/\(id)")!)
         req.httpMethod = "DELETE"
         req.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
-        URLSession.shared.dataTask(with: req) { _, _, _ in
-            DispatchQueue.main.async { loadTransactions() }
+        
+        // 2. Отправляем запрос
+        URLSession.shared.dataTask(with: req) { data, response, error in
+            DispatchQueue.main.async {
+                // 3. Проверяем успех
+                if let httpResponse = response as? HTTPURLResponse, httpResponse.statusCode == 200 {
+                    // УСПЕХ: Только теперь удаляем из массива и обновляем UI
+                    self.transactions.remove(at: index)
+                    print("✅ Транзакция \(id) удалена успешно")
+                } else {
+                    // ОШИБКА: Показываем алерт или просто перезагружаем список
+                    print("❌ Ошибка удаления: \(error?.localizedDescription ?? "Неизвестная ошибка")")
+                    self.loadTransactions() // Возвращаем как было
+                }
+            }
         }.resume()
     }
 }

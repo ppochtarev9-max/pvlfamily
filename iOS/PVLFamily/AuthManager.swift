@@ -8,7 +8,7 @@ class AuthManager: ObservableObject {
     @Published var errorMessage: String?
     @Published var users: [[String: Any]] = []
     
-    let baseURL = "http://127.0.0.1:8000"
+    let baseURL = "http://213.171.28.80:8000"
     
     init() {
         loadStoredUser()

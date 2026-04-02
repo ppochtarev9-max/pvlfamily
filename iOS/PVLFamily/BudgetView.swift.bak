@@ -97,7 +97,6 @@ struct BudgetView: View {
         let date: String
         let creator_name: String?
         let category_name: String?
-        let balance: Double?
     }
     
     struct Category: Identifiable, Codable {
@@ -122,16 +121,9 @@ struct BudgetView: View {
                                     Text(t.category_name ?? "Без категории")
                                         .font(.headline)
                                     Spacer()
-                                    VStack(alignment: .trailing, spacing: 2) {
-                                            Text(formatAmount(t.amount, type: t.transaction_type))
-                                                .fontWeight(.bold)
-                                                .foregroundColor(colorForType(t.transaction_type))
-                                            if let bal = t.balance {
-                                                Text("Ост: " + String(format: "%.2f ₽", bal))
-                                                    .font(.caption2)
-                                                    .foregroundColor(.secondary)
-                                            }
-                                        }
+                                    Text(formatAmount(t.amount, type: t.transaction_type))
+                                        .fontWeight(.bold)
+                                        .foregroundColor(colorForType(t.transaction_type))
                                 }
                                 if let desc = t.description, !desc.isEmpty {
                                     Text(desc).font(.subheadline).foregroundColor(.secondary)
@@ -212,7 +204,7 @@ struct BudgetView: View {
         switch type { case "income": return .green; case "expense": return .red; default: return .primary }
     }
     func formatAmount(_ amount: Double, type: String) -> String {
-        let sign = "" //(type == "income") ? "+" : (type == "expense" ? "-" : "")
+        let sign = (type == "income") ? "+" : (type == "expense" ? "-" : "")
         return "\(sign)\(String(format: "%.2f", amount)) ₽"
     }
     func formatDate(_ string: String) -> String {

@@ -140,10 +140,29 @@ def get_transactions(response: Response, db: Session = Depends(get_db)):
     response.headers["Pragma"] = "no-cache"
     response.headers["Expires"] = "0"
     
-    txs = db.query(models.Transaction).order_by(models.Transaction.date.desc()).all()
-    return [make_tx_resp(t) for t in txs]
+    # 1. Берем ВСЕ транзакции и сортируем ОТ СТАРЫХ К НОВЫМ (как в Excel)
+    all_txs = db.query(models.Transaction).order_by(models.Transaction.date.asc()).all()
+    
+    # 2. Считаем баланс последовательно: Предыдущий + Текущая
+    current_balance = 0.0
+    calculated_data = []
+    
+    for t in all_txs:
+        # Формула Excel: H_new = H_prev + amount
+        # Если расход (-5000), то 100000 + (-5000) = 95000. Верно.
+        # Если доход (+1000), то 95000 + 1000 = 96000. Верно.
+        current_balance += t.amount
+        calculated_data.append({'tx': t, 'balance': current_balance})
+    
+    # 3. Переворачиваем список обратно (новые сверху), чтобы отдать в UI
+    result = []
+    for item in reversed(calculated_data):
+        resp = make_tx_resp(item['tx'])
+        resp.balance = item['balance']
+        result.append(resp)
+        
+    return result
 
-# 2. СОЗДАНИЕ (POST) - БЕЗ СЛЭША В КОНЦЕ! И СТРОГО ДО МАРШРУТОВ С {ID}
 @router.post("/transactions", response_model=schemas.TransactionOut, status_code=201)
 def create_transaction(tx: schemas.TransactionCreate, db: Session = Depends(get_db)):
     user = db.query(models.User).first()

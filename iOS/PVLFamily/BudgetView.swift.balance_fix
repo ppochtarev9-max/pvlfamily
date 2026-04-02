@@ -127,7 +127,7 @@ struct BudgetView: View {
                                                 .fontWeight(.bold)
                                                 .foregroundColor(colorForType(t.transaction_type))
                                             if let bal = t.balance {
-                                                Text("Ост: " + String(format: "%.2f ₽", bal))
+                                                Text("Ост: " + formatAmount(bal, type: bal >= 0 ? "income" : "expense"))
                                                     .font(.caption2)
                                                     .foregroundColor(.secondary)
                                             }
@@ -212,7 +212,7 @@ struct BudgetView: View {
         switch type { case "income": return .green; case "expense": return .red; default: return .primary }
     }
     func formatAmount(_ amount: Double, type: String) -> String {
-        let sign = "" //(type == "income") ? "+" : (type == "expense" ? "-" : "")
+        let sign = (type == "income") ? "+" : (type == "expense" ? "-" : "")
         return "\(sign)\(String(format: "%.2f", amount)) ₽"
     }
     func formatDate(_ string: String) -> String {

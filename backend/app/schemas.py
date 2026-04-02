@@ -25,6 +25,7 @@ class TransactionUpdate(BaseModel):
     transaction_type: Optional[str] = None
 class TransactionOut(TransactionBase):
     id: int; created_by_user_id: Optional[int] = None
+    balance: Optional[float] = None
     category_name: Optional[str] = None; full_category_path: str = ""
     creator_name: Optional[str] = None
     class Config: from_attributes = True

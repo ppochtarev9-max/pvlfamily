@@ -16,3 +16,6 @@ DerivedData/
 .vscode/
 *.db
 history.csv
+*.db
+history.csv
+**/.DS_Store

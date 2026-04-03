@@ -78,7 +78,7 @@ struct DashboardView: View {
                                         .font(.system(size: 52, weight: .bold))
                                         .minimumScaleFactor(0.5) // Разрешить сжиматься до 50%
                                         .lineLimit(1) // Запретить перенос
-                                        .foregroundColor(.blue)
+                                        .foregroundColor(s.balance >= 0 ? .blue : .red)
                                     
                                     HStack(spacing: 40) {
                                         VStack(spacing: 4) {
@@ -113,9 +113,12 @@ struct DashboardView: View {
                             }
                             .frame(maxWidth: .infinity)
                             .padding(24)
-                            .background(Color(.systemBackground))
+                            .background(
+                                Color(.systemBackground)
+                                    .overlay(Color.white.opacity(0.08)) // Легкое осветление для темной темы
+                            )
                             .cornerRadius(20)
-                            .shadow(color: Color.blue.opacity(0.15), radius: 12, x: 0, y: 6)
+                            .shadow(color: Color.black.opacity(0.3), radius: 12, x: 0, y: 6) // Более плотная тень
                             
                             // --- КАРТОЧКА ДЕТАЛИЗАЦИИ ПО МЕСЯЦАМ ---
                             VStack(alignment: .leading, spacing: 16) {
@@ -159,7 +162,7 @@ struct DashboardView: View {
                                                 .contentShape(Rectangle())
                                         }
                                         .padding(16)
-                                        .background(Color.green.opacity(0.05))
+                                        .background(Color.green.opacity(0.12))
                                         .cornerRadius(12)
                                     }
                                     
@@ -182,7 +185,7 @@ struct DashboardView: View {
                                                 .contentShape(Rectangle())
                                         }
                                         .padding(16)
-                                        .background(Color.red.opacity(0.05))
+                                        .background(Color.red.opacity(0.12))
                                         .cornerRadius(12)
                                     }
                                     
@@ -213,16 +216,31 @@ struct DashboardView: View {
                             }
                             .frame(maxWidth: .infinity)
                             .padding(20)
-                            .background(Color(.systemBackground))
+                            .background(
+                                Color(.systemBackground)
+                                    .overlay(Color.white.opacity(0.08)) // Тот же эффект
+                            )
                             .cornerRadius(20)
-                            .shadow(color: Color.black.opacity(0.05), radius: 8, x: 0, y: 2)
+                            .shadow(color: Color.black.opacity(0.3), radius: 8, x: 0, y: 4) // Тень чуть сильнее
                         }
                         .padding()
                     }
                 }
             }
             .navigationTitle("") // Скрываем стандартный заголовок
-            .onAppear(perform: loadData) // <--- ВОТ ЭТОГО НЕ ХВАТАЛО!
+            .onAppear(perform: loadData)
+            .refreshable {
+                // Логика обновления: просто сбрасываем данные и грузим заново
+                errorMessage = nil
+                await withCheckedContinuation { continuation in
+                    loadData()
+                    // Ждем завершения загрузки (упрощенно по таймеру, т.к. loadData асинхронна внутри)
+                    // В идеале нужно переписать loadData на async/await
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
+                        continuation.resume()
+                    }
+                }
+            } // <--- ВОТ ЭТОГО НЕ ХВАТАЛО!
         }
     }
     

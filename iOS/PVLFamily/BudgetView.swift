@@ -197,6 +197,14 @@ struct BudgetView: View {
                 CategoriesManagerView(categories: $categories)
             }
             .onAppear(perform: loadData)
+            .refreshable {
+                await withCheckedContinuation { continuation in
+                    loadData()
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
+                        continuation.resume()
+                    }
+                }
+            }
         }
     }
     

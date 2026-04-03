@@ -40,6 +40,14 @@ struct CalendarView: View {
                 AddEventView(isPresented: $showingAddSheet, onSave: createEvent)
             }
             .onAppear(perform: loadEvents)
+            .refreshable {
+                await withCheckedContinuation { continuation in
+                    loadEvents()
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
+                        continuation.resume()
+                    }
+                }
+            }
         }
     }
     

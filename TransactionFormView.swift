@@ -16,7 +16,6 @@ struct TransactionFormView: View {
     @State private var date: Date = Date()
     @State private var isLoading = false
     
-    // Добавляем управление фокусом
     @FocusState private var isAmountFocused: Bool
     
     init(isPresented: Binding<Bool>, categories: [BudgetView.Category], transactionToEdit: BudgetView.Transaction?, onSave: @escaping (Int?, Double, String, Int, String, Date) -> Void, onDelete: @escaping (Int) -> Void) {
@@ -30,8 +29,9 @@ struct TransactionFormView: View {
             _amount = State(initialValue: String(format: "%.2f", abs(t.amount)))
             _type = State(initialValue: t.transaction_type)
             _note = State(initialValue: t.description ?? "")
-            _date = State(initialValue: Date())
+            _date = State(initialValue: Date()) // Будет перезаписано в task
             
+            // Разбор категории/подкатегории
             if let cat = categories.first(where: { $0.id == t.category_id }) {
                 if let pid = cat.parent_id {
                     _selectedCategoryId = State(initialValue: pid)
@@ -57,35 +57,30 @@ struct TransactionFormView: View {
     
     var body: some View {
         NavigationStack {
-            List {
+            Form {
                 if isLoading {
                     ProgressView("Загрузка...")
                 } else {
-                    // Секция 1: Сумма
                     Section("Сумма") {
-                        TextField("0.00", text: $amount)
-                            .keyboardType(.decimalPad)
-                            .textInputAutocapitalization(.never)
-                            .autocorrectionDisabled(true)
-                            .focused($isAmountFocused) // Привязываем фокус
-                            .onAppear {
-                                // Небольшая задержка, чтобы UI успел отрисоваться
-                                DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
-                                    isAmountFocused = true
+                        VStack(alignment: .leading, spacing: 8) {
+                            TextField("0.00", text: $amount)
+                                .keyboardType(.decimalPad)
+                                .textInputAutocapitalization(.never)
+                                .autocorrectionDisabled(true)
+                                .textContentType(.none) // Важно: отключаем авто-подстановку
+                                .onChange(of: amount) { newValue in
+                                    let allowed = CharacterSet(charactersIn: "0123456789.,")
+                                    if newValue.rangeOfCharacter(from: allowed.inverted) != nil {
+                                        amount = newValue.filter { allowed.contains($0.unicodeScalars.first!) }
+                                    }
                                 }
-                            }
-                            .onChange(of: amount) { newValue in
-                                // Фильтр: только цифры, точка, запятая
-                                let allowed = CharacterSet(charactersIn: "0123456789.,")
-                                if newValue.rangeOfCharacter(from: allowed.inverted) != nil {
-                                    amount = newValue.filter { allowed.contains($0.unicodeScalars.first!) }
-                                }
-                            }
-                            .font(.system(size: 24, weight: .semibold)) // Крупный шрифт для удобства
-                            .foregroundColor(type == "income" ? .green : .red) // Цвет зависит от типа
+                                .padding(8)
+                                .background(Color(.systemGray6))
+                                .cornerRadius(8)
+                        }
+                        .listRowInsets(EdgeInsets()) // Убираем отступы формы
                     }
                     
-                    // Секция 2: Тип операции
                     Section("Тип операции") {
                         Picker("Выберите тип", selection: $type) {
                             Text("Расход").tag("expense")
@@ -95,20 +90,15 @@ struct TransactionFormView: View {
                         .onChange(of: type) { _, _ in
                             selectedCategoryId = nil
                             selectedSubcategoryId = nil
-                            // Меняем цвет суммы при смене типа
-                            if let val = Double(amount), val != 0 {
-                                // Можно добавить анимацию или просто оставить цвет
-                            }
                         }
                     }
                     
-                    // Секция 3: Дата
                     Section("Дата") {
                         DatePicker("Дата операции", selection: $date, displayedComponents: [.date, .hourAndMinute])
                     }
                     
-                    // Секция 4: Категория
                     Section("Категория") {
+                        // 1. Выбор основной категории
                         Picker("Категория", selection: $selectedCategoryId) {
                             Text("Выберите...").tag(nil as Int?)
                             ForEach(categories.filter { $0.parent_id == nil && $0.type == type }) { cat in
@@ -116,6 +106,7 @@ struct TransactionFormView: View {
                             }
                         }
                         
+                        // 2. Выбор подкатегории (если есть дети)
                         if !subCategories.isEmpty {
                             Picker("Подкатегория", selection: $selectedSubcategoryId) {
                                 Text("Не выбрано").tag(nil as Int?)
@@ -126,38 +117,26 @@ struct TransactionFormView: View {
                         }
                     }
                     
-                    // Секция 5: Заметка
                     Section("Заметка") {
                         TextField("Описание", text: $note)
                     }
                     
-                    // Секция 6: Удаление (если редактирование)
                     if transactionToEdit != nil {
                         Section {
                             Button(role: .destructive, action: {
                                 if let t = transactionToEdit { onDelete(t.id); isPresented = false }
-                            }) {
-                                HStack {
-                                    Spacer()
-                                    Text("Удалить транзакцию")
-                                    Spacer()
-                                }
-                            }
+                            }) { Text("Удалить") }
                         }
                     }
                     
-                    // Кнопка сохранения (всегда внизу)
-                    Section {
-                        Button(action: submit) {
-                            Text(transactionToEdit == nil ? "Создать" : "Сохранить")
-                                .frame(maxWidth: .infinity)
-                                .fontWeight(.bold)
-                        }
-                        .disabled(amount.isEmpty || finalCategoryId == nil)
+                    Button(action: submit) {
+                        Text(transactionToEdit == nil ? "Создать" : "Сохранить")
+                            .frame(maxWidth: .infinity)
                     }
+                    .disabled(amount.isEmpty || finalCategoryId == nil)
                 }
             }
-            .navigationTitle(transactionToEdit == nil ? "Новая операция" : "Редактирование")
+            .navigationTitle(transactionToEdit == nil ? "Новая" : "Ред.")
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) { Button("Отмена") { isPresented = false } }
             }
@@ -185,6 +164,7 @@ struct TransactionFormView: View {
                 self.type = tx.transaction_type
                 self.note = tx.description ?? ""
                 
+                // Парсинг даты
                 let iso = ISO8601DateFormatter()
                 iso.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
                 if let d = iso.date(from: tx.date) {
@@ -196,6 +176,7 @@ struct TransactionFormView: View {
                     if let d = df.date(from: tx.date) { self.date = d }
                 }
                 
+                // Восстановление выбора категории
                 if let cat = categories.first(where: { $0.id == tx.category_id }) {
                     if let pid = cat.parent_id {
                         self.selectedCategoryId = pid
@@ -209,10 +190,6 @@ struct TransactionFormView: View {
                 }
                 
                 self.isLoading = false
-                // Фокус на сумму после загрузки данных
-                DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
-                    self.isAmountFocused = true
-                }
             }
         } catch {
             print("Ошибка загрузки: \(error)")
@@ -227,12 +204,3 @@ struct TransactionFormView: View {
         onSave(transactionToEdit?.id, finalAmt, type, catId, note, date)
     }
 }
-
-#if DEBUG
-struct TransactionFormView_Previews: PreviewProvider {
-    static var previews: some View {
-        // Тут нужен мок данных, но можно просто оставить пустым, если сложно
-        Text("Preview requires Mock Data")
-    }
-}
-#endif

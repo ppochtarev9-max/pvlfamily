@@ -8,7 +8,8 @@ class AuthManager: ObservableObject {
     @Published var errorMessage: String?
     @Published var users: [[String: Any]] = []
     
-    let baseURL = "http://127.0.0.1:8000"
+    let baseURL = "http://213.171.28.80:8000"
+    //let baseURL = "http://127.0.0.1:8000"
 
     init() {
         loadStoredUser()
@@ -106,20 +107,20 @@ struct MonthlyStats: Codable {
 }
 
 // MARK: - Dashboard API Methods
-
-// MARK: - Dashboard API Methods
 extension AuthManager {
     func getDashboardSummary(asOfDate: String?, userId: Int?, completion: @escaping (Result<DashboardSummary, Error>) -> Void) {
         var params: [String: String] = [:]
         if let date = asOfDate { params["as_of_date"] = date }
-        // Если userId nil, мы не передаем параметр, бэкенд поймет это как "все"
         if let uid = userId { params["user_id"] = "\(uid)" }
         
         request(endpoint: "/dashboard/summary", method: "GET", queryParams: params, completion: completion)
     }
     
-    func getMonthlyStats(userId: Int?, completion: @escaping (Result<MonthlyStats, Error>) -> Void) {
-        var params: [String: String] = [:]
+    func getMonthlyStats(year: Int, month: Int, userId: Int?, completion: @escaping (Result<MonthlyStats, Error>) -> Void) {
+        var params: [String: String] = [
+            "year": "\(year)",
+            "month": "\(month)"
+        ]
         if let uid = userId { params["user_id"] = "\(uid)" }
         
         request(endpoint: "/dashboard/monthly-stats", method: "GET", queryParams: params, completion: completion)

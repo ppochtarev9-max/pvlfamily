@@ -8,8 +8,8 @@ class AuthManager: ObservableObject {
     @Published var errorMessage: String?
     @Published var users: [[String: Any]] = []
     
-    let baseURL = "http://213.171.28.80:8000"
-    
+    let baseURL = "http://127.0.0.1:8000"
+
     init() {
         loadStoredUser()
         loadUsers()
@@ -79,5 +79,88 @@ class AuthManager: ObservableObject {
         token = nil
         UserDefaults.standard.removeObject(forKey: "userToken")
         UserDefaults.standard.removeObject(forKey: "userName")
+    }
+}
+
+// MARK: - Dashboard Models
+struct DashboardSummary: Codable {
+    let balance: Double
+    let total_income: Double
+    let total_expense: Double
+}
+
+struct MonthlyStatDetail: Codable {
+    let category_id: Int?
+    let category_name: String
+    let type: String
+    let amount: Double
+}
+
+struct MonthlyStats: Codable {
+    let year: Int
+    let month: Int
+    let total_income: Double
+    let total_expense: Double
+    let balance: Double
+    let details: [MonthlyStatDetail]
+}
+
+// MARK: - Dashboard API Methods
+
+// MARK: - Dashboard API Methods
+extension AuthManager {
+    func getDashboardSummary(asOfDate: String?, userId: Int?, completion: @escaping (Result<DashboardSummary, Error>) -> Void) {
+        var params: [String: String] = [:]
+        if let date = asOfDate { params["as_of_date"] = date }
+        // Если userId nil, мы не передаем параметр, бэкенд поймет это как "все"
+        if let uid = userId { params["user_id"] = "\(uid)" }
+        
+        request(endpoint: "/dashboard/summary", method: "GET", queryParams: params, completion: completion)
+    }
+    
+    func getMonthlyStats(userId: Int?, completion: @escaping (Result<MonthlyStats, Error>) -> Void) {
+        var params: [String: String] = [:]
+        if let uid = userId { params["user_id"] = "\(uid)" }
+        
+        request(endpoint: "/dashboard/monthly-stats", method: "GET", queryParams: params, completion: completion)
+    }
+    
+    private func request<T: Codable>(endpoint: String, method: String, queryParams: [String: String] = [:], completion: @escaping (Result<T, Error>) -> Void) {
+        guard let token = token else {
+            completion(.failure(NSError(domain: "Auth", code: -1, userInfo: [NSLocalizedDescriptionKey: "Token missing"])))
+            return
+        }
+        
+        var components = URLComponents(string: baseURL + endpoint)
+        if !queryParams.isEmpty {
+            components?.queryItems = queryParams.map { URLQueryItem(name: $0.key, value: $0.value) }
+        }
+        
+        guard let url = components?.url else {
+            completion(.failure(NSError(domain: "URL", code: -1, userInfo: [NSLocalizedDescriptionKey: "Invalid URL"])))
+            return
+        }
+        
+        var req = URLRequest(url: url)
+        req.httpMethod = method
+        req.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        
+        URLSession.shared.dataTask(with: req) { data, resp, err in
+            if let err = err {
+                completion(.failure(err))
+                return
+            }
+            guard let data = data else {
+                completion(.failure(NSError(domain: "Data", code: -1, userInfo: [NSLocalizedDescriptionKey: "No data"])))
+                return
+            }
+            
+            do {
+                let decoded = try JSONDecoder().decode(T.self, from: data)
+                completion(.success(decoded))
+            } catch {
+                completion(.failure(error))
+            }
+        }.resume()
     }
 }

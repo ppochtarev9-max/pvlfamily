@@ -37,3 +37,32 @@ def login(user_data: schemas.UserCreate, db: Session = Depends(get_db)):
 def get_users(db: Session = Depends(get_db)):
     users = db.query(models.User).all()
     return users
+
+# --- Добавлено для защиты эндпоинтов дашборда ---
+from fastapi import Header, HTTPException
+from jose import JWTError, jwt
+
+def get_current_user(authorization: str = Header(None), db: Session = Depends(get_db)):
+    if not authorization:
+        raise HTTPException(status_code=401, detail="Token missing")
+    
+    # Ожидаем формат "Bearer <token>"
+    parts = authorization.split()
+    if len(parts) != 2 or parts[0] != "Bearer":
+        raise HTTPException(status_code=401, detail="Invalid token format")
+    
+    token = parts[1]
+    
+    try:
+        payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
+        user_id: int = int(payload.get("sub"))
+        if user_id is None:
+            raise HTTPException(status_code=401, detail="Invalid token")
+    except JWTError:
+        raise HTTPException(status_code=401, detail="Invalid token")
+    
+    user = db.query(models.User).filter(models.User.id == user_id).first()
+    if not user:
+        raise HTTPException(status_code=401, detail="User not found")
+    
+    return user

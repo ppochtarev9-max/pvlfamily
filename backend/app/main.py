@@ -5,6 +5,7 @@ from .database import engine
 from .auth import router as auth_router
 from .budget import router as budget_router
 from .calendar import router as calendar_router
+from .stats import router as stats_router
 
 models.Base.metadata.create_all(bind=engine)
 
@@ -21,6 +22,7 @@ app.add_middleware(
 app.include_router(auth_router, prefix="/auth", tags=["Auth"])
 app.include_router(budget_router, prefix="/budget", tags=["Budget"])
 app.include_router(calendar_router, prefix="/calendar", tags=["Calendar"])
+app.include_router(stats_router, prefix="/dashboard", tags=["Dashboard"])
 
 @app.get("/health")
 def health():

@@ -8,9 +8,10 @@ class AuthManager: ObservableObject {
     @Published var errorMessage: String?
     @Published var users: [[String: Any]] = []
     
-    let baseURL = "http://213.171.28.80:8000"
+    @Published var baseURL: String = "http://127.0.0.1:8000"
+    //let baseURL = "http://213.171.28.80:8000"
     //let baseURL = "http://127.0.0.1:8000"
-
+    
     init() {
         loadStoredUser()
         loadUsers()
@@ -81,7 +82,15 @@ class AuthManager: ObservableObject {
         UserDefaults.standard.removeObject(forKey: "userToken")
         UserDefaults.standard.removeObject(forKey: "userName")
     }
+
+    func setServer(_ url: String) {
+         self.baseURL = url
+         self.users = [] // Сбрасываем список пользователей при смене сервера
+         loadUsers() // Загружаем пользователей с нового сервера
+     }
+
 }
+
 
 // MARK: - Dashboard Models
 struct DashboardSummary: Codable {

@@ -1,5 +1,10 @@
+// Режимы сервера
+enum ServerMode { case local, cloud }
+
 import Foundation
 import Combine
+
+enum ServerModчe { case local, cloud }
 
 class AuthManager: ObservableObject {
     @Published var isLoggedIn: Bool = false
@@ -8,9 +13,19 @@ class AuthManager: ObservableObject {
     @Published var errorMessage: String?
     @Published var users: [[String: Any]] = []
     
+    // Ссылка на выбранный сервер (используем глобальный enum)
+    @Published var selectedServer: ServerMode = .local
+    
+    // Метод обновления URL
+    func updateBaseURL() {
+        switch selectedServer {
+        case .local: self.baseURL = "http://127.0.0.1:8000"
+        case .cloud: self.baseURL = "http://213.171.28.80:8000"
+        }
+    }
+    
     var baseURL: String = "http://127.0.0.1:8000"
-    //let baseURL = "http://213.171.28.80:8000"
-    //let baseURL = "http://127.0.0.1:8000"
+    
     
     init() {
         loadStoredUser()

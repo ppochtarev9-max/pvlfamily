@@ -3,111 +3,176 @@ import SwiftUI
 struct LoginView: View {
     @EnvironmentObject var authManager: AuthManager
     @State private var newName: String = ""
+    @State private var isAnimating: Bool = false
     
-    // Опции серверов
-    enum ServerOption: String, CaseIterable {
-        case local = "Локальный (Mac)"
-        case cloud = "Облако (Cloud.ru)"
-        
-        var url: String {
-            switch self {
-            case .local: return "http://127.0.0.1:8000"
-            case .cloud: return "http://213.171.28.80:8000"
-            }
-        }
-    }
-    
-    @State private var selectedServer: ServerOption = .local
-
     var body: some View {
-        NavigationView {
-            VStack(spacing: 24) {
-                // Логотип
-                Image("Leo")
-                    .resizable()
-                    .aspectRatio(contentMode: .fit)
-                    .frame(width: 120, height: 120)
-                    .cornerRadius(20)
-                    .shadow(radius: 10)
+        NavigationStack {
+            ZStack {
+                // Фон с градиентом
+                LinearGradient(
+                    gradient: Gradient(colors: [Color(.systemBackground), Color(.systemGray6)]),
+                    startPoint: .top,
+                    endPoint: .bottom
+                )
+                .ignoresSafeArea()
                 
-                Text("PVLFamily")
-                    .font(.largeTitle)
-                    .fontWeight(.bold)
-                
-                // Выбор сервера
-                VStack(alignment: .leading, spacing: 8) {
-                    Text("Сервер:")
-                        .font(.subheadline)
-                        .foregroundColor(.secondary)
-                    
-                    Picker("Выберите сервер", selection: $selectedServer) {
-                        ForEach(ServerOption.allCases, id: \.self) { option in
-                            Text(option.rawValue).tag(option)
+                ScrollView {
+                    VStack(spacing: 30) {
+                        Spacer(minLength: 40)
+                        
+                        // Картинка
+                        Image("Leo")
+                            .resizable()
+                            .aspectRatio(contentMode: .fill)
+                            .frame(maxWidth: .infinity, minHeight: 300, maxHeight: 400)
+                            .clipped()
+                            .shadow(color: Color.blue.opacity(0.3), radius: 20, x: 0, y: 10)
+                            .opacity(isAnimating ? 1.0 : 0.0) // Только прозрачность
+                            .animation(.easeInOut(duration: 1.0), value: isAnimating) // Плавное затухание
+                        
+                        // Заголовок
+                        VStack(spacing: 8) {
+                            Text("PVLFamily")
+                                .font(.system(size: 40, weight: .bold, design: .rounded))
+                                .foregroundColor(.primary)
+                            
+                            Text("Учет финансов семьи")
+                                .font(.subheadline)
+                                .foregroundColor(.secondary)
                         }
-                    }
-                    .pickerStyle(.menu) // Выпадающий список
-                    .buttonStyle(.bordered)
-                    .onChange(of: selectedServer) { newValue in
-                        authManager.baseURL = newValue.url
-                        // При смене сервера перезагружаем список пользователей
-                        authManager.loadUsers()
-                    }
-                }
-                .padding()
-                .background(Color(.systemGray6))
-                .cornerRadius(12)
-                
-                // Список пользователей
-                if !authManager.users.isEmpty {
-                    Text("Выберите пользователя:")
-                        .font(.headline)
-                    
-                    List(0..<authManager.users.count, id: \.self) { index in
-                        let user = authManager.users[index]
-                        Button(action: {
-                            if let name = user["name"] as? String {
-                                authManager.login(name: name)
+                        .opacity(isAnimating ? 1.0 : 0.0)
+                        .animation(.easeInOut.delay(0.3), value: isAnimating)
+                        
+                        // Выбор сервера
+                        VStack(alignment: .leading, spacing: 12) {
+                            Text("Режим работы")
+                                .font(.headline)
+                                .foregroundColor(.secondary)
+                                .padding(.horizontal, 4)
+                            
+                            Picker("Сервер", selection: $authManager.selectedServer) {
+                                Text("Локальный").tag(ServerMode.local)
+                                Text("Облако").tag(ServerMode.cloud)
                             }
-                        }) {
-                            HStack {
-                                Image(systemName: "person.circle.fill")
-                                    .foregroundColor(.blue)
-                                Text(user["name"] as? String ?? "Unknown")
+                            .pickerStyle(.segmented)
+                            .padding(4)
+                            .background(Color(.systemGray5))
+                            .cornerRadius(12)
+                            .onChange(of: authManager.selectedServer) { _, _ in
+                                authManager.updateBaseURL()
+                                authManager.loadUsers()
                             }
                         }
+                        .padding(.horizontal)
+                        .opacity(isAnimating ? 1.0 : 0.0)
+                        .animation(.easeInOut.delay(0.5), value: isAnimating)
+                        
+                        // Список пользователей
+                        if !authManager.users.isEmpty {
+                            VStack(alignment: .leading, spacing: 12) {
+                                Text("Быстрый вход")
+                                    .font(.headline)
+                                    .foregroundColor(.secondary)
+                                    .padding(.horizontal, 4)
+                                
+                                VStack(spacing: 8) {
+                                    // ИСПРАВЛЕНО: используем indices и безопасное получение данных
+                                    ForEach(authManager.users.indices, id: \.self) { index in
+                                        let user = authManager.users[index]
+                                        if let name = user["name"] as? String {
+                                            Button(action: {
+                                                withAnimation {
+                                                    authManager.login(name: name)
+                                                }
+                                            }) {
+                                                HStack {
+                                                    Circle()
+                                                        .fill(Color.blue.opacity(0.1))
+                                                        .frame(width: 40, height: 40)
+                                                        .overlay(
+                                                            Image(systemName: "person.fill")
+                                                                .foregroundColor(.blue)
+                                                        )
+                                                    
+                                                    Text(name)
+                                                        .font(.body)
+                                                        .fontWeight(.medium)
+                                                        .foregroundColor(.primary)
+                                                    
+                                                    Spacer()
+                                                    
+                                                    Image(systemName: "chevron.right")
+                                                        .foregroundColor(.gray)
+                                                }
+                                                .padding()
+                                                .background(Color(.systemBackground))
+                                                .cornerRadius(16)
+                                                .shadow(color: Color.black.opacity(0.05), radius: 5, x: 0, y: 2)
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                            .padding(.horizontal)
+                            .opacity(isAnimating ? 1.0 : 0.0)
+                            .animation(.easeInOut.delay(0.7), value: isAnimating)
+                        }
+                        
+                        Divider()
+                            .padding(.horizontal)
+                            .opacity(isAnimating ? 1.0 : 0.0)
+                        
+                        // Создание нового пользователя
+                        VStack(alignment: .leading, spacing: 12) {
+                            Text("Новый пользователь")
+                                .font(.headline)
+                                .foregroundColor(.secondary)
+                                .padding(.horizontal, 4)
+                            
+                            HStack(spacing: 12) {
+                                TextField("Введите имя", text: $newName)
+                                    .textFieldStyle(.plain)
+                                    .padding()
+                                    .background(Color(.systemBackground))
+                                    .cornerRadius(16)
+                                    .shadow(color: Color.black.opacity(0.05), radius: 5, x: 0, y: 2)
+                                
+                                Button(action: {
+                                    withAnimation {
+                                        authManager.login(name: newName)
+                                    }
+                                }) {
+                                    Image(systemName: "arrow.right.circle.fill")
+                                        .font(.system(size: 40))
+                                        .foregroundColor(newName.isEmpty ? .gray : .blue)
+                                }
+                                .disabled(newName.isEmpty)
+                            }
+                        }
+                        .padding(.horizontal)
+                        .opacity(isAnimating ? 1.0 : 0.0)
+                        .animation(.easeInOut.delay(0.9), value: isAnimating)
+                        
+                        // Ошибка
+                        if let error = authManager.errorMessage {
+                            Text(error)
+                                .font(.caption)
+                                .foregroundColor(.white)
+                                .padding()
+                                .frame(maxWidth: .infinity)
+                                .background(Color.red)
+                                .cornerRadius(12)
+                                .padding(.horizontal)
+                                .transition(.move(edge: .bottom).combined(with: .opacity))
+                        }
+                        
+                        Spacer(minLength: 40)
                     }
-                    .frame(height: 200)
-                } else {
-                    ProgressView("Загрузка пользователей...")
-                        .padding()
                 }
-                
-                Divider()
-                
-                // Новый пользователь
-                Text("Или создайте нового:")
-                    .font(.headline)
-                
-                HStack {
-                    TextField("Имя", text: $newName)
-                        .textFieldStyle(RoundedBorderTextFieldStyle())
-                    Button("Войти") {
-                        authManager.login(name: newName)
-                    }
-                    .disabled(newName.isEmpty)
-                }
-                
-                if let error = authManager.errorMessage {
-                    Text(error)
-                        .foregroundColor(.red)
-                        .font(.caption)
-                        .multilineTextAlignment(.center)
-                }
-                
-                Spacer()
             }
-            .padding()
-            .navigationTitle("Вход")
+            .onAppear {
+                isAnimating = true
+            }
         }
     }
 }

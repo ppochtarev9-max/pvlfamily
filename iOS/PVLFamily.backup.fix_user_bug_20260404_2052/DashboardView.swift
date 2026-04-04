@@ -14,10 +14,6 @@ struct DashboardView: View {
     // Для детализации: выбранный месяц (по умолчанию текущий)
     @State private var statsMonth = Date()
     
-    // Фильтр по пользователю: nil = все, Int = конкретный ID
-    @State private var selectedUserId: Int? = nil
-    @State private var showUserFilter = false
-    
     // Состояния сворачивания секций
     @State private var isIncomeExpanded = false
     @State private var isExpenseExpanded = false
@@ -37,32 +33,24 @@ struct DashboardView: View {
                     ScrollView {
                         VStack(spacing: 20) {
                             
-                            // --- ЗАГОЛОВОК С ДАТОЙ И ФИЛЬТРОМ (В ОДНУ СТРОКУ) ---
-                            HStack(spacing: 12) {
+                            // --- ЗАГОЛОВОК С ДАТОЙ ---
+                            HStack(spacing: 8) {
                                 Text("Обзор на ")
-                                    .font(.system(size: 22, weight: .bold))
-                                    .minimumScaleFactor(0.5)
-                                    .lineLimit(1)
+                                    .font(.system(size: 22, weight: .bold)) // Фиксированный крупный размер
+                                    .minimumScaleFactor(0.5) // Разрешить сжиматься до 50%
+                                    .lineLimit(1) // Запретить перенос
                                 
                                 Button(action: { showBalanceCalendar = true }) {
                                     HStack(spacing: 4) {
                                         Text(formatDate(balanceDate))
                                             .fontWeight(.medium)
                                         Image(systemName: "calendar")
-                                            .font(.title3) // Размер как у иконки пользователя
+                                            .font(.caption)
                                             .foregroundColor(.blue)
                                     }
                                     .foregroundColor(.primary)
                                 }
-                                
                                 Spacer()
-                                
-                                // Кнопка фильтра пользователей (теперь в строке)
-                                Button(action: { showUserFilter.toggle() }) {
-                                    Image(systemName: "person.crop.circle.fill")
-                                        .font(.title3) // Тот же размер
-                                        .foregroundColor(selectedUserId != nil ? .blue : .gray) // Подсветка вместо текста
-                                }
                             }
                             .padding(.horizontal)
                             .sheet(isPresented: $showBalanceCalendar) {
@@ -71,18 +59,16 @@ struct DashboardView: View {
                                         .datePickerStyle(.graphical)
                                         .labelsHidden()
                                         .onChange(of: balanceDate) { _ in
+                                            // Закрываем и обновляем сразу при выборе даты
                                             showBalanceCalendar = false
                                             loadBalance()
                                         }
                                     
+                                    // Кнопка "Отмена" чтобы просто закрыть без выбора (опционально)
                                     Button("Закрыть") { showBalanceCalendar = false }
                                         .padding()
                                 }
-                                .presentationDetents([.medium])
-                            }
-                            .sheet(isPresented: $showUserFilter) {
-                                UserFilterView(selectedUserId: $selectedUserId, users: authManager.users, isPresented: $showUserFilter,        onUpdate: loadData // <--- ПЕРЕДАЕМ ФУНКЦИЮ ОБНОВЛЕНИЯ
-)
+                                .presentationDetents([.medium]) // Ограничиваем высоту шторки
                             }
                             
                             // --- КАРТОЧКА БАЛАНСА ---
@@ -90,35 +76,35 @@ struct DashboardView: View {
                                 if let s = summary {
                                     Text(formatCurrency(s.balance))
                                         .font(.system(size: 52, weight: .bold))
-                                        .minimumScaleFactor(0.5)
-                                        .lineLimit(1)
+                                        .minimumScaleFactor(0.5) // Разрешить сжиматься до 50%
+                                        .lineLimit(1) // Запретить перенос
                                         .foregroundColor(s.balance >= 0 ? .blue : .red)
                                     
                                     HStack(spacing: 40) {
                                         VStack(spacing: 4) {
                                             Text("Доходы")
-                                                .font(.caption2)
-                                                .minimumScaleFactor(0.5)
-                                                .lineLimit(1)
+                                                .font(.caption2) // Очень маленький шрифт
+                                                .minimumScaleFactor(0.5) // Разрешить сжиматься до 50%
+                                                .lineLimit(1) // Запретить перенос
                                                 .foregroundColor(.secondary)
                                             Text(formatCurrency(s.total_income))
                                                 .font(.title3)
                                                 .fontWeight(.semibold)
-                                                .minimumScaleFactor(0.5)
-                                                .lineLimit(1)
+                                                .minimumScaleFactor(0.5) // Разрешить сжиматься до 50%
+                                                .lineLimit(1) // Запретить перенос
                                                 .foregroundColor(.green)
                                         }
                                         Divider()
                                         VStack(spacing: 4) {
                                             Text("Расходы")
                                                 .font(.caption2)
-                                                .minimumScaleFactor(0.5)
-                                                .lineLimit(1)
+                                                .minimumScaleFactor(0.5) // Разрешить сжиматься до 50%
+                                                .lineLimit(1) // Запретить перенос
                                                 .foregroundColor(.secondary)
                                             Text(formatCurrency(s.total_expense))
                                                 .font(.title3)
-                                                .minimumScaleFactor(0.5)
-                                                .lineLimit(1)
+                                                .minimumScaleFactor(0.5) // Разрешить сжиматься до 50%
+                                                .lineLimit(1) // Запретить перенос
                                                 .fontWeight(.semibold)
                                                 .foregroundColor(.red)
                                         }
@@ -129,10 +115,10 @@ struct DashboardView: View {
                             .padding(24)
                             .background(
                                 Color(.systemBackground)
-                                    .overlay(Color.white.opacity(0.08))
+                                    .overlay(Color.white.opacity(0.08)) // Легкое осветление для темной темы
                             )
                             .cornerRadius(20)
-                            .shadow(color: Color.black.opacity(0.3), radius: 12, x: 0, y: 6)
+                            .shadow(color: Color.black.opacity(0.3), radius: 12, x: 0, y: 6) // Более плотная тень
                             
                             // --- КАРТОЧКА ДЕТАЛИЗАЦИИ ПО МЕСЯЦАМ ---
                             VStack(alignment: .leading, spacing: 16) {
@@ -154,7 +140,7 @@ struct DashboardView: View {
                                 }
                                 
                                 if let st = stats {
-                                    let incomes = st.details.filter { $0.type == "income" }.sorted { $1.amount > $0.amount }
+                                    let incomes = st.details.filter { $0.type == "income" }.sorted { $1.amount > $0.amount } // Сортировка от большего к меньшему
                                     let expenses = st.details.filter { $0.type == "expense" }.sorted { $1.amount > $0.amount }
                                     
                                     // Секция Доходы
@@ -232,10 +218,10 @@ struct DashboardView: View {
                             .padding(20)
                             .background(
                                 Color(.systemBackground)
-                                    .overlay(Color.white.opacity(0.08))
+                                    .overlay(Color.white.opacity(0.08)) // Тот же эффект
                             )
                             .cornerRadius(20)
-                            .shadow(color: Color.black.opacity(0.3), radius: 8, x: 0, y: 4)
+                            .shadow(color: Color.black.opacity(0.3), radius: 8, x: 0, y: 4) // Тень чуть сильнее
                         }
                         .padding()
                     }
@@ -244,14 +230,17 @@ struct DashboardView: View {
             .navigationTitle("") // Скрываем стандартный заголовок
             .onAppear(perform: loadData)
             .refreshable {
+                // Логика обновления: просто сбрасываем данные и грузим заново
                 errorMessage = nil
                 await withCheckedContinuation { continuation in
                     loadData()
+                    // Ждем завершения загрузки (упрощенно по таймеру, т.к. loadData асинхронна внутри)
+                    // В идеале нужно переписать loadData на async/await
                     DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
                         continuation.resume()
                     }
                 }
-            }
+            } // <--- ВОТ ЭТОГО НЕ ХВАТАЛО!
         }
     }
     
@@ -287,7 +276,7 @@ struct DashboardView: View {
     }
     
     func loadData() {
-        print("🔄 [DEBUG] loadData вызван (User: \(selectedUserId == nil ? "All" : "\(selectedUserId!)"))")
+        print("🔄 [DEBUG] loadData вызван")
         isLoading = true
         errorMessage = nil
         loadBalance()
@@ -299,17 +288,26 @@ struct DashboardView: View {
         formatter.dateFormat = "yyyy-MM-dd HH:mm:ss"
         let dateStr = formatter.string(from: balanceDate)
         
-        authManager.getDashboardSummary(asOfDate: dateStr, userId: selectedUserId) { result in
+        print("📡 [DEBUG] Запрос баланса на дату: \(dateStr)")
+        
+        authManager.getDashboardSummary(asOfDate: dateStr, userId: nil) { result in
             DispatchQueue.main.async {
+                print("📥 [DEBUG] Ответ баланса получен")
                 switch result {
                 case .success(let data):
+                    print("✅ [DEBUG] Баланс: \(data.balance)")
                     self.summary = data
                 case .failure(let error):
+                    print("❌ [DEBUG] Ошибка баланса: \(error.localizedDescription)")
                     self.errorMessage = "Ошибка загрузки баланса: \(error.localizedDescription)"
                 }
                 
+                // Логика снятия флага загрузки
                 if self.stats != nil || self.errorMessage != nil {
                     self.isLoading = false
+                    print("⏹ [DEBUG] Загрузка завершена (статистика уже есть или ошибка)")
+                } else {
+                    print("⏳ [DEBUG] Ждем статистику...")
                 }
             }
         }
@@ -320,88 +318,28 @@ struct DashboardView: View {
         let y = comps.year ?? 2026
         let m = comps.month ?? 1
         
-        authManager.getMonthlyStats(year: y, month: m, userId: selectedUserId) { result in
+        print("📡 [DEBUG] Запрос статистики за: \(y)-\(m)")
+        
+        authManager.getMonthlyStats(year: y, month: m, userId: nil) { result in
             DispatchQueue.main.async {
+                print("📥 [DEBUG] Ответ статистики получен")
                 switch result {
                 case .success(let data):
+                    print("✅ [DEBUG] Статистика: доходов=\(data.total_income), расходов=\(data.total_expense)")
                     self.stats = data
                 case .failure(let error):
+                    print("❌ [DEBUG] Ошибка статистики: \(error.localizedDescription)")
                     self.errorMessage = "Ошибка загрузки статистики: \(error.localizedDescription)"
                 }
                 
+                // Логика снятия флага загрузки
                 if self.summary != nil || self.errorMessage != nil {
                     self.isLoading = false
+                    print("⏹ [DEBUG] Загрузка завершена (баланс уже есть или ошибка)")
+                } else {
+                    print("⏳ [DEBUG] Ждем баланс...")
                 }
             }
         }
     }
-}
-
-// --- Подвид: Фильтр пользователей ---
-struct UserFilterView: View {
-    @Binding var selectedUserId: Int?
-    let users: [[String: Any]]
-    @Binding var isPresented: Bool
-    
-    // Добавляем функцию обновления из родительского вида
-    var onUpdate: () -> Void
-    
-    var body: some View {
-        NavigationStack {
-            List {
-                Section(header: Text("Фильтр")) {
-                    Button(action: {
-                        selectedUserId = nil
-                        isPresented = false
-                        onUpdate() // Вызываем обновление
-                    }) {
-                        HStack {
-                            Text("Все пользователи")
-                                .fontWeight(selectedUserId == nil ? .bold : .regular)
-                            Spacer()
-                            if selectedUserId == nil {
-                                Image(systemName: "checkmark")
-                                    .foregroundColor(.blue)
-                            }
-                        }
-                    }
-                }
-                
-                Section(header: Text("Конкретный пользователь")) {
-                    ForEach(0..<users.count, id: \.self) { index in
-                        let user = users[index]
-                        if let id = user["id"] as? Int, let name = user["name"] as? String {
-                            Button(action: {
-                                selectedUserId = id
-                                isPresented = false
-                                onUpdate() // Вызываем обновление
-                            }) {
-                                HStack {
-                                    Text(name)
-                                        .fontWeight(selectedUserId == id ? .bold : .regular)
-                                    Spacer()
-                                    if selectedUserId == id {
-                                        Image(systemName: "checkmark")
-                                            .foregroundColor(.blue)
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-            .navigationTitle("Выберите пользователя")
-            .toolbar {
-                ToolbarItem(placement: .confirmationAction) {
-                    Button("Готово") {
-                        isPresented = false
-                        onUpdate() // На случай если нажмут Готово без выбора
-                    }
-                }
-            }
-        }
-    }
-}
-#Preview {
-    DashboardView()
 }

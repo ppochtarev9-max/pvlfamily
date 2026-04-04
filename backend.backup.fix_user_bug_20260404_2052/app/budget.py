@@ -168,15 +168,19 @@ def get_transactions(response: Response, db: Session = Depends(get_db)):
 def create_transaction(
     tx: schemas.TransactionCreate, 
     db: Session = Depends(get_db),
-    current_user: models.User = Depends(get_current_user)  # Аргумент называется current_user
+    current_user: models.User = Depends(get_current_user)  # <--- ДОБАВЛЕНО: Получаем текущего юзера
 ):
+    # ИСПРАВЛЕНО: Используем ID текущего пользователя, а не первого из базы
+    print(f"🔍 DEBUG: Получен запрос на создание транзакции")
+    print(f"🔍 DEBUG: Текущий пользователь из токена: {current_user.name} (ID: {current_user.id})")
+ 
     db_tx = models.Transaction(
         amount=tx.amount, 
         transaction_type=tx.transaction_type,
         category_id=tx.category_id, 
         description=tx.description,
         date=tx.date, 
-        created_by_user_id=current_user.id  # Используем current_user.id
+        created_by_user_id=current_user.id  # <--- ИСПРАВЛЕНО
     )
     db.add(db_tx)
     db.commit()
@@ -185,7 +189,7 @@ def create_transaction(
     if resp is None:
         raise HTTPException(status_code=500, detail="Ошибка создания")
     return resp
-    
+
 # 3. МАРШРУТЫ С ID (GET, PUT, DELETE) - ТОЛЬКО ПОСЛЕ POST
 @router.get("/transactions/{tx_id}", response_model=schemas.TransactionOut)
 def get_transaction(tx_id: int, db: Session = Depends(get_db)):

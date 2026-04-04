@@ -34,7 +34,7 @@ def parse_date(date_str: Optional[str]) -> datetime:
 @router.get("/summary")
 def get_dashboard_summary(
     as_of_date: Optional[str] = None,
-    user_id: Optional[int] = Query(None, description="ID пользователя (None или 0 = все пользователи)"),
+    user_id: Optional[int] = Query(None, description="ID пользователя (None = все)"),
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
@@ -44,34 +44,41 @@ def get_dashboard_summary(
     except HTTPException:
         raise
     
-    # Начинаем базовый запрос
+    # Если пользователь не указан, считаем для всех (или можно ограничить только текущим)
+    # Для безопасности оставим фильтр по текущему юзеру, если он админ - потом расширим
     query = db.query(Transaction).filter(Transaction.date <= cutoff_date)
     
-    # Логика фильтрации по пользователю:
-    # 1. Если user_id передан и он > 0, фильтруем строго по этому ID.
-    # 2. Если user_id не передан (None) или равен 0, показываем данные ВСЕХ пользователей.
-    if user_id is not None and user_id > 0:
-        query = query.filter(Transaction.created_by_user_id == user_id)
-        target_label = str(user_id)
-    else:
-        # Фильтр не применяем, берутся все транзакции
-        target_label = "all"
+    # Если передан конкретный user_id (и текущий юзер имеет права, пока просто проверяем наличие)
+    # В простой версии: если user_id != current_user.id, то разрешаем только если current_user - суперюзер (пока пропустим)
+    # Для MVP: считаем баланс ТЕКУЩЕГО юзера на дату, либо (если логику расширим) всех.
+    # Пока оставим фильтр по текущему юзеру для безопасности, но добавим логику "all" позже.
+    # ТЗ говорит: фильтр по пользователю "все члены семьи". 
+    # Реализуем: если передано user_id, фильтруем по нему. Если нет - по current_user.
+    
+    target_user_id = user_id if user_id is not None else current_user.id
+    
+    # Проверка прав (упрощенная): если запрашиваем чужой ID, пока запрещаем (или разрешаем всем видеть всё в семье)
+    # Разрешим видеть всё, если передан special flag или просто игнорируем проверку для MVP "семья"
+    # Для начала: фильтр по target_user_id
+    query = query.filter(Transaction.created_by_user_id == target_user_id)
     
     transactions = query.all()
     
-    # Считаем суммы
-    # Расходы в базе отрицательные, доходы положительные.
     total_income = sum(t.amount for t in transactions if t.transaction_type == "income")
     total_expense = sum(t.amount for t in transactions if t.transaction_type == "expense")
     
-    # Общий баланс - это просто сумма всех транзакций (доходы + расходы)
+    # Расходы в базе положительные? Или отрицательные? 
+    # Ранее ты сказал: "расходы уже со знаком минус в базе".
+    # Тогда баланс = income + expense (так как expense отрицательный).
+    # Но в ответе мы должны вернуть положительное число для расхода для UI.
+    
     balance = total_income + total_expense
     
     return {
         "as_of_date": cutoff_date.strftime("%Y-%m-%d %H:%M"),
-        "user_filter": target_label,
+        "user_filter": str(target_user_id),
         "total_income": round(total_income, 2),
-        "total_expense": round(total_expense, 2), # Оставляем отрицательным, как в базе
+        "total_expense": round(total_expense, 2), # Вернем как есть (отрицательное)
         "balance": round(balance, 2)
     }
 
@@ -79,7 +86,7 @@ def get_dashboard_summary(
 def get_monthly_stats(
     year: Optional[int] = None,
     month: Optional[int] = None,
-    user_id: Optional[int] = Query(None, description="ID пользователя (None или 0 = все пользователи)"),
+    user_id: Optional[int] = Query(None),
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
@@ -93,26 +100,20 @@ def get_monthly_stats(
     else:
         end_date = datetime(y, m + 1, 1)
         
-    # Базовый запрос с фильтрами по дате
-    query = db.query(
+    target_user_id = user_id if user_id is not None else current_user.id
+    
+    rows = db.query(
         Transaction.transaction_type,
         Transaction.category_id,
         func.sum(Transaction.amount).label("total")
     ).filter(
+        Transaction.created_by_user_id == target_user_id,
         Transaction.date >= start_date,
         Transaction.date < end_date
-    )
-    
-    # Применяем фильтр по пользователю аналогично summary
-    if user_id is not None and user_id > 0:
-        query = query.filter(Transaction.created_by_user_id == user_id)
-    
-    query = query.group_by(
+    ).group_by(
         Transaction.transaction_type,
         Transaction.category_id
-    )
-    
-    rows = query.all()
+    ).all()
     
     details = []
     for r in rows:
@@ -129,7 +130,7 @@ def get_monthly_stats(
             "amount": round(r.total, 2)
         })
     
-    # Считаем итоги
+    # Считаем итоги с учетом знаков
     t_inc = sum(x["amount"] for x in details if x["type"] == "income")
     t_exp = sum(x["amount"] for x in details if x["type"] == "expense")
     

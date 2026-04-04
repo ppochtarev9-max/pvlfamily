@@ -1,18 +1,19 @@
+// Режимы сервера
+enum ServerMode { case local, cloud }
+
 import Foundation
 import Combine
 
-// Режимы сервера (объявлен один раз глобально)
-enum ServerMode { case local, cloud }
+enum ServerModчe { case local, cloud }
 
 class AuthManager: ObservableObject {
     @Published var isLoggedIn: Bool = false
     @Published var userName: String?
     @Published var token: String?
-    @Published var userId: Int? // Явное хранение ID
     @Published var errorMessage: String?
     @Published var users: [[String: Any]] = []
     
-    // Ссылка на выбранный сервер
+    // Ссылка на выбранный сервер (используем глобальный enum)
     @Published var selectedServer: ServerMode = .local
     
     // Метод обновления URL
@@ -25,31 +26,18 @@ class AuthManager: ObservableObject {
     
     var baseURL: String = "http://127.0.0.1:8000"
     
+    
     init() {
         loadStoredUser()
         loadUsers()
     }
     
     func loadStoredUser() {
-        // Проверка наличия токена и имени
         if let savedToken = UserDefaults.standard.string(forKey: "userToken"),
            let savedName = UserDefaults.standard.string(forKey: "userName") {
-            
-            // Читаем ID. integer(forKey:) возвращает 0, если ключа нет, поэтому проверяем наличие ключа отдельно
-            let hasIdKey = UserDefaults.standard.object(forKey: "userId") != nil
-            let savedId = UserDefaults.standard.integer(forKey: "userId")
-            
-            if hasIdKey && savedId != 0 {
-                self.token = savedToken
-                self.userName = savedName
-                self.userId = savedId
-                self.isLoggedIn = true
-                print("🔄 ВОССТАНОВЛЕН ПОЛЬЗОВАТЕЛЬ: \(savedName) (ID: \(savedId))")
-            } else {
-                // Если ID нет или он 0, считаем сессию невалидной
-                print("⚠️ Найден токен, но нет ID. Выполняется выход.")
-                self.logout()
-            }
+            self.token = savedToken
+            self.userName = savedName
+            self.isLoggedIn = true
         }
     }
     
@@ -85,24 +73,18 @@ class AuthManager: ObservableObject {
                 guard let data = data,
                       let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
                       let accessToken = json["access_token"] as? String,
-                      let nameResp = json["name"] as? String,
-                      let userId = json["user_id"] as? Int else {
-                    self.errorMessage = "Ошибка сервера: неверный формат ответа"
+                      let nameResp = json["name"] as? String else {
+                    self.errorMessage = "Ошибка сервера"
                     return
                 }
                 
                 self.token = accessToken
                 self.userName = nameResp
-                self.userId = userId
                 self.isLoggedIn = true
                 self.errorMessage = nil
                 
                 UserDefaults.standard.set(accessToken, forKey: "userToken")
                 UserDefaults.standard.set(nameResp, forKey: "userName")
-                UserDefaults.standard.set(userId, forKey: "userId")
-                
-                print("✅ ВХОД ВЫПОЛНЕН: \(nameResp) (ID: \(userId))")
-                
                 self.loadUsers()
             }
         }.resume()
@@ -111,13 +93,16 @@ class AuthManager: ObservableObject {
     func logout() {
         isLoggedIn = false
         userName = nil
-        userId = nil
         token = nil
         UserDefaults.standard.removeObject(forKey: "userToken")
         UserDefaults.standard.removeObject(forKey: "userName")
-        UserDefaults.standard.removeObject(forKey: "userId")
-        print("🚪 ПОЛЬЗОВАТЕЛЬ ВЫШЕЛ")
     }
+
+//    func setServer(_ url: String) {
+//         self.baseURL = url
+//         self.users = [] // Сбрасываем список пользователей при смене сервера
+//         loadUsers() // Загружаем пользователей с нового сервера
+//     }
     
     func deleteUser(userId: Int, completion: @escaping (Result<Void, Error>) -> Void) {
         guard let token = token else {
@@ -148,6 +133,7 @@ class AuthManager: ObservableObject {
         }.resume()
     }
 }
+
 
 // MARK: - Dashboard Models
 struct DashboardSummary: Codable {

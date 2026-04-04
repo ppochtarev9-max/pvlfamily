@@ -8,7 +8,7 @@ class AuthManager: ObservableObject {
     @Published var errorMessage: String?
     @Published var users: [[String: Any]] = []
     
-    @Published var baseURL: String = "http://127.0.0.1:8000"
+    var baseURL: String = "http://127.0.0.1:8000"
     //let baseURL = "http://213.171.28.80:8000"
     //let baseURL = "http://127.0.0.1:8000"
     
@@ -83,11 +83,11 @@ class AuthManager: ObservableObject {
         UserDefaults.standard.removeObject(forKey: "userName")
     }
 
-    func setServer(_ url: String) {
-         self.baseURL = url
-         self.users = [] // Сбрасываем список пользователей при смене сервера
-         loadUsers() // Загружаем пользователей с нового сервера
-     }
+//    func setServer(_ url: String) {
+//         self.baseURL = url
+//         self.users = [] // Сбрасываем список пользователей при смене сервера
+//         loadUsers() // Загружаем пользователей с нового сервера
+//     }
 
 }
 

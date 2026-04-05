@@ -4,12 +4,7 @@ struct ProfileView: View {
     @EnvironmentObject var authManager: AuthManager
     @State private var showingDeleteAlert = false
     
-    // Получаем ID текущего пользователя из токена (упрощенно)
-    // В реальном проекте лучше декодировать JWT токен полностью
     var currentUserId: Int? {
-        // Здесь можно распарсить токен, но пока предположим, что мы знаем ID
-        // Или передадим его при логине в AuthManager
-        // Для примера возьмем из users массива по имени
         if let name = authManager.userName,
            let user = authManager.users.first(where: { $0["name"] as? String == name }) {
             return user["id"] as? Int
@@ -20,34 +15,75 @@ struct ProfileView: View {
     var body: some View {
         NavigationStack {
             List {
-                Section(header: Text("Пользователь")) {
-                    HStack {
-                        Image(systemName: "person.circle.fill")
-                            .font(.largeTitle)
-                            .foregroundColor(.blue)
-                        VStack(alignment: .leading) {
-                            Text(authManager.userName ?? "Гость")
-                                .font(.headline)
-                            Text("В системе")
-                                .font(.caption)
-                                .foregroundColor(.green)
+                // Секция профиля
+                Section {
+                    HStack(spacing: 20) {
+                        ZStack {
+                            Circle()
+                                .fill(Color.blue.opacity(0.1))
+                                .frame(width: 80, height: 80)
+                            Image(systemName: "person.fill")
+                                .font(.system(size: 40))
+                                .foregroundColor(.blue)
                         }
+                        
+                        VStack(alignment: .leading, spacing: 8) {
+                            Text(authManager.userName ?? "Гость")
+                                .font(.title2)
+                                .fontWeight(.bold)
+                            
+                            HStack {
+                                Circle()
+                                    .fill(Color.green)
+                                    .frame(width: 8, height: 8)
+                                Text("В системе")
+                                    .font(.subheadline)
+                                    .foregroundColor(.secondary)
+                            }
+                        }
+                        Spacer()
                     }
+                    .padding(.vertical, 10)
+                    .listRowBackground(Color.clear)
                 }
                 
+                // Действия
                 Section {
-                    Button("Выйти", role: .destructive) {
+                    Button(action: {
                         authManager.logout()
+                    }) {
+                        HStack {
+                            Image(systemName: "rectangle.portrait.and.arrow.right")
+                                .foregroundColor(.orange)
+                            Text("Выйти")
+                                .fontWeight(.medium)
+                            Spacer()
+                        }
+                        .padding(.vertical, 4)
                     }
+                } header: {
+                    Text("Действия")
                 }
                 
                 Section {
-                    Button("Удалить аккаунт", role: .destructive) {
+                    Button(action: {
                         showingDeleteAlert = true
+                    }) {
+                        HStack {
+                            Image(systemName: "trash.fill")
+                                .foregroundColor(.red)
+                            Text("Удалить аккаунт")
+                                .fontWeight(.medium)
+                                .foregroundColor(.red)
+                            Spacer()
+                        }
+                        .padding(.vertical, 4)
                     }
-                    .foregroundColor(.red)
+                } footer: {
+                    Text("При удалении аккаунта все ваши транзакции и события будут сохранены в истории, но станут «бесхозными».")
                 }
             }
+            .listStyle(.insetGrouped)
             .navigationTitle("Профиль")
             .alert("Удаление аккаунта", isPresented: $showingDeleteAlert) {
                 Button("Отмена", role: .cancel) { }
@@ -55,14 +91,13 @@ struct ProfileView: View {
                     performDelete()
                 }
             } message: {
-                Text("Вы уверены? Все ваши транзакции и события календаря будут сохранены в истории, но станут «бесхозными». Это действие нельзя отменить.")
+                Text("Вы уверены? Это действие нельзя отменить.")
             }
         }
     }
     
     func performDelete() {
         guard let userId = currentUserId else {
-            // Если не нашли ID, пробуем выйти просто так
             authManager.logout()
             return
         }
@@ -71,10 +106,9 @@ struct ProfileView: View {
             DispatchQueue.main.async {
                 switch result {
                 case .success:
-                    authManager.logout() // Выход после успешного удаления
+                    authManager.logout()
                 case .failure(let error):
                     print("Ошибка удаления: \(error.localizedDescription)")
-                    // Можно показать алерт об ошибке
                 }
             }
         }

@@ -16,7 +16,6 @@ struct BudgetView: View {
     
     // Вычисляемые свойства для доступных опций
     var availableCategories: [Category] {
-        // Показываем только видимые категории (если нужно) или все
         categories.filter { $0.parent_id == nil }.sorted { $0.name < $1.name }
     }
     
@@ -47,7 +46,6 @@ struct BudgetView: View {
                 return d >= startOfWeek && d <= now
             }
         case .month:
-            // ИСПРАВЛЕНО: используем [.year, .month]
             guard let startOfMonth = calendar.date(from: calendar.dateComponents([.year, .month], from: now)) else { return [] }
             result = result.filter {
                 guard let d = parseDate($0.date) else { return false }
@@ -62,17 +60,13 @@ struct BudgetView: View {
         
         // 2. Фильтр по категории
         if let catId = selectedCategoryId {
-            // Собираем ID выбранной категории и всех её подкатегорий
             var targetIds: Set<Int> = [catId]
-            // Если выбрана конкретная подкатегория, то фильтруем только по ней
             if let subId = selectedSubcategoryId {
                 targetIds = [subId]
             } else {
-                // Иначе добавляем все подкатегории этой категории
                 let children = categories.filter { $0.parent_id == catId }.map { $0.id }
                 targetIds.formUnion(children)
             }
-            
             result = result.filter { targetIds.contains($0.category_id) }
         }
         
@@ -117,37 +111,18 @@ struct BudgetView: View {
                 } else {
                     List {
                         ForEach(filteredTransactions) { t in
-                            VStack(alignment: .leading, spacing: 6) {
-                                HStack {
-                                    Text(t.category_name ?? "Без категории")
-                                        .font(.headline)
-                                    Spacer()
-                                    VStack(alignment: .trailing, spacing: 2) {
-                                            Text(formatAmount(t.amount, type: t.transaction_type))
-                                                .fontWeight(.bold)
-                                                .foregroundColor(colorForType(t.transaction_type))
-                                            if let bal = t.balance {
-                                                Text("Ост: " + String(format: "%.2f ₽", bal))
-                                                    .font(.caption2)
-                                                    .foregroundColor(.secondary)
-                                            }
-                                        }
+                            TransactionCard(t: t)
+                                // Уменьшаем отступы между карточками
+                                .listRowInsets(EdgeInsets(top: 4, leading: 0, bottom: 4, trailing: 0))
+                                .listRowSeparator(.hidden)
+                                .swipeActions {
+                                    Button(role: .destructive) { deleteTransaction(id: t.id) } label: { Label("Удалить", systemImage: "trash") }
+                                    Button { editTransaction(t) } label: { Label("Изменить", systemImage: "pencil") }.tint(.blue)
                                 }
-                                if let desc = t.description, !desc.isEmpty {
-                                    Text(desc).font(.subheadline).foregroundColor(.secondary)
-                                }
-                                HStack {
-                                    Text(formatDate(t.date)).font(.caption2).foregroundColor(.gray)
-                                    Text("•").font(.caption2).foregroundColor(.gray)
-                                    Text(t.creator_name ?? "Неизвестно").font(.caption2).foregroundColor(.gray)
-                                }
-                            }
-                            .swipeActions {
-                                Button(role: .destructive) { deleteTransaction(id: t.id) } label: { Label("Удалить", systemImage: "trash") }
-                                Button { editTransaction(t) } label: { Label("Изменить", systemImage: "pencil") }.tint(.blue)
-                            }
                         }
                     }
+                    .listStyle(.plain)
+                    .padding(.horizontal, 16)
                 }
             }
             .navigationTitle("Бюджет")
@@ -159,7 +134,6 @@ struct BudgetView: View {
                 }
                 ToolbarItem(placement: .topBarTrailing) {
                     HStack(spacing: 15) {
-                        // Кнопка фильтров
                         Button(action: { showingFilterSheet = true }) {
                             Image(systemName: hasActiveFilters ? "line.3.horizontal.decrease.circle.fill" : "line.3.horizontal.decrease.circle")
                                 .foregroundColor(hasActiveFilters ? .blue : .gray)
@@ -220,13 +194,30 @@ struct BudgetView: View {
         switch type { case "income": return .green; case "expense": return .red; default: return .primary }
     }
     func formatAmount(_ amount: Double, type: String) -> String {
-        let sign = "" //(type == "income") ? "+" : (type == "expense" ? "-" : "")
+        let sign = ""
         return "\(sign)\(String(format: "%.2f", amount)) ₽"
     }
     func formatDate(_ string: String) -> String {
-        if let date = parseDate(string) {
-            let f = DateFormatter(); f.locale = Locale(identifier: "ru_RU"); f.dateStyle = .short; f.timeStyle = .short
-            return f.string(from: date)
+        let iso = ISO8601DateFormatter()
+        // Убрали .withFractionalSeconds, теперь парсятся даты и с мс, и без
+        iso.formatOptions = [.withInternetDateTime]
+        
+        if let d = iso.date(from: string) {
+            let f = DateFormatter()
+            f.locale = Locale(identifier: "ru_RU")
+            f.dateStyle = .short
+            f.timeStyle = .none
+            return f.string(from: d)
+        }
+        
+        // Фоллбэк на всякий случай (ручная обрезка)
+        if let tIndex = string.firstIndex(of: "T") {
+            let datePart = String(string[..<tIndex])
+            let parts = datePart.split(separator: "-")
+            if parts.count == 3 {
+                return "\(parts[2]).\(parts[1]).\(String(parts[0].suffix(2)))"
+            }
+            return datePart
         }
         return string
     }
@@ -299,8 +290,119 @@ struct BudgetView: View {
     }
 }
 
-// --- ЛИСТ ФИЛЬТРОВ (Объединенный) ---
+// --- НОВЫЙ КОМПОНЕНТ: КАРТОЧКА ТРАНЗАКЦИИ (ОПТИМИЗИРОВАННАЯ) ---
+struct TransactionCard: View {
+    let t: BudgetView.Transaction
+    
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            // Верхняя часть: Категория + Сумма операции
+            HStack(alignment: .top, spacing: 12) {
+                // Левая часть: Категория и описание
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(t.category_name ?? "Без категории")
+                        .font(.headline)
+                        .fontWeight(.semibold)
+                        .lineLimit(1)
+                    
+                    if let desc = t.description, !desc.isEmpty {
+                        Text(desc)
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                            .lineLimit(2)
+                    }
+                }
+                
+                Spacer()
+                
+                // Правая часть: Сумма операции
+                Text(formatAmount(t.amount, type: t.transaction_type))
+                    .font(.title2) // Чуть меньше, чем было, чтобы не спорить с балансом
+                    .fontWeight(.bold)
+                    .foregroundColor(colorForType(t.transaction_type))
+                    .multilineTextAlignment(.trailing)
+            }
+            
+            Divider()
+                .background(Color.gray.opacity(0.2))
+            
+            // Нижняя часть: БАЛАНС (крупно) + Метаданные
+            HStack(alignment: .center) {
+                // Крупный баланс
+                if let bal = t.balance {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Остаток")
+                            .font(.caption2)
+                            .foregroundColor(.secondary)
+                            .textCase(.uppercase)
+                        
+                        Text(String(format: "%.0f ₽", bal))
+                            .font(.title) // КРУПНЫЙ ШРИФТ
+                            .fontWeight(.heavy)
+                            .foregroundColor(bal >= 0 ? .blue : .orange)
+                    }
+                }
+                
+                Spacer()
+                
+                // Метаданные (дата и автор) - компактно
+                VStack(alignment: .trailing, spacing: 1) {
+                    Text(formatDate(t.date))
+                        .font(.title3)
+                        .foregroundColor(.gray)
+                    
+                    Text(t.creator_name ?? "Неизвестно")
+                        .font(.title3)
+                        .foregroundColor(.gray)
+                }
+            }
+        }
+        .padding(14) // Чуть меньше отступы внутри карточки
+        .background(Color(.systemBackground))
+        .cornerRadius(14)
+        .shadow(color: Color.black.opacity(0.06), radius: 6, x: 0, y: 3)
+        .overlay(
+            RoundedRectangle(cornerRadius: 14)
+                .strokeBorder(colorForType(t.transaction_type).opacity(0.15), lineWidth: 1)
+        )
+    }
+    
+    func colorForType(_ type: String) -> Color {
+        switch type { case "income": return .green; case "expense": return .red; default: return .gray }
+    }
+    
+    func formatAmount(_ amount: Double, type: String) -> String {
+        let sign = ""
+        return "\(sign)\(String(format: "%.2f", amount)) ₽"
+    }
+    
+    func formatDate(_ string: String) -> String {
+        let iso = ISO8601DateFormatter()
+        // Убрали .withFractionalSeconds, теперь парсятся даты и с мс, и без
+        iso.formatOptions = [.withInternetDateTime]
+        
+        if let d = iso.date(from: string) {
+            let f = DateFormatter()
+            f.locale = Locale(identifier: "ru_RU")
+            f.dateStyle = .short
+            f.timeStyle = .none
+            return f.string(from: d)
+        }
+        
+        // Фоллбэк на всякий случай (ручная обрезка)
+        if let tIndex = string.firstIndex(of: "T") {
+            let datePart = String(string[..<tIndex])
+            let parts = datePart.split(separator: "-")
+            if parts.count == 3 {
+                return "\(parts[2]).\(parts[1]).\(String(parts[0].suffix(2)))"
+            }
+            return datePart
+        }
+        return string
+    }
+}
 
+// --- ЛИСТ ФИЛЬТРОВ (Без изменений) ---
 struct FilterSheet: View {
     @Binding var selectedDateFilter: BudgetView.DateFilter
     @Binding var startDate: Date
@@ -316,7 +418,6 @@ struct FilterSheet: View {
     var body: some View {
         NavigationStack {
             Form {
-                // Секция Даты
                 Section("Период") {
                     ForEach(BudgetView.DateFilter.allCases, id: \.self) { filter in
                         Button(action: {
@@ -340,7 +441,6 @@ struct FilterSheet: View {
                     }
                 }
                 
-                // Секция Категорий
                 Section("Категория") {
                     Button(action: {
                         selectedCategoryId = nil
@@ -361,7 +461,7 @@ struct FilterSheet: View {
                             ForEach(categories) { cat in
                                 Button(action: {
                                     selectedCategoryId = cat.id
-                                    selectedSubcategoryId = nil // Сброс подкатегории при смене категории
+                                    selectedSubcategoryId = nil
                                 }) {
                                     HStack {
                                         Text(cat.name)
@@ -381,7 +481,6 @@ struct FilterSheet: View {
                             }
                         }
                         
-                        // Подкатегории (только если выбрана категория)
                         if selectedCategoryId != nil {
                             if subcategories.isEmpty {
                                 Text("Нет подкатегорий").font(.caption).foregroundColor(.gray)

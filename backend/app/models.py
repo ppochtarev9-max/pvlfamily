@@ -42,3 +42,16 @@ class CalendarEvent(Base):
     event_type = Column(String, default="event") # Явно добавляем поле
     user_id = Column(Integer, ForeignKey("users.id"), nullable=True)
     creator = relationship("User", back_populates="calendar_events")
+
+class BabyLog(Base):
+    __tablename__ = "baby_logs"
+    
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=True) # Кто записал
+    event_type = Column(String, nullable=False) # sleep, feed, diaper, play, other
+    start_time = Column(DateTime, nullable=False)
+    end_time = Column(DateTime, nullable=True) # Если None - событие еще идет
+    duration_minutes = Column(Integer, default=0) # Длительность в минутах
+    note = Column(Text, nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    creator = relationship("User", backref="baby_logs")

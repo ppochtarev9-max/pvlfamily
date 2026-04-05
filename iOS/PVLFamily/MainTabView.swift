@@ -20,6 +20,13 @@ struct MainTabView: View {
                     Image(systemName: "calendar")
                     Text("Календарь")
                 }
+            
+            // --- НОВАЯ ВКЛАДКА: ТРЕКЕР ---
+            TrackerView()
+                .tabItem {
+                    Image(systemName: "heart.fill") // Заменили baby.carriage на heart
+                    Text("Трекер")
+                }
 
             ProfileView()
                 .tabItem {

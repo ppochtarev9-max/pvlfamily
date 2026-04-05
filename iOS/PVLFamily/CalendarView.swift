@@ -16,18 +16,24 @@ struct CalendarView: View {
     
     var body: some View {
         NavigationStack {
-            List(events) { event in
-                VStack(alignment: .leading, spacing: 4) {
-                    Text(event.title).font(.headline)
-                    if let desc = event.description, !desc.isEmpty {
-                        Text(desc).font(.subheadline).foregroundColor(.secondary)
+            Group {
+                if events.isEmpty {
+                    ContentUnavailableView("Нет событий", systemImage: "calendar.badge.exclamationmark", description: Text("Добавьте новое событие"))
+                } else {
+                    List {
+                        ForEach(events) { event in
+                            EventCard(event: event)
+                                .listRowInsets(EdgeInsets(top: 8, leading: 0, bottom: 8, trailing: 0))
+                                .listRowSeparator(.hidden)
+                                .swipeActions(edge: .trailing) {
+                                    Button(role: .destructive) { deleteEvent(id: event.id) } label: {
+                                        Label("Удалить", systemImage: "trash")
+                                    }
+                                }
+                        }
                     }
-                    Text(formatDate(event.event_date)).font(.caption).foregroundColor(.gray)
-                }
-                .swipeActions(edge: .trailing) {
-                    Button(role: .destructive) { deleteEvent(id: event.id) } label: {
-                        Label("Удалить", systemImage: "trash")
-                    }
+                    .listStyle(.plain)
+                    .padding(.horizontal, 16)
                 }
             }
             .navigationTitle("Календарь")
@@ -107,6 +113,65 @@ struct CalendarView: View {
             let f = DateFormatter()
             f.locale = Locale(identifier: "ru_RU")
             f.dateStyle = .short
+            f.timeStyle = .short
+            return f.string(from: date)
+        }
+        return string
+    }
+}
+
+// --- НОВЫЙ КОМПОНЕНТ: КАРТОЧКА СОБЫТИЯ ---
+struct EventCard: View {
+    let event: CalendarView.CalendarEvent
+    
+    var accentColor: Color {
+        switch event.event_type {
+        case "reminder": return .orange
+        default: return .blue
+        }
+    }
+    
+    var body: some View {
+        HStack(spacing: 16) {
+            // Цветной индикатор слева
+            Rectangle()
+                .fill(accentColor)
+                .frame(width: 6)
+                .cornerRadius(3)
+            
+            VStack(alignment: .leading, spacing: 6) {
+                Text(event.title)
+                    .font(.headline)
+                    .fontWeight(.semibold)
+                
+                if let desc = event.description, !desc.isEmpty {
+                    Text(desc)
+                        .font(.subheadline)
+                        .foregroundColor(.secondary)
+                        .lineLimit(2)
+                }
+                
+                Text(formatDate(event.event_date))
+                    .font(.caption)
+                    .foregroundColor(.gray)
+                    .padding(.top, 2)
+            }
+            
+            Spacer()
+        }
+        .padding(16)
+        .background(Color(.systemBackground))
+        .cornerRadius(16)
+        .shadow(color: Color.black.opacity(0.05), radius: 8, x: 0, y: 4)
+    }
+    
+    func formatDate(_ string: String) -> String {
+        let isoFormatter = ISO8601DateFormatter()
+        isoFormatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        if let date = isoFormatter.date(from: string) {
+            let f = DateFormatter()
+            f.locale = Locale(identifier: "ru_RU")
+            f.dateStyle = .medium
             f.timeStyle = .short
             return f.string(from: date)
         }

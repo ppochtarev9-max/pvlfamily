@@ -37,3 +37,28 @@ class EventCreate(EventBase): pass
 class EventResponse(EventBase):
     id: int; user_id: Optional[int] = None
     class Config: from_attributes = True
+
+# --- Baby Tracker Schemas ---
+class BabyLogBase(BaseModel):
+    event_type: str # sleep, feed, diaper, play, other
+    start_time: datetime
+    end_time: Optional[datetime] = None
+    note: Optional[str] = None
+
+class BabyLogCreate(BabyLogBase):
+    pass
+
+class BabyLogUpdate(BaseModel):
+    end_time: Optional[datetime] = None
+    note: Optional[str] = None
+    duration_minutes: Optional[int] = None
+
+class BabyLogOut(BabyLogBase):
+    id: int
+    user_id: Optional[int] = None
+    duration_minutes: int = 0
+    created_at: datetime
+    creator_name: Optional[str] = None
+    
+    class Config:
+        from_attributes = True

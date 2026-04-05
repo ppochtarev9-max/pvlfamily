@@ -6,6 +6,7 @@ from .auth import router as auth_router
 from .budget import router as budget_router
 from .calendar import router as calendar_router
 from .stats import router as stats_router
+from .tracker import router as tracker_router  # <--- ДОБАВИТЬ
 
 models.Base.metadata.create_all(bind=engine)
 
@@ -23,6 +24,7 @@ app.include_router(auth_router, prefix="/auth", tags=["Auth"])
 app.include_router(budget_router, prefix="/budget", tags=["Budget"])
 app.include_router(calendar_router, prefix="/calendar", tags=["Calendar"])
 app.include_router(stats_router, prefix="/dashboard", tags=["Dashboard"])
+app.include_router(tracker_router, prefix="/tracker", tags=["Tracker"])  # <--- ДОБАВИТЬ
 
 @app.get("/health")
 def health():

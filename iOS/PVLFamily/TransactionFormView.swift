@@ -16,7 +16,7 @@ struct TransactionFormView: View {
     @State private var date: Date = Date()
     @State private var isLoading = false
     
-    // Добавляем управление фокусом
+    // Управление фокусом
     @FocusState private var isAmountFocused: Bool
     
     init(isPresented: Binding<Bool>, categories: [BudgetView.Category], transactionToEdit: BudgetView.Transaction?, onSave: @escaping (Int?, Double, String, Int, String, Date) -> Void, onDelete: @escaping (Int) -> Void) {
@@ -57,109 +57,210 @@ struct TransactionFormView: View {
     
     var body: some View {
         NavigationStack {
-            List {
-                if isLoading {
-                    ProgressView("Загрузка...")
-                } else {
-                    // Секция 1: Сумма
-                    Section("Сумма") {
-                        TextField("0.00", text: $amount)
-                            .keyboardType(.decimalPad)
-                            .textInputAutocapitalization(.never)
-                            .autocorrectionDisabled(true)
-                            .focused($isAmountFocused) // Привязываем фокус
-                            .onAppear {
-                                // Небольшая задержка, чтобы UI успел отрисоваться
-                                DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
-                                    isAmountFocused = true
+            ScrollView {
+                VStack(spacing: 20) {
+                    if isLoading {
+                        ProgressView("Загрузка данных...")
+                            .frame(maxWidth: .infinity, minHeight: 200)
+                    } else {
+                        // --- БЛОК 1: СУММА И ТИП ---
+                        VStack(spacing: 16) {
+                            // Поле суммы
+                            TextField("0.00", text: $amount)
+                                .keyboardType(.decimalPad)
+                                .textInputAutocapitalization(.never)
+                                .autocorrectionDisabled(true)
+                                .focused($isAmountFocused)
+                                .font(.system(size: 48, weight: .bold, design: .rounded))
+                                .foregroundColor(type == "income" ? .green : .red)
+                                .multilineTextAlignment(.center)
+                                .padding()
+                                .background(Color(.systemBackground))
+                                .cornerRadius(20)
+                                .shadow(color: Color.black.opacity(0.05), radius: 5, x: 0, y: 2)
+                                .overlay(
+                                    RoundedRectangle(cornerRadius: 20)
+                                        .strokeBorder(type == "income" ? Color.green.opacity(0.3) : Color.red.opacity(0.3), lineWidth: 2)
+                                )
+                                .onAppear {
+                                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+                                        isAmountFocused = true
+                                    }
                                 }
-                            }
-                            .onChange(of: amount) { newValue in
-                                // Фильтр: только цифры, точка, запятая
-                                let allowed = CharacterSet(charactersIn: "0123456789.,")
-                                if newValue.rangeOfCharacter(from: allowed.inverted) != nil {
-                                    amount = newValue.filter { allowed.contains($0.unicodeScalars.first!) }
+                                .onChange(of: amount) { newValue in
+                                    let allowed = CharacterSet(charactersIn: "0123456789.,")
+                                    if newValue.rangeOfCharacter(from: allowed.inverted) != nil {
+                                        amount = newValue.filter { allowed.contains($0.unicodeScalars.first!) }
+                                    }
                                 }
+                            
+                            // Переключатель типа
+                            Picker("Тип операции", selection: $type) {
+                                Text("Расход").tag("expense")
+                                Text("Доход").tag("income")
                             }
-                            .font(.system(size: 24, weight: .semibold)) // Крупный шрифт для удобства
-                            .foregroundColor(type == "income" ? .green : .red) // Цвет зависит от типа
-                    }
-                    
-                    // Секция 2: Тип операции
-                    Section("Тип операции") {
-                        Picker("Выберите тип", selection: $type) {
-                            Text("Расход").tag("expense")
-                            Text("Доход").tag("income")
-                        }
-                        .pickerStyle(.segmented)
-                        .onChange(of: type) { _, _ in
-                            selectedCategoryId = nil
-                            selectedSubcategoryId = nil
-                            // Меняем цвет суммы при смене типа
-                            if let val = Double(amount), val != 0 {
-                                // Можно добавить анимацию или просто оставить цвет
+                            .pickerStyle(.segmented)
+                            .tint(type == "income" ? .green : .red)
+                            .onChange(of: type) { _, _ in
+                                selectedCategoryId = nil
+                                selectedSubcategoryId = nil
                             }
-                        }
-                    }
-                    
-                    // Секция 3: Дата
-                    Section("Дата") {
-                        DatePicker("Дата операции", selection: $date, displayedComponents: [.date, .hourAndMinute])
-                    }
-                    
-                    // Секция 4: Категория
-                    Section("Категория") {
-                        Picker("Категория", selection: $selectedCategoryId) {
-                            Text("Выберите...").tag(nil as Int?)
-                            ForEach(categories.filter { $0.parent_id == nil && $0.type == type }) { cat in
-                                Text(cat.name).tag(cat.id as Int?)
-                            }
-                        }
-                        
-                        if !subCategories.isEmpty {
-                            Picker("Подкатегория", selection: $selectedSubcategoryId) {
-                                Text("Не выбрано").tag(nil as Int?)
-                                ForEach(subCategories) { sub in
-                                    Text(sub.name).tag(sub.id as Int?)
-                                }
-                            }
-                        }
-                    }
-                    
-                    // Секция 5: Заметка
-                    Section("Заметка") {
-                        TextField("Описание", text: $note)
-                    }
-                    
-                    // Секция 6: Удаление (если редактирование)
-                    if transactionToEdit != nil {
-                        Section {
-                            Button(role: .destructive, action: {
-                                if let t = transactionToEdit { onDelete(t.id); isPresented = false }
-                            }) {
+                            .overlay(
                                 HStack {
                                     Spacer()
-                                    Text("Удалить транзакцию")
+                                    Image(systemName: type == "income" ? "arrow.up.circle.fill" : "arrow.down.circle.fill")
+                                        .foregroundColor(type == "income" ? .green : .red)
+                                        .font(.title3)
+                                        .padding(.trailing, 12)
+                                        .allowsHitTesting(false) // Чтобы клики проходили сквозь иконку
                                     Spacer()
+                                }
+                                .opacity(0.6) // Чуть приглушим, чтобы не отвлекало
+                              )
+                        }
+                        .padding(.horizontal)
+                        
+                        // --- БЛОК 2: КАТЕГОРИЯ ---
+                        VStack(alignment: .leading, spacing: 12) {
+                            Text("Категория").font(.headline).foregroundColor(.secondary).padding(.horizontal, 4)
+                            
+                            // Основная категория
+                            Menu {
+                                ForEach(categories.filter { $0.parent_id == nil && $0.type == type }) { cat in
+                                    Button(action: {
+                                        selectedCategoryId = cat.id
+                                        selectedSubcategoryId = nil
+                                    }) {
+                                        HStack {
+                                            Text(cat.name)
+                                            Spacer()
+                                            if selectedCategoryId == cat.id && selectedSubcategoryId == nil {
+                                                Image(systemName: "checkmark").foregroundColor(.blue)
+                                            }
+                                        }
+                                    }
+                                }
+                            } label: {
+                                HStack {
+                                    Image(systemName: "tag.fill").foregroundColor(.blue)
+                                    Text(selectedCategoryId != nil ? (categories.first(where: { $0.id == selectedCategoryId })?.name ?? "Выберите категорию") : "Выберите категорию")
+                                        .foregroundColor(selectedCategoryId != nil ? .primary : .secondary)
+                                    Spacer()
+                                    Image(systemName: "chevron.down").font(.caption).foregroundColor(.gray)
+                                }
+                                .padding()
+                                .background(Color(.systemBackground))
+                                .cornerRadius(16)
+                                .shadow(color: Color.black.opacity(0.05), radius: 5, x: 0, y: 2)
+                            }
+                            
+                            // Подкатегория (если есть)
+                            if let catId = selectedCategoryId, !subCategories.isEmpty {
+                                Menu {
+                                    ForEach(subCategories) { sub in
+                                        Button(action: {
+                                            selectedSubcategoryId = sub.id
+                                        }) {
+                                            HStack {
+                                                Text("↳ " + sub.name)
+                                                Spacer()
+                                                if selectedSubcategoryId == sub.id {
+                                                    Image(systemName: "checkmark").foregroundColor(.blue)
+                                                }
+                                            }
+                                        }
+                                    }
+                                } label: {
+                                    HStack {
+                                        Image(systemName: "tag.fill").foregroundColor(.orange)
+                                        Text(selectedSubcategoryId != nil ? (subCategories.first(where: { $0.id == selectedSubcategoryId })?.name ?? "Подкатегория") : "Все подкатегории")
+                                            .foregroundColor(selectedSubcategoryId != nil ? .primary : .secondary)
+                                        Spacer()
+                                        Image(systemName: "chevron.down").font(.caption).foregroundColor(.gray)
+                                    }
+                                    .padding()
+                                    .background(Color(.systemBackground))
+                                    .cornerRadius(16)
+                                    .shadow(color: Color.black.opacity(0.05), radius: 5, x: 0, y: 2)
+                                }
+                            } else if selectedCategoryId != nil {
+                                Text("Нет подкатегорий").font(.caption).foregroundColor(.secondary).padding(.horizontal, 4)
+                            }
+                        }
+                        .padding(.horizontal)
+                        
+                        // --- БЛОК 3: ДАТА И ЗАМЕТКА ---
+                                                VStack(alignment: .leading, spacing: 12) {
+                                                    Text("Детали").font(.headline).foregroundColor(.secondary).padding(.horizontal, 4)
+                                                    
+                                                    // Дата (ТОЛЬКО ДАТА, без времени)
+                                                    DatePicker("Дата операции", selection: $date, displayedComponents: .date)
+                                                        .datePickerStyle(.compact)
+                                                        .padding()
+                                                        .background(Color(.systemBackground))
+                                                        .cornerRadius(16)
+                                                        .shadow(color: Color.black.opacity(0.05), radius: 5, x: 0, y: 2)
+                                                    
+                                                    // Заметка
+                                                    TextField("Заметка (необязательно)", text: $note)
+                                                        .padding()
+                                                        .background(Color(.systemBackground))
+                                                        .cornerRadius(16)
+                                                        .shadow(color: Color.black.opacity(0.05), radius: 5, x: 0, y: 2)
+                                                }
+                                                .padding(.horizontal)
+                                                                        
+                        // --- КНОПКИ ДЕЙСТВИЙ ---
+                        VStack(spacing: 12) {
+                            // Сохранить
+                            Button(action: submit) {
+                                HStack {
+                                    Image(systemName: transactionToEdit == nil ? "plus.circle.fill" : "checkmark.circle.fill")
+                                    Text(transactionToEdit == nil ? "Создать операцию" : "Сохранить изменения")
+                                        .fontWeight(.bold)
+                                }
+                                .frame(maxWidth: .infinity)
+                                .padding()
+                                .background(amount.isEmpty || finalCategoryId == nil ? Color.gray : (type == "income" ? Color.green : Color.red))
+                                .foregroundColor(.white)
+                                .cornerRadius(20)
+                                .shadow(color: (type == "income" ? Color.green : Color.red).opacity(0.4), radius: 10, x: 0, y: 5)
+                            }
+                            .disabled(amount.isEmpty || finalCategoryId == nil)
+                            .animation(.easeInOut, value: amount.isEmpty)
+                            
+                            // Удалить (только при редактировании)
+                            if transactionToEdit != nil {
+                                Button(role: .destructive, action: {
+                                    if let t = transactionToEdit { onDelete(t.id); isPresented = false }
+                                }) {
+                                    HStack {
+                                        Image(systemName: "trash.fill")
+                                        Text("Удалить транзакцию")
+                                    }
+                                    .frame(maxWidth: .infinity)
+                                    .padding()
+                                    .background(Color.red.opacity(0.1))
+                                    .foregroundColor(.red)
+                                    .cornerRadius(16)
                                 }
                             }
                         }
-                    }
-                    
-                    // Кнопка сохранения (всегда внизу)
-                    Section {
-                        Button(action: submit) {
-                            Text(transactionToEdit == nil ? "Создать" : "Сохранить")
-                                .frame(maxWidth: .infinity)
-                                .fontWeight(.bold)
-                        }
-                        .disabled(amount.isEmpty || finalCategoryId == nil)
+                        .padding(.horizontal)
+                        .padding(.top, 10)
+                        
+                        Spacer(minLength: 40)
                     }
                 }
+                .padding(.vertical)
             }
+            .background(Color(.systemGroupedBackground)) // Фон как в настройках
             .navigationTitle(transactionToEdit == nil ? "Новая операция" : "Редактирование")
+            .navigationBarTitleDisplayMode(.inline)
             .toolbar {
-                ToolbarItem(placement: .cancellationAction) { Button("Отмена") { isPresented = false } }
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Отмена") { isPresented = false }
+                }
             }
             .task {
                 if let t = transactionToEdit {
@@ -209,7 +310,6 @@ struct TransactionFormView: View {
                 }
                 
                 self.isLoading = false
-                // Фокус на сумму после загрузки данных
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
                     self.isAmountFocused = true
                 }
@@ -228,11 +328,10 @@ struct TransactionFormView: View {
     }
 }
 
-#if DEBUG
-struct TransactionFormView_Previews: PreviewProvider {
-    static var previews: some View {
-        // Тут нужен мок данных, но можно просто оставить пустым, если сложно
-        Text("Preview requires Mock Data")
-    }
-}
-#endif
+//#if DEBUG
+//struct TransactionFormView_Previews: PreviewProvider {
+//    static var previews: some View {
+//        Text("Preview requires Mock Data")
+//    }
+//}
+//#endif

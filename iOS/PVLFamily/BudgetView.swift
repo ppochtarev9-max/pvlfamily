@@ -214,10 +214,11 @@ struct BudgetView: View {
             .navigationTitle("") // Скрыли стандартный заголовок
             .toolbar {
                 // --- ЛЕВАЯ ЧАСТЬ: ЗАГОЛОВОК С КАЛЕНДАРЕМ ---
-                ToolbarItem(placement: .topBarLeading) {
+                ToolbarItem(placement: .principal) { // Используем .principal для центрального заголовка
                     HStack(spacing: 4) {
                         Text("Бюджет на ")
-                            .font(.system(size: 20, weight: .semibold))
+                            .font(.system(size: 18, weight: .semibold))
+                            .foregroundColor(.primary) // Явно задаем цвет
                         
                         Button(action: { showBalanceCalendar = true }) {
                             HStack(spacing: 2) {

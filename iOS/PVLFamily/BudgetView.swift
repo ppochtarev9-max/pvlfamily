@@ -1,7 +1,10 @@
 import SwiftUI
 
+// MARK: - 🟢 ГЛАВНЫЙ ВИД: BUDGET VIEW
 struct BudgetView: View {
     @EnvironmentObject var authManager: AuthManager
+    
+    // Данные
     @State private var allTransactions: [Transaction] = []
     @State private var categories: [Category] = []
     
@@ -24,6 +27,10 @@ struct BudgetView: View {
     // Навигация
     @State private var navigateToDetails = false
     
+    // Для выбора даты баланса
+    @State private var balanceDate = Date()
+    @State private var showBalanceCalendar = false
+
     // Вычисляемые свойства для доступных опций
     var availableCategories: [Category] {
         categories.filter { $0.parent_id == nil }.sorted { $0.name < $1.name }
@@ -116,29 +123,14 @@ struct BudgetView: View {
     var body: some View {
         NavigationStack {
             VStack(spacing: 0) {
-                // --- ВЕРХНЯЯ ЧАСТЬ: БАЛАНС (НЕ СКРОЛЛИТСЯ ВНУТРИ СПИСКА, НО МОЖЕТ БЫТЬ В SCROLLVIEW ЕСЛИ НАДО) ---
-                // По ТЗ: "При скролле списка... эта область преобразовываться...", но пока сделаем просто шапку
+                
+                // ================================================================
+                // 🔹 БЛОК 1: ВЕРХНЯЯ ЧАСТЬ (БАЛАНС + КНОПКА ДЕТАЛИЗАЦИИ)
+                // ================================================================
                 ScrollView {
                     VStack(spacing: 16) {
-                        // Заголовок с датой (как на дашборде было)
-                        HStack {
-                            Text("Бюджет на ")
-                                .font(.system(size: 22, weight: .bold))
-                            Button(action: { /* Можно добавить календарь для баланса, если нужно, пока оставим как есть или упростим */ }) {
-                                Text(formatDateShort(Date()))
-                                    .fontWeight(.medium)
-                                    .foregroundColor(.blue)
-                            }
-                            Spacer()
-                            // Кнопка фильтра пользователя теперь внутри общего фильтра, но можно оставить тут иконку-индикатор
-                            Image(systemName: "person.crop.circle.fill")
-                                .font(.title2)
-                                .foregroundColor(selectedUserId != nil ? .blue : .gray)
-                        }
-                        .padding(.horizontal)
-                        .padding(.top, 8)
-                        
-                        // Карточка баланса
+                                                
+                        // --- 1.2 Карточка баланса ---
                         VStack(spacing: 16) {
                             if let s = summary {
                                 Text(formatCurrency(s.balance))
@@ -169,7 +161,7 @@ struct BudgetView: View {
                         .shadow(color: .black.opacity(0.1), radius: 10, x: 0, y: 5)
                         .padding(.horizontal)
                         
-                        // Кнопка Детализация
+                        // --- 1.3 Кнопка Детализация ---
                         Button(action: { navigateToDetails = true }) {
                             Text("Детализация")
                                 .font(.headline)
@@ -197,7 +189,9 @@ struct BudgetView: View {
                 }
                 .frame(height: 280) // Фиксированная высота шапки
                 
-                // --- СПИСОК ТРАНЗАКЦИЙ ---
+                // ================================================================
+                // 🔹 БЛОК 2: СПИСОК ТРАНЗАКЦИЙ
+                // ================================================================
                 Group {
                     if filteredTransactions.isEmpty {
                         ContentUnavailableView("Нет записей", systemImage: "list.bullet.rectangle", description: Text("Измените фильтры или добавьте операцию"))
@@ -219,9 +213,27 @@ struct BudgetView: View {
             }
             .navigationTitle("") // Скрыли стандартный заголовок
             .toolbar {
+                // --- ЛЕВАЯ ЧАСТЬ: ЗАГОЛОВОК С КАЛЕНДАРЕМ ---
+                ToolbarItem(placement: .topBarLeading) {
+                    HStack(spacing: 4) {
+                        Text("Бюджет на ")
+                            .font(.system(size: 20, weight: .semibold))
+                        
+                        Button(action: { showBalanceCalendar = true }) {
+                            HStack(spacing: 2) {
+                                Text(formatDateShort(balanceDate))
+                                    .fontWeight(.medium)
+                                Image(systemName: "calendar")
+                                    .font(.caption)
+                            }
+                            .foregroundColor(.blue)
+                        }
+                    }
+                }
+                
+                // --- ПРАВАЯ ЧАСТЬ: ФИЛЬТР И ПЛЮС ---
                 ToolbarItem(placement: .topBarTrailing) {
                     HStack(spacing: 15) {
-                        // Общий фильтр (Дата + Категория + Пользователь)
                         Button(action: { showingFilterSheet = true }) {
                             Image(systemName: hasActiveFilters ? "line.3.horizontal.decrease.circle.fill" : "line.3.horizontal.decrease.circle")
                                 .foregroundColor(hasActiveFilters ? .blue : .gray)
@@ -232,7 +244,25 @@ struct BudgetView: View {
                     }
                 }
             }
-            .sheet(isPresented: $showingFilterSheet) {
+            // --- ШТОРКА КАЛЕНДАРЯ (ВНЕ toolbar, но внутри NavigationStack) ---
+            .sheet(isPresented: $showBalanceCalendar) {
+                VStack(spacing: 20) {
+                    DatePicker("", selection: $balanceDate, displayedComponents: .date)
+                        .datePickerStyle(.graphical)
+                        .labelsHidden()
+                        .onChange(of: balanceDate) { _ in
+                            showBalanceCalendar = false
+                            loadBalance()
+                        }
+                    
+                    Button("Закрыть") {
+                        showBalanceCalendar = false
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .padding(.bottom, 20)
+                }
+                .presentationDetents([.medium])
+            }            .sheet(isPresented: $showingFilterSheet) {
                  FilterSheet(
                      selectedDateFilter: $selectedDateFilter,
                      startDate: $customStartDate,
@@ -270,6 +300,10 @@ struct BudgetView: View {
         }
     }
     
+    // ================================================================
+    // 🔹 ВСПОМОГАТЕЛЬНЫЕ ПЕРЕМЕННЫЕ И ФУНКЦИИ
+    // ================================================================
+    
     var hasActiveFilters: Bool {
         selectedDateFilter != .all || selectedCategoryId != nil || selectedUserId != nil
     }
@@ -280,10 +314,12 @@ struct BudgetView: View {
     func colorForType(_ type: String) -> Color {
         switch type { case "income": return .green; case "expense": return .red; default: return .primary }
     }
+    
     func formatAmount(_ amount: Double, type: String) -> String {
         let sign = ""
         return "\(sign)\(String(format: "%.2f", amount)) ₽"
     }
+    
     func formatDate(_ string: String) -> String {
         let iso = ISO8601DateFormatter()
         iso.formatOptions = [.withInternetDateTime]
@@ -314,6 +350,7 @@ struct BudgetView: View {
         guard let d = parseDate(dateString) else { return false }
         return Calendar.current.isDate(d, inSameDayAs: date)
     }
+    
     func parseDate(_ string: String) -> Date? {
         let iso = ISO8601DateFormatter()
         iso.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
@@ -341,10 +378,9 @@ struct BudgetView: View {
     
     func loadBalance() {
         isLoadingBalance = true
-        // Берем дату сегодня для простоты, или можно добавить выбор даты как было на дашборде
         let formatter = DateFormatter()
         formatter.dateFormat = "yyyy-MM-dd HH:mm:ss"
-        let dateStr = formatter.string(from: Date())
+        let dateStr = formatter.string(from: balanceDate) // Используем выбранную дату
         
         authManager.getDashboardSummary(asOfDate: dateStr, userId: selectedUserId) { result in
             DispatchQueue.main.async {
@@ -410,6 +446,10 @@ struct BudgetView: View {
     }
 }
 
+// ================================================================
+// 🔹 ПОДВИДЫ (SUBVIEWS)
+// ================================================================
+
 // --- КАРТОЧКА ТРАНЗАКЦИИ ---
 struct TransactionCard: View {
     let t: BudgetView.Transaction
@@ -473,7 +513,7 @@ struct TransactionCard: View {
     }
 }
 
-// --- ЛИСТ ФИЛЬТРОВ (ОБНОВЛЕННЫЙ: + Пользователь) ---
+// --- ЛИСТ ФИЛЬТРОВ ---
 struct FilterSheet: View {
     @Binding var selectedDateFilter: BudgetView.DateFilter
     @Binding var startDate: Date
@@ -482,7 +522,6 @@ struct FilterSheet: View {
     @Binding var selectedCategoryId: Int?
     @Binding var selectedSubcategoryId: Int?
     
-    // Новый параметр для пользователя
     @Binding var selectedUserId: Int?
     let users: [[String: Any]]
     
@@ -620,4 +659,9 @@ struct FilterSheet: View {
             }
         }
     }
+}
+
+#Preview {
+    BudgetView()
+        .environmentObject(AuthManager())
 }

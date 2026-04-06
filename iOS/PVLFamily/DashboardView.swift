@@ -17,11 +17,11 @@ struct DashboardView: View {
                 VStack(spacing: 20) {
                     
                     // Заголовок
-                    Text("Быстрые действия")
-                        .font(.largeTitle)
-                        .fontWeight(.bold)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .padding(.horizontal)
+//                    Text("Быстрые действия")
+//                        .font(.largeTitle)
+//                        .fontWeight(.bold)
+//                        .frame(maxWidth: .infinity, alignment: .leading)
+//                        .padding(.horizontal)
                     
                     // Сетка карточек
                     LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 16) {
@@ -62,7 +62,7 @@ struct DashboardView: View {
                 }
                 .padding(.vertical)
             }
-            .navigationTitle("Главная")
+            .navigationTitle("Быстрые действия")
             .sheet(isPresented: $showingTransactionSheet) {
                 TransactionFormView(
                     isPresented: $showingTransactionSheet,

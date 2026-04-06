@@ -4,6 +4,10 @@ struct ProfileView: View {
     @EnvironmentObject var authManager: AuthManager
     @State private var showingDeleteAlert = false
     
+    // Состояния для категорий
+    @State private var showingCategoriesManager = false
+    @State private var categories: [BudgetView.Category] = []
+    
     var currentUserId: Int? {
         if let name = authManager.userName,
            let user = authManager.users.first(where: { $0["name"] as? String == name }) {
@@ -47,6 +51,22 @@ struct ProfileView: View {
                     .listRowBackground(Color.clear)
                 }
                 
+                // Настройки (Новая секция)
+                Section("Настройки") {
+                    Button(action: {
+                        loadCategories()
+                        showingCategoriesManager = true
+                    }) {
+                        HStack {
+                            Image(systemName: "tag.fill")
+                                .foregroundColor(.blue)
+                            Text("Управление категориями")
+                                .fontWeight(.medium)
+                            Spacer()
+                        }
+                    }
+                }
+                
                 // Действия
                 Section {
                     Button(action: {
@@ -85,6 +105,10 @@ struct ProfileView: View {
             }
             .listStyle(.insetGrouped)
             .navigationTitle("Профиль")
+            // Выносим navigationDestination наружу из List, чтобы избежать ошибки SwiftUI
+            .navigationDestination(isPresented: $showingCategoriesManager) {
+                CategoriesManagerView(categories: $categories)
+            }
             .alert("Удаление аккаунта", isPresented: $showingDeleteAlert) {
                 Button("Отмена", role: .cancel) { }
                 Button("Удалить", role: .destructive) {
@@ -94,6 +118,17 @@ struct ProfileView: View {
                 Text("Вы уверены? Это действие нельзя отменить.")
             }
         }
+    }
+    
+    // Загрузка категорий перед открытием менеджера
+    func loadCategories() {
+        guard let token = authManager.token else { return }
+        var req = URLRequest(url: URL(string: "\(authManager.baseURL)/budget/categories")!)
+        req.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        URLSession.shared.dataTask(with: req) { data, _, _ in
+            guard let data = data, let list = try? JSONDecoder().decode([BudgetView.Category].self, from: data) else { return }
+            DispatchQueue.main.async { categories = list }
+        }.resume()
     }
     
     func performDelete() {

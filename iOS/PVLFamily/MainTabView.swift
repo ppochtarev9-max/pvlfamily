@@ -6,7 +6,7 @@ struct MainTabView: View {
             DashboardView()
                 .tabItem {
                     Image(systemName: "chart.pie.fill")
-                    Text("Обзор")
+                    Text("Главная")
                 }
 
             BudgetView()

@@ -2,406 +2,199 @@ import SwiftUI
 
 struct DashboardView: View {
     @EnvironmentObject var authManager: AuthManager
-    @State private var summary: DashboardSummary?
-    @State private var stats: MonthlyStats?
-    @State private var isLoading = false
-    @State private var errorMessage: String?
     
-    // Для баланса: выбранная дата (по умолчанию сегодня)
-    @State private var balanceDate = Date()
-    @State private var showBalanceCalendar = false
+    // Состояния для открытия шторок
+    @State private var showingTransactionSheet = false
+    @State private var showingEventSheet = false
+    @State private var showingTrackerSheet = false
     
-    // Для детализации: выбранный месяц (по умолчанию текущий)
-    @State private var statsMonth = Date()
-    
-    // Фильтр по пользователю: nil = все, Int = конкретный ID
-    @State private var selectedUserId: Int? = nil
-    @State private var showUserFilter = false
-    
-    // Состояния сворачивания секций
-    @State private var isIncomeExpanded = false
-    @State private var isExpenseExpanded = false
-    
+    // Для транзакции используем тип из BudgetView
+    @State private var transactionCategories: [BudgetView.Category] = []
+
     var body: some View {
         NavigationStack {
-            Group {
-                if isLoading {
-                    ProgressView("Загрузка...")
-                } else if let error = errorMessage {
-                    VStack(spacing: 20) {
-                        Image(systemName: "exclamationmark.triangle.fill").foregroundColor(.orange).font(.system(size: 40))
-                        Text(error).multilineTextAlignment(.center)
-                        Button("Обновить") { loadData() }.buttonStyle(.borderedProminent)
-                    }
-                } else {
-                    ScrollView {
-                        VStack(spacing: 20) {
-                            
-                            // --- ЗАГОЛОВОК С ДАТОЙ И ФИЛЬТРОМ (В ОДНУ СТРОКУ) ---
-                            HStack(spacing: 12) {
-                                Text("Обзор на ")
-                                    .font(.system(size: 22, weight: .bold))
-                                    .minimumScaleFactor(0.5)
-                                    .lineLimit(1)
-                                
-                                Button(action: { showBalanceCalendar = true }) {
-                                    HStack(spacing: 4) {
-                                        Text(formatDate(balanceDate))
-                                            .fontWeight(.medium)
-                                        Image(systemName: "calendar")
-                                            .font(.title3) // Размер как у иконки пользователя
-                                            .foregroundColor(.blue)
-                                    }
-                                    .foregroundColor(.primary)
-                                }
-                                
-                                Spacer()
-                                
-                                // Кнопка фильтра пользователей (теперь в строке)
-                                Button(action: { showUserFilter.toggle() }) {
-                                    Image(systemName: "person.crop.circle.fill")
-                                        .font(.title3) // Тот же размер
-                                        .foregroundColor(selectedUserId != nil ? .blue : .gray) // Подсветка вместо текста
-                                }
-                            }
-                            .padding(.horizontal)
-                            .sheet(isPresented: $showBalanceCalendar) {
-                                VStack {
-                                    DatePicker("", selection: $balanceDate, displayedComponents: .date)
-                                        .datePickerStyle(.graphical)
-                                        .labelsHidden()
-                                        .onChange(of: balanceDate) { _ in
-                                            showBalanceCalendar = false
-                                            loadBalance()
-                                        }
-                                    
-                                    Button("Закрыть") { showBalanceCalendar = false }
-                                        .padding()
-                                }
-                                .presentationDetents([.medium])
-                            }
-                            .sheet(isPresented: $showUserFilter) {
-                                UserFilterView(selectedUserId: $selectedUserId, users: authManager.users, isPresented: $showUserFilter,        onUpdate: loadData // <--- ПЕРЕДАЕМ ФУНКЦИЮ ОБНОВЛЕНИЯ
-)
-                            }
-                            
-                            // --- КАРТОЧКА БАЛАНСА ---
-                            VStack(spacing: 16) {
-                                if let s = summary {
-                                    Text(formatCurrency(s.balance))
-                                        .font(.system(size: 52, weight: .bold))
-                                        .minimumScaleFactor(0.5)
-                                        .lineLimit(1)
-                                        .foregroundColor(s.balance >= 0 ? .blue : .red)
-                                    
-                                    HStack(spacing: 40) {
-                                        VStack(spacing: 4) {
-                                            Text("Доходы")
-                                                .font(.caption2)
-                                                .minimumScaleFactor(0.5)
-                                                .lineLimit(1)
-                                                .foregroundColor(.secondary)
-                                            Text(formatCurrency(s.total_income))
-                                                .font(.title3)
-                                                .fontWeight(.semibold)
-                                                .minimumScaleFactor(0.5)
-                                                .lineLimit(1)
-                                                .foregroundColor(.green)
-                                        }
-                                        Divider()
-                                        VStack(spacing: 4) {
-                                            Text("Расходы")
-                                                .font(.caption2)
-                                                .minimumScaleFactor(0.5)
-                                                .lineLimit(1)
-                                                .foregroundColor(.secondary)
-                                            Text(formatCurrency(s.total_expense))
-                                                .font(.title3)
-                                                .minimumScaleFactor(0.5)
-                                                .lineLimit(1)
-                                                .fontWeight(.semibold)
-                                                .foregroundColor(.red)
-                                        }
-                                    }
-                                }
-                            }
-                            .frame(maxWidth: .infinity)
-                            .padding(24)
-                            .background(
-                                Color(.systemBackground)
-                                    .overlay(Color.white.opacity(0.08))
-                            )
-                            .cornerRadius(20)
-                            .shadow(color: Color.black.opacity(0.3), radius: 12, x: 0, y: 6)
-                            
-                            // --- КАРТОЧКА ДЕТАЛИЗАЦИИ ПО МЕСЯЦАМ ---
-                            VStack(alignment: .leading, spacing: 16) {
-                                // Заголовок с переключением
-                                HStack {
-                                    Button(action: { changeStatsMonth(-1) }) {
-                                        Image(systemName: "chevron.left")
-                                            .foregroundColor(.secondary)
-                                    }
-                                    Spacer()
-                                    Text(monthYearString(from: statsMonth))
-                                        .font(.subheadline)
-                                        .fontWeight(.semibold)
-                                    Spacer()
-                                    Button(action: { changeStatsMonth(1) }) {
-                                        Image(systemName: "chevron.right")
-                                            .foregroundColor(.secondary)
-                                    }
-                                }
-                                
-                                if let st = stats {
-                                    let incomes = st.details.filter { $0.type == "income" }.sorted { $1.amount > $0.amount }
-                                    let expenses = st.details.filter { $0.type == "expense" }.sorted { $1.amount > $0.amount }
-                                    
-                                    // Секция Доходы
-                                    if !incomes.isEmpty {
-                                        DisclosureGroup(isExpanded: $isIncomeExpanded) {
-                                            ForEach(incomes, id: \.category_name) { item in
-                                                HStack {
-                                                    Text(item.category_name).font(.body)
-                                                    Spacer()
-                                                    Text(formatCurrency(item.amount)).foregroundColor(.green)
-                                                }
-                                                .font(.callout)
-                                                .padding(.vertical, 2)
-                                            }
-                                        } label: {
-                                            Text("Доходы: " + formatCurrency(st.total_income))
-                                                .font(.headline)
-                                                .foregroundColor(.green)
-                                                .contentShape(Rectangle())
-                                        }
-                                        .padding(16)
-                                        .background(Color.green.opacity(0.12))
-                                        .cornerRadius(12)
-                                    }
-                                    
-                                    // Секция Расходы
-                                    if !expenses.isEmpty {
-                                        DisclosureGroup(isExpanded: $isExpenseExpanded) {
-                                            ForEach(expenses, id: \.category_name) { item in
-                                                HStack {
-                                                    Text(item.category_name).font(.body)
-                                                    Spacer()
-                                                    Text(formatCurrency(item.amount)).foregroundColor(.red)
-                                                }
-                                                .font(.callout)
-                                                .padding(.vertical, 2)
-                                            }
-                                        } label: {
-                                            Text("Расходы: " + formatCurrency(st.total_expense))
-                                                .font(.headline)
-                                                .foregroundColor(.red)
-                                                .contentShape(Rectangle())
-                                        }
-                                        .padding(16)
-                                        .background(Color.red.opacity(0.12))
-                                        .cornerRadius(12)
-                                    }
-                                    
-                                    if incomes.isEmpty && expenses.isEmpty {
-                                        Text("Нет операций за этот месяц")
-                                            .font(.callout)
-                                            .foregroundColor(.secondary)
-                                            .frame(maxWidth: .infinity, alignment: .center)
-                                            .padding()
-                                    }
-                                    
-                                    // Итого за месяц
-                                    VStack(spacing: 4) {
-                                        Divider()
-                                        HStack {
-                                            Text("Итого за месяц:")
-                                                .font(.subheadline)
-                                                .fontWeight(.medium)
-                                            Spacer()
-                                            Text(formatCurrency(st.balance))
-                                                .font(.subheadline)
-                                                .fontWeight(.bold)
-                                                .foregroundColor(st.balance >= 0 ? .blue : .orange)
-                                        }
-                                    }
-                                    .padding(.top, 4)
-                                }
-                            }
-                            .frame(maxWidth: .infinity)
-                            .padding(20)
-                            .background(
-                                Color(.systemBackground)
-                                    .overlay(Color.white.opacity(0.08))
-                            )
-                            .cornerRadius(20)
-                            .shadow(color: Color.black.opacity(0.3), radius: 8, x: 0, y: 4)
+            ScrollView {
+                VStack(spacing: 20) {
+                    
+                    // Заголовок
+                    Text("Быстрые действия")
+                        .font(.largeTitle)
+                        .fontWeight(.bold)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(.horizontal)
+                    
+                    // Сетка карточек
+                    LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 16) {
+                        
+                        // Сон
+                        ActionCard(title: "Сон", icon: "moon.fill", color: .purple) {
+                            showingTrackerSheet = true
                         }
-                        .padding()
+                        
+                        // Еда
+                        ActionCard(title: "Еда", icon: "fork.knife", color: .orange) {
+                            showingTrackerSheet = true
+                        }
+                        
+                        // Памперс
+                        ActionCard(title: "Памперс", icon: "drop.triangle.fill", color: .blue) {
+                            showingTrackerSheet = true
+                        }
+                        
+                        // Игра
+                        ActionCard(title: "Игра", icon: "star.fill", color: .pink) {
+                            showingTrackerSheet = true
+                        }
+                        
+                        // Транзакция
+                        ActionCard(title: "Транзакция", icon: "dollarsign.circle.fill", color: .green) {
+                            loadCategories()
+                            showingTransactionSheet = true
+                        }
+                        
+                        // Событие
+                        ActionCard(title: "Событие", icon: "calendar.badge.plus", color: .red) {
+                            showingEventSheet = true
+                        }
                     }
+                    .padding(.horizontal)
+                    
                 }
+                .padding(.vertical)
             }
-            .navigationTitle("") // Скрываем стандартный заголовок
-            .onAppear(perform: loadData)
-            .refreshable {
-                errorMessage = nil
-                await withCheckedContinuation { continuation in
-                    loadData()
-                    DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
-                        continuation.resume()
-                    }
-                }
+            .navigationTitle("Главная")
+            .sheet(isPresented: $showingTransactionSheet) {
+                TransactionFormView(
+                    isPresented: $showingTransactionSheet,
+                    categories: transactionCategories,
+                    transactionToEdit: nil,
+                    onSave: { _, amount, type, catId, desc, date in
+                        saveTransaction(amount: amount, type: type, categoryId: catId, description: desc, date: date)
+                    },
+                    onDelete: { _ in }
+                )
+            }
+            .sheet(isPresented: $showingEventSheet) {
+                AddEventView(isPresented: $showingEventSheet, onSave: createEvent)
+            }
+            .sheet(isPresented: $showingTrackerSheet) {
+                TrackerFormView(
+                    isPresented: $showingTrackerSheet,
+                    existingLog: nil,
+                    onSave: { type, start, end, note in
+                        saveLog(type: type, startTime: start, endTime: end, note: note)
+                    },
+                    onDelete: { _ in }
+                )
             }
         }
     }
     
-    // --- Helpers ---
+    // --- Логика сохранения ---
     
-    func monthYearString(from date: Date) -> String {
-        let f = DateFormatter()
-        f.dateFormat = "LLLL yyyy"
-        f.locale = Locale(identifier: "ru_RU")
-        return f.string(from: date).capitalized
+    func loadCategories() {
+        guard let token = authManager.token else { return }
+        var req = URLRequest(url: URL(string: "\(authManager.baseURL)/budget/categories")!)
+        req.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        URLSession.shared.dataTask(with: req) { data, _, _ in
+            guard let data = data, let list = try? JSONDecoder().decode([BudgetView.Category].self, from: data) else { return }
+            DispatchQueue.main.async { transactionCategories = list }
+        }.resume()
     }
     
-    func formatDate(_ date: Date) -> String {
-        let f = DateFormatter()
-        f.dateStyle = .medium
-        f.locale = Locale(identifier: "ru_RU")
-        return f.string(from: date)
-    }
-    
-    func formatCurrency(_ value: Double) -> String {
-        let formatter = NumberFormatter()
-        formatter.numberStyle = .decimal
-        formatter.minimumFractionDigits = 2
-        formatter.maximumFractionDigits = 2
-        return "\(formatter.string(from: NSNumber(value: abs(value))) ?? "0") ₽"
-    }
-    
-    func changeStatsMonth(_ delta: Int) {
-        if let newDate = Calendar.current.date(byAdding: .month, value: delta, to: statsMonth) {
-            statsMonth = newDate
-            loadStats()
-        }
-    }
-    
-    func loadData() {
-        print("🔄 [DEBUG] loadData вызван (User: \(selectedUserId == nil ? "All" : "\(selectedUserId!)"))")
-        isLoading = true
-        errorMessage = nil
-        loadBalance()
-        loadStats()
-    }
-    
-    func loadBalance() {
-        let formatter = DateFormatter()
-        formatter.dateFormat = "yyyy-MM-dd HH:mm:ss"
-        let dateStr = formatter.string(from: balanceDate)
+    func saveTransaction(amount: Double, type: String, categoryId: Int, description: String, date: Date) {
+        guard let token = authManager.token else { return }
+        var req = URLRequest(url: URL(string: "\(authManager.baseURL)/budget/transactions")!)
+        req.httpMethod = "POST"
+        req.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        req.setValue("application/json", forHTTPHeaderField: "Content-Type")
         
-        authManager.getDashboardSummary(asOfDate: dateStr, userId: selectedUserId) { result in
-            DispatchQueue.main.async {
-                switch result {
-                case .success(let data):
-                    self.summary = data
-                case .failure(let error):
-                    self.errorMessage = "Ошибка загрузки баланса: \(error.localizedDescription)"
-                }
-                
-                if self.stats != nil || self.errorMessage != nil {
-                    self.isLoading = false
-                }
-            }
-        }
+        let isoFormatter = ISO8601DateFormatter()
+        var body: [String: Any] = ["amount": amount, "transaction_type": type, "category_id": categoryId, "description": description, "date": isoFormatter.string(from: date)]
+        req.httpBody = try? JSONSerialization.data(withJSONObject: body)
+        
+        URLSession.shared.dataTask(with: req) { _, _, _ in
+            DispatchQueue.main.async { showingTransactionSheet = false }
+        }.resume()
     }
     
-    func loadStats() {
-        let comps = Calendar.current.dateComponents([.year, .month], from: statsMonth)
-        let y = comps.year ?? 2026
-        let m = comps.month ?? 1
+    func createEvent(title: String, desc: String, date: Date, type: String) {
+        guard let token = authManager.token else { return }
+        let urlStr = authManager.baseURL.hasSuffix("/") ? "\(authManager.baseURL)calendar/events" : "\(authManager.baseURL)/calendar/events"
+        var req = URLRequest(url: URL(string: urlStr)!)
+        req.httpMethod = "POST"
+        req.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        req.setValue("application/json", forHTTPHeaderField: "Content-Type")
         
-        authManager.getMonthlyStats(year: y, month: m, userId: selectedUserId) { result in
-            DispatchQueue.main.async {
-                switch result {
-                case .success(let data):
-                    self.stats = data
-                case .failure(let error):
-                    self.errorMessage = "Ошибка загрузки статистики: \(error.localizedDescription)"
-                }
-                
-                if self.summary != nil || self.errorMessage != nil {
-                    self.isLoading = false
-                }
-            }
+        let isoFormatter = ISO8601DateFormatter()
+        let body: [String: Any] = [
+            "title": title,
+            "description": desc,
+            "event_date": isoFormatter.string(from: date),
+            "event_type": type
+        ]
+        req.httpBody = try? JSONSerialization.data(withJSONObject: body)
+        
+        URLSession.shared.dataTask(with: req) { _, _, _ in
+            DispatchQueue.main.async { showingEventSheet = false }
+        }.resume()
+    }
+    
+    func saveLog(type: String, startTime: Date, endTime: Date?, note: String) {
+        guard let token = authManager.token else { return }
+        var req = URLRequest(url: URL(string: "\(authManager.baseURL)/tracker/logs")!)
+        req.httpMethod = "POST"
+        req.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        req.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        
+        let isoFormatter = ISO8601DateFormatter()
+        var body: [String: Any] = [
+            "event_type": type,
+            "start_time": isoFormatter.string(from: startTime)
+        ]
+        if let end = endTime {
+            body["end_time"] = isoFormatter.string(from: end)
         }
+        if !note.isEmpty {
+            body["note"] = note
+        }
+        
+        req.httpBody = try? JSONSerialization.data(withJSONObject: body)
+        
+        URLSession.shared.dataTask(with: req) { _, _, _ in
+            DispatchQueue.main.async { showingTrackerSheet = false }
+        }.resume()
     }
 }
 
-// --- Подвид: Фильтр пользователей ---
-struct UserFilterView: View {
-    @Binding var selectedUserId: Int?
-    let users: [[String: Any]]
-    @Binding var isPresented: Bool
-    
-    // Добавляем функцию обновления из родительского вида
-    var onUpdate: () -> Void
+// --- Компонент карточки действия ---
+struct ActionCard: View {
+    let title: String
+    let icon: String
+    let color: Color
+    let action: () -> Void
     
     var body: some View {
-        NavigationStack {
-            List {
-                Section(header: Text("Фильтр")) {
-                    Button(action: {
-                        selectedUserId = nil
-                        isPresented = false
-                        onUpdate() // Вызываем обновление
-                    }) {
-                        HStack {
-                            Text("Все пользователи")
-                                .fontWeight(selectedUserId == nil ? .bold : .regular)
-                            Spacer()
-                            if selectedUserId == nil {
-                                Image(systemName: "checkmark")
-                                    .foregroundColor(.blue)
-                            }
-                        }
-                    }
+        Button(action: action) {
+            VStack(spacing: 12) {
+                ZStack {
+                    Circle()
+                        .fill(color.opacity(0.15))
+                        .frame(width: 60, height: 60)
+                    Image(systemName: icon)
+                        .font(.title)
+                        .foregroundColor(color)
                 }
-                
-                Section(header: Text("Конкретный пользователь")) {
-                    ForEach(0..<users.count, id: \.self) { index in
-                        let user = users[index]
-                        if let id = user["id"] as? Int, let name = user["name"] as? String {
-                            Button(action: {
-                                selectedUserId = id
-                                isPresented = false
-                                onUpdate() // Вызываем обновление
-                            }) {
-                                HStack {
-                                    Text(name)
-                                        .fontWeight(selectedUserId == id ? .bold : .regular)
-                                    Spacer()
-                                    if selectedUserId == id {
-                                        Image(systemName: "checkmark")
-                                            .foregroundColor(.blue)
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
+                Text(title)
+                    .font(.subheadline)
+                    .fontWeight(.medium)
+                    .foregroundColor(.primary)
             }
-            .navigationTitle("Выберите пользователя")
-            .toolbar {
-                ToolbarItem(placement: .confirmationAction) {
-                    Button("Готово") {
-                        isPresented = false
-                        onUpdate() // На случай если нажмут Готово без выбора
-                    }
-                }
-            }
+            .frame(maxWidth: .infinity)
+            .frame(height: 120)
+            .background(Color(.systemBackground))
+            .cornerRadius(20)
+            .shadow(color: Color.black.opacity(0.05), radius: 8, x: 0, y: 4)
         }
     }
-}
-#Preview {
-    DashboardView()
 }

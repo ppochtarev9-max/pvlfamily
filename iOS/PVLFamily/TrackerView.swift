@@ -6,21 +6,6 @@ struct TrackerView: View {
     @State private var showingAddSheet = false
     @State private var selectedLog: BabyLog? = nil
     
-    // Быстрые типы событий
-    struct QuickAction {
-        let type: String
-        let icon: String
-        let color: Color
-        let title: String
-    }
-    
-    let quickActions: [QuickAction] = [
-        .init(type: "sleep", icon: "moon.fill", color: .purple, title: "Сон"),
-        .init(type: "feed", icon: "fork.knife", color: .orange, title: "Еда"),
-        .init(type: "diaper", icon: "drop.triangle.fill", color: .blue, title: "Памперс"),
-        .init(type: "play", icon: "star.fill", color: .pink, title: "Игра")
-    ]
-    
     struct BabyLog: Identifiable, Codable {
         let id: Int
         let user_id: Int?
@@ -33,61 +18,25 @@ struct TrackerView: View {
     
     var body: some View {
         NavigationStack {
-            ScrollView {
-                VStack(spacing: 20) {
-                    
-                    // --- БЛОК БЫСТРЫХ ДЕЙСТВИЙ ---
-                    HStack(spacing: 12) {
-                        ForEach(quickActions, id: \.type) { action in
-                            Button(action: {
-                                startNewLog(type: action.type)
-                            }) {
-                                VStack(spacing: 8) {
-                                    ZStack {
-                                        Circle()
-                                            .fill(action.color.opacity(0.15))
-                                            .frame(width: 50, height: 50)
-                                        Image(systemName: action.icon)
-                                            .font(.title2)
-                                            .foregroundColor(action.color)
-                                    }
-                                    Text(action.title)
-                                        .font(.caption)
-                                        .fontWeight(.medium)
-                                        .foregroundColor(.primary)
-                                }
-                            }
+            Group {
+                if logs.isEmpty {
+                    ContentUnavailableView(
+                        "Записей пока нет",
+                        systemImage: "heart.fill",
+                        description: Text("Нажмите +, чтобы добавить событие")
+                    )
+                } else {
+                    List {
+                        ForEach(logs.sorted(by: { $0.start_time > $1.start_time })) { log in
+                            LogCard(log: log, onTap: { selectedLog = log; showingAddSheet = true })
+                                .listRowInsets(EdgeInsets(top: 8, leading: 0, bottom: 8, trailing: 0))
+                                .listRowSeparator(.hidden)
                         }
                     }
-                    .padding()
-                    .background(Color(.systemBackground))
-                    .cornerRadius(20)
-                    .shadow(color: Color.black.opacity(0.05), radius: 8, x: 0, y: 4)
-                    
-                    // --- СПИСОК СОБЫТИЙ ---
-                    VStack(alignment: .leading, spacing: 12) {
-                        Text("История за сегодня")
-                            .font(.headline)
-                            .padding(.horizontal)
-                        
-                        if logs.isEmpty {
-                            ContentUnavailableView(
-                                "Записей пока нет",
-                                systemImage: "heart.fill",
-                                description: Text("Нажмите на кнопку выше, чтобы добавить событие")
-                            )
-                            .frame(maxWidth: .infinity, minHeight: 200)
-                        } else {
-                            ForEach(logs.sorted(by: { $0.start_time > $1.start_time })) { log in
-                                LogCard(log: log, onTap: { selectedLog = log; showingAddSheet = true })
-                            }
-                        }
-                    }
+                    .listStyle(.plain)
                 }
-                .padding()
             }
-            .background(Color(.systemGroupedBackground))
-            .navigationTitle("Трекер малыша")
+            .navigationTitle("Трекер")
             .toolbar {
                 ToolbarItem(placement: .topBarTrailing) {
                     Button(action: { showingAddSheet = true }) {
@@ -117,22 +66,8 @@ struct TrackerView: View {
         }
     }
     
-    func startNewLog(type: String) {
-        selectedLog = nil // Сброс выбора
-        // Передаем тип через Environment или глобальную переменную, но проще открыть форму с предустановкой
-        // Для простоты открываем форму, а тип выберем там (или доработаем FormView)
-        // В данной реализации FormView сам спросит тип, если не передан.
-        // Но мы можем передать "подсказку" через selectedLog с временным объектом или изменить сигнатуру.
-        // Самый простой способ сейчас: просто открыть форму, пользователь выберет тип.
-        // Или создадим заглушку:
-        showingAddSheet = true
-        // Примечание: Чтобы сразу задать тип, нужно немного изменить TrackerFormView, добавив параметр initialType.
-        // Сделаем это в следующем шаге, если потребуется. Пока просто открываем форму.
-    }
-    
     func loadLogs() {
         guard let token = authManager.token else { return }
-        // Фильтр по сегодня можно сделать на бэкенде, пока берем все последние
         var req = URLRequest(url: URL(string: "\(authManager.baseURL)/tracker/logs")!)
         req.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
         
@@ -155,12 +90,8 @@ struct TrackerView: View {
             "event_type": type,
             "start_time": isoFormatter.string(from: startTime)
         ]
-        if let end = endTime {
-            body["end_time"] = isoFormatter.string(from: end)
-        }
-        if !note.isEmpty {
-            body["note"] = note
-        }
+        if let end = endTime { body["end_time"] = isoFormatter.string(from: end) }
+        if !note.isEmpty { body["note"] = note }
         
         req.httpBody = try? JSONSerialization.data(withJSONObject: body)
         
@@ -189,7 +120,6 @@ struct TrackerView: View {
     }
 }
 
-// --- КАРТОЧКА СОБЫТИЯ ---
 struct LogCard: View {
     let log: TrackerView.BabyLog
     let onTap: () -> Void
@@ -197,59 +127,31 @@ struct LogCard: View {
     var body: some View {
         Button(action: onTap) {
             HStack(spacing: 16) {
-                // Иконка
                 ZStack {
-                    Circle()
-                        .fill(colorForType(log.event_type).opacity(0.15))
-                        .frame(width: 44, height: 44)
-                    Image(systemName: iconForType(log.event_type))
-                        .font(.title3)
-                        .foregroundColor(colorForType(log.event_type))
+                    Circle().fill(colorForType(log.event_type).opacity(0.15)).frame(width: 44, height: 44)
+                    Image(systemName: iconForType(log.event_type)).font(.title3).foregroundColor(colorForType(log.event_type))
                 }
                 
-                // Информация
                 VStack(alignment: .leading, spacing: 4) {
-                    Text(titleForType(log.event_type))
-                        .font(.headline)
-                        .foregroundColor(.primary)
-                    
+                    Text(titleForType(log.event_type)).font(.headline).foregroundColor(.primary)
                     HStack(spacing: 8) {
-                        Text(formatTime(log.start_time))
-                            .font(.caption)
-                            .foregroundColor(.secondary)
-                        
+                        Text(formatTime(log.start_time)).font(.caption).foregroundColor(.secondary)
                         if let end = log.end_time {
-                            Text("•")
-                            Text(formatTime(end))
-                                .font(.caption)
-                                .foregroundColor(.secondary)
-                            
+                            Text("•").foregroundColor(.secondary)
+                            Text(formatTime(end)).font(.caption).foregroundColor(.secondary)
                             if let dur = log.duration_minutes {
-                                Text("• \(dur) мин")
-                                    .font(.caption)
-                                    .fontWeight(.medium)
-                                    .foregroundColor(.blue)
+                                Text("• \(dur) мин").font(.caption).fontWeight(.medium).foregroundColor(.blue)
                             }
                         } else {
-                            Text("...в процессе")
-                                .font(.caption)
-                                .foregroundColor(.orange)
-                                .fontWeight(.medium)
+                            Text("...в процессе").font(.caption).foregroundColor(.orange).fontWeight(.medium)
                         }
                     }
-                    
                     if let note = log.note, !note.isEmpty {
-                        Text(note)
-                            .font(.caption)
-                            .foregroundColor(.secondary)
-                            .lineLimit(1)
+                        Text(note).font(.caption).foregroundColor(.secondary).lineLimit(1)
                     }
                 }
-                
                 Spacer()
-                Image(systemName: "chevron.right")
-                    .font(.caption)
-                    .foregroundColor(.gray)
+                Image(systemName: "chevron.right").font(.caption).foregroundColor(.gray)
             }
             .padding()
             .background(Color(.systemBackground))

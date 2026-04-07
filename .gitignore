@@ -17,3 +17,6 @@ DerivedData/
 *.db
 *.db
 **/.DS_Store
+.env
+*.bak.py
+*.bak

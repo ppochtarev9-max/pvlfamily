@@ -19,19 +19,25 @@ def detect_encoding(path):
 
 def main():
     print(f"=== ЗАГРУЗКА ИСТОРИИ ({USER_NAME}) ===")
-    from app.database import SessionLocal
-    from app.models import User, Category, Transaction
+    
+    # ИМПОРТ ВНУТРИ ФУНКЦИИ
+    from app.database import SessionLocal, engine, Base
+    from app import models
+    
+    # ГАРАНТИЯ: Создаем таблицы по актуальным моделям перед работой
+    # Это добавит отсутствующие колонки (например, creator_name_snapshot), если их нет
+    Base.metadata.create_all(bind=engine)
     
     db = SessionLocal()
     try:
-        user = db.query(User).filter(User.name == USER_NAME).first()
+        user = db.query(models.User).filter(models.User.name == USER_NAME).first()
         if not user:
             print(f"❌ Пользователь '{USER_NAME}' не найден!")
             return
         
         print("🧹 Полная очистка данных...")
-        db.query(Transaction).filter(Transaction.created_by_user_id == user.id).delete()
-        db.query(Category).filter().delete()
+        db.query(models.Transaction).filter(models.Transaction.created_by_user_id == user.id).delete()
+        db.query(models.Category).filter().delete()
         db.commit()
         
         if not os.path.exists(CSV_FILE):
@@ -70,9 +76,9 @@ def main():
                 if c_name:
                     key = (c_name, None)
                     if key not in cat_cache:
-                        existing = db.query(Category).filter(Category.name==c_name, Category.parent_id.is_(None)).first()
+                        existing = db.query(models.Category).filter(models.Category.name==c_name, models.Category.parent_id.is_(None)).first()
                         if not existing:
-                            existing = Category(name=c_name, type=tx_type, parent_id=None)
+                            existing = models.Category(name=c_name, type=tx_type, parent_id=None)
                             db.add(existing)
                             db.flush()
                             cnt_cat += 1
@@ -80,19 +86,18 @@ def main():
                         cat_cache[key] = existing.id
                     cat_id = cat_cache[key]
 
-                # 2. Создаем/ищем Подкатегорию (ВСЕ, включая "Я")
+                # 2. Создаем/ищем Подкатегорию
                 final_id = cat_id
                 if s_name and cat_id:
-                    # Игнорируем только пустые или пробелы
                     clean_sub = s_name.strip()
                     if clean_sub:
                         key_s = (clean_sub, cat_id)
                         if key_s not in cat_cache:
-                            existing_s = db.query(Category).filter(Category.name==clean_sub, Category.parent_id==cat_id).first()
+                            existing_s = db.query(models.Category).filter(models.Category.name==clean_sub, models.Category.parent_id==cat_id).first()
                             if not existing_s:
-                                parent = db.get(Category, cat_id)
+                                parent = db.get(models.Category, cat_id)
                                 p_type = parent.type if parent else tx_type
-                                existing_s = Category(name=clean_sub, type=p_type, parent_id=cat_id)
+                                existing_s = models.Category(name=clean_sub, type=p_type, parent_id=cat_id)
                                 db.add(existing_s)
                                 db.flush()
                                 cnt_cat += 1
@@ -101,9 +106,14 @@ def main():
                         final_id = cat_cache[key_s]
 
                 if final_id:
-                    tx = Transaction(
-                        amount=amt, date=dt, category_id=final_id,
-                        transaction_type=tx_type, created_by_user_id=user.id
+                    # СОЗДАНИЕ ТРАНЗАКЦИИ С НОВЫМ ПОЛЕМ
+                    tx = models.Transaction(
+                        amount=amt, 
+                        date=dt, 
+                        category_id=final_id,
+                        transaction_type=tx_type, 
+                        created_by_user_id=user.id,
+                        creator_name_snapshot=user.name  # Явно передаем имя
                     )
                     db.add(tx)
                     cnt_tx += 1

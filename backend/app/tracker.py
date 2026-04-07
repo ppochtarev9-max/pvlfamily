@@ -30,7 +30,8 @@ def get_logs(
     result = []
     for log in logs:
         log_dict = BabyLogOut.from_orm(log)
-        log_dict.creator_name = current_user.name # Упрощенно берем имя текущего
+        # Исправление: Используем сохраненное имя (snapshot) или заглушку
+        log_dict.creator_name = log.creator_name_snapshot if log.creator_name_snapshot else "Пользователь (удален)"
         result.append(log_dict)
         
     return result
@@ -53,7 +54,8 @@ def create_log(
         start_time=log_in.start_time,
         end_time=log_in.end_time,
         duration_minutes=duration,
-        note=log_in.note
+        note=log_in.note,
+        creator_name_snapshot=current_user.name  # СОХРАНЯЕМ ИМЯ ПОЛЬЗОВАТЕЛЯ
     )
     
     db.add(db_log)
@@ -62,7 +64,7 @@ def create_log(
     
     # Добавляем имя для ответа
     res = BabyLogOut.from_orm(db_log)
-    res.creator_name = current_user.name
+    res.creator_name = db_log.creator_name_snapshot if db_log.creator_name_snapshot else "Пользователь (удален)"
     return res
 
 @router.put("/logs/{log_id}", response_model=BabyLogOut)
@@ -88,10 +90,11 @@ def update_log(
     db.commit()
     db.refresh(db_log)
     
+    # Добавляем имя для ответа
     res = BabyLogOut.from_orm(db_log)
-    res.creator_name = current_user.name
+    res.creator_name = db_log.creator_name_snapshot if db_log.creator_name_snapshot else "Пользователь (удален)"
     return res
-
+    
 @router.delete("/logs/{log_id}")
 def delete_log(
     log_id: int,

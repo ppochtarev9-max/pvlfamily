@@ -17,7 +17,6 @@ router = APIRouter()
 def get_categories(db: Session = Depends(get_db)):
     return db.query(models.Category).all()
 
-# ПУТЬ БЕЗ СЛЭША В КОНЦЕ! И СТРОГО ДО МАРШРУТОВ С {ID}
 @router.post("/categories", response_model=schemas.CategoryOut, status_code=201)
 def create_category(cat: schemas.CategoryCreate, db: Session = Depends(get_db)):
     if cat.parent_id:
@@ -60,13 +59,11 @@ def delete_category(cat_id: int, db: Session = Depends(get_db)):
     db.commit()
     return {"status": "deleted"}
 
-
 # ==========================================
-# СКРЫТИЕ КАТЕГОРИЙ (РЕКУРСИВНОЕ)
+# СКРЫТИЕ КАТЕГОРИЙ
 # ==========================================
 
 def get_all_descendants(db: Session, parent_id: int) -> List[int]:
-    """Рекурсивно собирает ID всех подкатегорий"""
     ids = []
     children = db.query(models.Category).filter(models.Category.parent_id == parent_id).all()
     for child in children:
@@ -114,14 +111,29 @@ def unhide_category(cat_id: int, db: Session = Depends(get_db)):
 def make_tx_resp(t):
     if not t:
         return None
+    
+    # Формирование пути категории
     path = t.category.name if t.category else "No Cat"
     if t.category and t.category.parent:
         path = f"{t.category.parent.name} / {t.category.name}"
     
+    # Форматирование даты
     if isinstance(t.date, datetime):
         date_str = t.date.strftime("%Y-%m-%dT%H:%M:%S")
     else:
         date_str = str(t.date)
+        
+    # ЛОГИКА ОТОБРАЖЕНИЯ ИМЕНИ:
+    # 1. Если есть snapshot (сохраненное имя) - используем его.
+    # 2. Если snapshot нет, но есть связь с пользователем - берем имя из БД.
+    # 3. Если ничего нет - заглушка.
+    creator_display_name = "Неизвестно"
+    if t.creator_name_snapshot:
+        creator_display_name = t.creator_name_snapshot
+    elif t.creator:
+        creator_display_name = t.creator.name
+    else:
+        creator_display_name = "Пользователь (удален)"
         
     return schemas.TransactionOut(
         id=t.id, 
@@ -130,32 +142,25 @@ def make_tx_resp(t):
         category_id=t.category_id, 
         description=t.description,
         date=date_str,
-        creator_name=t.creator.name if t.creator else None,
+        creator_name=creator_display_name,
         category_name=path
     )
 
-# 1. СПИСОК (GET) - без ID
 @router.get("/transactions", response_model=List[schemas.TransactionOut])
 def get_transactions(response: Response, db: Session = Depends(get_db)):
     response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
     response.headers["Pragma"] = "no-cache"
     response.headers["Expires"] = "0"
     
-    # 1. Берем ВСЕ транзакции и сортируем ОТ СТАРЫХ К НОВЫМ (как в Excel)
     all_txs = db.query(models.Transaction).order_by(models.Transaction.date.asc()).all()
     
-    # 2. Считаем баланс последовательно: Предыдущий + Текущая
     current_balance = 0.0
     calculated_data = []
     
     for t in all_txs:
-        # Формула Excel: H_new = H_prev + amount
-        # Если расход (-5000), то 100000 + (-5000) = 95000. Верно.
-        # Если доход (+1000), то 95000 + 1000 = 96000. Верно.
         current_balance += t.amount
         calculated_data.append({'tx': t, 'balance': current_balance})
     
-    # 3. Переворачиваем список обратно (новые сверху), чтобы отдать в UI
     result = []
     for item in reversed(calculated_data):
         resp = make_tx_resp(item['tx'])
@@ -168,15 +173,17 @@ def get_transactions(response: Response, db: Session = Depends(get_db)):
 def create_transaction(
     tx: schemas.TransactionCreate, 
     db: Session = Depends(get_db),
-    current_user: models.User = Depends(get_current_user)  # Аргумент называется current_user
+    current_user: models.User = Depends(get_current_user)
 ):
+    # ИСПРАВЛЕНИЕ: Сохраняем имя пользователя в момент создания
     db_tx = models.Transaction(
         amount=tx.amount, 
         transaction_type=tx.transaction_type,
         category_id=tx.category_id, 
         description=tx.description,
         date=tx.date, 
-        created_by_user_id=current_user.id  # Используем current_user.id
+        created_by_user_id=current_user.id,
+        creator_name_snapshot=current_user.name  # <-- ЗАПОМИНАЕМ ИМЯ
     )
     db.add(db_tx)
     db.commit()
@@ -186,7 +193,6 @@ def create_transaction(
         raise HTTPException(status_code=500, detail="Ошибка создания")
     return resp
     
-# 3. МАРШРУТЫ С ID (GET, PUT, DELETE) - ТОЛЬКО ПОСЛЕ POST
 @router.get("/transactions/{tx_id}", response_model=schemas.TransactionOut)
 def get_transaction(tx_id: int, db: Session = Depends(get_db)):
     t = db.query(models.Transaction).filter(models.Transaction.id == tx_id).first()
@@ -220,13 +226,6 @@ def delete_transaction(tx_id: int, db: Session = Depends(get_db)):
     db.delete(obj)
     db.commit()
     
-    # Пауза для гарантии записи на диск
     time.sleep(0.15)
     
     return {"status": "deleted"}
-
-
-
-
-
-

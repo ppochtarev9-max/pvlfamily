@@ -93,13 +93,12 @@ struct TransactionFormView: View {
                                         isAmountFocused = true
                                     }
                                 }
-                                .onChange(of: amount) { newValue in
+                                .onChange(of: amount) { oldValue, newValue in
                                     let allowed = CharacterSet(charactersIn: "0123456789.,")
                                     if newValue.rangeOfCharacter(from: allowed.inverted) != nil {
                                         amount = newValue.filter { allowed.contains($0.unicodeScalars.first!) }
                                     }
                                 }
-                            
                             Picker("Тип операции", selection: $type) {
                                 Text("Расход").tag("expense")
                                 Text("Доход").tag("income")
@@ -160,7 +159,7 @@ struct TransactionFormView: View {
                             }
                             .disabled(isSaving)
                             
-                            if let catId = selectedCategoryId, !subCategories.isEmpty {
+                            if let _ = selectedCategoryId, !subCategories.isEmpty {
                                 Menu {
                                     ForEach(subCategories) { sub in
                                         Button(action: {

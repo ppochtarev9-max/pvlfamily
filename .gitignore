@@ -1,22 +1,71 @@
-# Python
+```
+# Logs and temp files
+*.log
+*.tmp
+*.swp
+
+# Environment
+.env
+.env.local
+.env.*
+
+# Editors
+.vscode/
+.idea/
+
+# Dependencies
+node_modules/
+.venv/
 venv/
 __pycache__/
+.mypy_cache/
+.pytest_cache/
+dist/
+build/
+target/
+.gradle/
+
+# Compiled files
 *.pyc
-*.db
+*.class
+*.o
+*.exe
+*.dll
+*.so
+*.a
+*.obj
+*.out
+
+# System files
 .DS_Store
+Thumbs.db
 
-# Xcode
-DerivedData/
-*.xcuserdata
-*.xcscheme
-.project.pbxproj.user
+# Coverage
+coverage/
+htmlcov/
+.coverage
 
-# IDE
-.idea/
-.vscode/
-*.db
-*.db
-**/.DS_Store
-.env
-*.bak.py
-*.bak
+# Compressed files
+*.zip
+*.gz
+*.tar
+*.tgz
+*.bz2
+*.xz
+*.7z
+*.rar
+*.zst
+*.lz4
+*.lzh
+*.cab
+*.arj
+*.rpm
+*.deb
+*.Z
+*.lz
+*.lzo
+*.tar.gz
+*.tar.bz2
+*.tar.xz
+*.tar.zst
+```

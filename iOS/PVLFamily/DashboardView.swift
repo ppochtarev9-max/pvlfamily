@@ -158,7 +158,7 @@ struct DashboardView: View {
         req.setValue("application/json", forHTTPHeaderField: "Content-Type")
         
         let isoFormatter = ISO8601DateFormatter()
-        var body: [String: Any] = ["amount": amount, "transaction_type": type, "category_id": categoryId, "description": description, "date": isoFormatter.string(from: date)]
+        let body: [String: Any] = ["amount": amount, "transaction_type": type, "category_id": categoryId, "description": description, "date": isoFormatter.string(from: date)]
         req.httpBody = try? JSONSerialization.data(withJSONObject: body)
         
         URLSession.shared.dataTask(with: req) { data, response, error in

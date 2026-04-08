@@ -144,7 +144,7 @@ struct TrackerFormView: View {
     }
     
     func submit() {
-        guard let token = authManager.token else {
+        if authManager.token == nil {
             errorMessage = "Пользователь не авторизован"
             showErrorAlert = true
             return

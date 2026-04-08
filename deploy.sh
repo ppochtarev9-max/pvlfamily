@@ -76,7 +76,7 @@ echo "☁️ 3. Обновление кода на сервере $REMOTE_IP..."
 # Мы формируем команду динамически внутри heredoc, используя переменные окружения
 ssh -i "$REMOTE_SSH_KEY" "$REMOTE_USER@$REMOTE_IP" << ENDSSH
 set -e  # Выход при ошибке
-cd $REMOTE_APP_DIR
+cd $REMOTE_APP_ROOT
 git pull origin main
 # Определение пути к python/venv на сервере
 SERVER_VENV=""

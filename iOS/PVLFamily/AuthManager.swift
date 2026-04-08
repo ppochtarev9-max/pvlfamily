@@ -1,41 +1,114 @@
 import Foundation
 import Combine
 
-// Режимы сервера (объявлен один раз глобально)
+// --- МОДЕЛИ ОШИБОК ---
+enum APIError: LocalizedError {
+    case networkError(Error)
+    case noData
+    case decodingError(Error)
+    case httpError(statusCode: Int, message: String)
+    case invalidURL
+    case unauthorized
+    case serverError
+    
+    var errorDescription: String? {
+        switch self {
+        case .networkError(let error):
+            return "Ошибка сети: \(error.localizedDescription)"
+        case .noData:
+            return "Нет данных от сервера"
+        case .decodingError(let error):
+            return "Ошибка формата данных: \(error.localizedDescription)"
+        case .httpError(let code, let msg):
+            if code == 400 { return "Неверные данные: \(msg)" }
+            if code == 401 { return "Не авторизован: \(msg)" }
+            if code == 404 { return "Не найдено: \(msg)" }
+            if code >= 500 { return "Ошибка сервера (\(code)): \(msg)" }
+            return "Ошибка HTTP \(code): \(msg)"
+        case .invalidURL:
+            return "Неверный URL"
+        case .unauthorized:
+            return "Сессия истекла. Войдите снова."
+        case .serverError:
+            return "Сервер временно недоступен"
+        }
+    }
+}
+
+// Режимы сервера
 enum ServerMode { case local, cloud }
 
 class AuthManager: ObservableObject {
     @Published var isLoggedIn: Bool = false
     @Published var userName: String?
     @Published var token: String?
-    @Published var userId: Int? // Явное хранение ID
+    @Published var userId: Int?
     @Published var errorMessage: String?
     @Published var users: [[String: Any]] = []
     
-    // Ссылка на выбранный сервер
     @Published var selectedServer: ServerMode = .local
+    var baseURL: String = "http://127.0.0.1:8000"
     
-    // Метод обновления URL
+    // Конфигурация сессии
+    private let session: URLSession = {
+        let config = URLSessionConfiguration.default
+        config.timeoutIntervalForRequest = 10 // Таймаут запроса
+        config.timeoutIntervalForResource = 30 // Таймаут ресурса
+        return URLSession(configuration: config)
+    }()
+    
+    init() {
+        updateBaseURL()
+        loadStoredUser()
+        loadUsers()
+    }
+    
     func updateBaseURL() {
         switch selectedServer {
         case .local: self.baseURL = "http://127.0.0.1:8000"
         case .cloud: self.baseURL = "http://213.171.28.80:8000"
         }
+        print("🌐 Сервер переключен на: \(baseURL)")
     }
     
-    var baseURL: String = "http://127.0.0.1:8000"
+    // --- ВСПОМОГАТЕЛЬНЫЕ МЕТОДЫ ---
     
-    init() {
-        loadStoredUser()
-        loadUsers()
+    /// Проверяет HTTP статус и возвращает понятную ошибку
+    private func handleHTTPResponse(_ response: URLResponse?, data: Data?) -> Result<Void, APIError> {
+        guard let httpResponse = response as? HTTPURLResponse else {
+            return .failure(.serverError)
+        }
+        
+        // Успешные коды 2xx
+        if (200...299).contains(httpResponse.statusCode) {
+            return .success(())
+        }
+        
+        // Попытка распарсить сообщение об ошибке из тела ответа
+        var errorMsg = "Неизвестная ошибка"
+        if let data = data,
+           let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+           let detail = json["detail"] as? String {
+            errorMsg = detail
+        } else if let data = data, let str = String(data: data, encoding: .utf8) {
+            errorMsg = str
+        }
+        
+        print("❌ HTTP Error \(httpResponse.statusCode): \(errorMsg)")
+        
+        if httpResponse.statusCode == 401 {
+            return .failure(.unauthorized)
+        }
+        
+        return .failure(.httpError(statusCode: httpResponse.statusCode, message: errorMsg))
     }
+    
+    // --- ОСНОВНЫЕ МЕТОДЫ ---
     
     func loadStoredUser() {
-        // Проверка наличия токена и имени
         if let savedToken = UserDefaults.standard.string(forKey: "userToken"),
            let savedName = UserDefaults.standard.string(forKey: "userName") {
             
-            // Читаем ID. integer(forKey:) возвращает 0, если ключа нет, поэтому проверяем наличие ключа отдельно
             let hasIdKey = UserDefaults.standard.object(forKey: "userId") != nil
             let savedId = UserDefaults.standard.integer(forKey: "userId")
             
@@ -46,7 +119,6 @@ class AuthManager: ObservableObject {
                 self.isLoggedIn = true
                 print("🔄 ВОССТАНОВЛЕН ПОЛЬЗОВАТЕЛЬ: \(savedName) (ID: \(savedId))")
             } else {
-                // Если ID нет или он 0, считаем сессию невалидной
                 print("⚠️ Найден токен, но нет ID. Выполняется выход.")
                 self.logout()
             }
@@ -54,12 +126,34 @@ class AuthManager: ObservableObject {
     }
     
     func loadUsers() {
-        guard let url = URL(string: "\(baseURL)/auth/users") else { return }
-        URLSession.shared.dataTask(with: url) { data, _, _ in
-            guard let data = data,
-                  let json = try? JSONSerialization.jsonObject(with: data) as? [[String: Any]] else { return }
+        guard let url = URL(string: "\(baseURL)/auth/users") else {
+            print("❌ Ошибка URL при загрузке пользователей")
+            return
+        }
+        
+        var req = URLRequest(url: url)
+        req.timeoutInterval = 10
+        
+        session.dataTask(with: req) { data, response, error in
             DispatchQueue.main.async {
-                self.users = json
+                if let error = error {
+                    print("❌ Ошибка сети при загрузке пользователей: \(error)")
+                    self.errorMessage = APIError.networkError(error).errorDescription
+                    return
+                }
+                
+                // Проверка статуса
+                switch self.handleHTTPResponse(response, data: data) {
+                case .success:
+                    guard let data = data,
+                          let json = try? JSONSerialization.jsonObject(with: data) as? [[String: Any]] else {
+                        print("❌ Ошибка декодирования пользователей")
+                        return
+                    }
+                    self.users = json
+                case .failure(let apiError):
+                    self.errorMessage = apiError.errorDescription
+                }
             }
         }.resume()
     }
@@ -70,40 +164,70 @@ class AuthManager: ObservableObject {
             return
         }
         
-        let url = URL(string: "\(baseURL)/auth/login")!
+        guard let url = URL(string: "\(baseURL)/auth/login") else {
+            errorMessage = APIError.invalidURL.errorDescription
+            return
+        }
+        
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        request.httpBody = try? JSONSerialization.data(withJSONObject: ["name": name])
+        request.timeoutInterval = 10
         
-        URLSession.shared.dataTask(with: request) { data, _, error in
+        do {
+            request.httpBody = try JSONSerialization.data(withJSONObject: ["name": name])
+        } catch {
+            errorMessage = "Ошибка формирования запроса"
+            return
+        }
+        
+        session.dataTask(with: request) { data, response, error in
             DispatchQueue.main.async {
+                // 1. Ошибка сети
                 if let error = error {
-                    self.errorMessage = error.localizedDescription
-                    return
-                }
-                guard let data = data,
-                      let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-                      let accessToken = json["access_token"] as? String,
-                      let nameResp = json["name"] as? String,
-                      let userId = json["user_id"] as? Int else {
-                    self.errorMessage = "Ошибка сервера: неверный формат ответа"
+                    self.errorMessage = APIError.networkError(error).errorDescription
+                    print("❌ Network error: \(error)")
                     return
                 }
                 
-                self.token = accessToken
-                self.userName = nameResp
-                self.userId = userId
-                self.isLoggedIn = true
-                self.errorMessage = nil
-                
-                UserDefaults.standard.set(accessToken, forKey: "userToken")
-                UserDefaults.standard.set(nameResp, forKey: "userName")
-                UserDefaults.standard.set(userId, forKey: "userId")
-                
-                print("✅ ВХОД ВЫПОЛНЕН: \(nameResp) (ID: \(userId))")
-                
-                self.loadUsers()
+                // 2. Проверка HTTP статуса
+                switch self.handleHTTPResponse(response, data: data) {
+                case .success:
+                    guard let data = data else {
+                        self.errorMessage = APIError.noData.errorDescription
+                        return
+                    }
+                    
+                    // 3. Парсинг ответа
+                    do {
+                        guard let json = try JSONSerialization.jsonObject(with: data) as? [String: Any],
+                              let accessToken = json["access_token"] as? String,
+                              let nameResp = json["name"] as? String,
+                              let userId = json["user_id"] as? Int else {
+                            throw APIError.decodingError(NSError(domain: "JSON", code: -1, userInfo: [NSLocalizedDescriptionKey: "Неверный формат ответа"]))
+                        }
+                        
+                        self.token = accessToken
+                        self.userName = nameResp
+                        self.userId = userId
+                        self.isLoggedIn = true
+                        self.errorMessage = nil
+                        
+                        UserDefaults.standard.set(accessToken, forKey: "userToken")
+                        UserDefaults.standard.set(nameResp, forKey: "userName")
+                        UserDefaults.standard.set(userId, forKey: "userId")
+                        
+                        print("✅ ВХОД ВЫПОЛНЕН: \(nameResp) (ID: \(userId))")
+                        self.loadUsers()
+                        
+                    } catch {
+                        self.errorMessage = APIError.decodingError(error).errorDescription
+                        print("❌ Decoding error: \(error)")
+                    }
+                    
+                case .failure(let apiError):
+                    self.errorMessage = apiError.errorDescription
+                }
             }
         }.resume()
     }
@@ -121,29 +245,31 @@ class AuthManager: ObservableObject {
     
     func deleteUser(userId: Int, completion: @escaping (Result<Void, Error>) -> Void) {
         guard let token = token else {
-            completion(.failure(NSError(domain: "Auth", code: -1, userInfo: [NSLocalizedDescriptionKey: "Token missing"])))
+            completion(.failure(APIError.unauthorized))
             return
         }
         
         guard let url = URL(string: "\(baseURL)/auth/users/\(userId)") else {
-            completion(.failure(NSError(domain: "URL", code: -1, userInfo: [NSLocalizedDescriptionKey: "Invalid URL"])))
+            completion(.failure(APIError.invalidURL))
             return
         }
         
         var req = URLRequest(url: url)
         req.httpMethod = "DELETE"
         req.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        req.timeoutInterval = 10
         
-        URLSession.shared.dataTask(with: req) { data, response, error in
+        session.dataTask(with: req) { data, response, error in
             if let error = error {
-                completion(.failure(error))
+                completion(.failure(APIError.networkError(error)))
                 return
             }
             
-            if let httpResponse = response as? HTTPURLResponse, httpResponse.statusCode == 200 {
+            switch self.handleHTTPResponse(response, data: data) {
+            case .success:
                 completion(.success(()))
-            } else {
-                completion(.failure(NSError(domain: "Server", code: -1, userInfo: [NSLocalizedDescriptionKey: "Ошибка сервера при удалении"])))
+            case .failure(let apiError):
+                completion(.failure(apiError))
             }
         }.resume()
     }
@@ -194,7 +320,7 @@ extension AuthManager {
     
     private func request<T: Codable>(endpoint: String, method: String, queryParams: [String: String] = [:], completion: @escaping (Result<T, Error>) -> Void) {
         guard let token = token else {
-            completion(.failure(NSError(domain: "Auth", code: -1, userInfo: [NSLocalizedDescriptionKey: "Token missing"])))
+            completion(.failure(APIError.unauthorized))
             return
         }
         
@@ -204,29 +330,40 @@ extension AuthManager {
         }
         
         guard let url = components?.url else {
-            completion(.failure(NSError(domain: "URL", code: -1, userInfo: [NSLocalizedDescriptionKey: "Invalid URL"])))
+            completion(.failure(APIError.invalidURL))
             return
         }
         
         var req = URLRequest(url: url)
         req.httpMethod = method
         req.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        req.timeoutInterval = 10
         
-        URLSession.shared.dataTask(with: req) { data, resp, err in
+        session.dataTask(with: req) { data, resp, err in
+            // 1. Сетевая ошибка
             if let err = err {
-                completion(.failure(err))
-                return
-            }
-            guard let data = data else {
-                completion(.failure(NSError(domain: "Data", code: -1, userInfo: [NSLocalizedDescriptionKey: "No data"])))
+                completion(.failure(APIError.networkError(err)))
                 return
             }
             
-            do {
-                let decoded = try JSONDecoder().decode(T.self, from: data)
-                completion(.success(decoded))
-            } catch {
-                completion(.failure(error))
+            // 2. HTTP статус
+            switch self.handleHTTPResponse(resp, data: data) {
+            case .success:
+                guard let data = data else {
+                    completion(.failure(APIError.noData))
+                    return
+                }
+                
+                // 3. Декодирование
+                do {
+                    let decoded = try JSONDecoder().decode(T.self, from: data)
+                    completion(.success(decoded))
+                } catch {
+                    completion(.failure(APIError.decodingError(error)))
+                }
+                
+            case .failure(let apiError):
+                completion(.failure(apiError))
             }
         }.resume()
     }

@@ -105,15 +105,15 @@ struct BudgetDetailsView: View {
         }
         .navigationTitle("Детализация")
         .navigationBarTitleDisplayMode(.inline)
-        .toolbar {
-            ToolbarItem(placement: .topBarTrailing) {
+        //.toolbar {
+            //ToolbarItem(placement: .topBarTrailing) {
                 // Кнопка фильтра (вызывает sheet с UserFilterView внутри или общим)
                 // Для простоты реализуем локальный sheet фильтра пользователя, если нужно менять его здесь
-                Button(action: { /* Логика фильтра */ }) {
-                    Image(systemName: "line.3.horizontal.decrease.circle")
-                }
-            }
-        }
+                //Button(action: { /* Логика фильтра */ }) {
+                //    Image(systemName: "line.3.horizontal.decrease.circle")
+                //}
+            //}
+        //}
         .onAppear(perform: loadStats)
     }
     

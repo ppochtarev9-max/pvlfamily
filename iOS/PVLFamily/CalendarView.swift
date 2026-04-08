@@ -3,8 +3,16 @@ import Foundation
 
 struct CalendarView: View {
     @EnvironmentObject var authManager: AuthManager
+    
+    // Данные
     @State private var events: [CalendarEvent] = []
+    
+    // Состояния UI
     @State private var showingAddSheet = false
+    @State private var isLoading = false
+    @State private var errorMessage: String?
+    @State private var showErrorAlert = false
+    @State private var isSaving = false
     
     struct CalendarEvent: Identifiable, Codable {
         let id: Int
@@ -17,7 +25,16 @@ struct CalendarView: View {
     var body: some View {
         NavigationStack {
             Group {
-                if events.isEmpty {
+                if isLoading && events.isEmpty {
+                    ProgressView("Загрузка...")
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                } else if let error = errorMessage, events.isEmpty {
+                    ContentUnavailableView(
+                        "Ошибка загрузки",
+                        systemImage: "exclamationmark.triangle.fill",
+                        description: Text(error)
+                    )
+                } else if events.isEmpty {
                     ContentUnavailableView("Нет событий", systemImage: "calendar.badge.exclamationmark", description: Text("Добавьте новое событие"))
                 } else {
                     List {
@@ -39,11 +56,24 @@ struct CalendarView: View {
             .navigationTitle("Календарь")
             .toolbar {
                 ToolbarItem(placement: .topBarTrailing) {
-                    Button(action: { showingAddSheet = true }) { Image(systemName: "plus") }
+                    Button(action: { showingAddSheet = true }) {
+                        Image(systemName: "plus")
+                            .opacity(isSaving ? 0.5 : 1.0)
+                            .disabled(isSaving)
+                    }
                 }
             }
             .sheet(isPresented: $showingAddSheet) {
-                AddEventView(isPresented: $showingAddSheet, onSave: createEvent)
+                AddEventView(
+                    isPresented: $showingAddSheet,
+                    onSave: createEvent,
+                    isSaving: isSaving
+                )
+            }
+            .alert("Ошибка", isPresented: $showErrorAlert) {
+                Button("OK", role: .cancel) { errorMessage = nil }
+            } message: {
+                Text(errorMessage ?? "Неизвестная ошибка")
             }
             .onAppear(perform: loadEvents)
             .refreshable {
@@ -58,20 +88,68 @@ struct CalendarView: View {
     }
     
     func loadEvents() {
-        guard let token = authManager.token else { return }
+        guard let token = authManager.token else {
+            errorMessage = "Пользователь не авторизован"
+            showErrorAlert = true
+            return
+        }
+        
+        isLoading = true
+        errorMessage = nil
+        
         let urlStr = authManager.baseURL.hasSuffix("/") ? "\(authManager.baseURL)calendar/events" : "\(authManager.baseURL)/calendar/events"
         var req = URLRequest(url: URL(string: urlStr)!)
         req.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
         
-        URLSession.shared.dataTask(with: req) { data, _, error in
-            if let error = error { print("Error: \(error)"); return }
-            guard let data = data, let list = try? JSONDecoder().decode([CalendarEvent].self, from: data) else { return }
-            DispatchQueue.main.async { self.events = list }
+        URLSession.shared.dataTask(with: req) { data, response, error in
+            DispatchQueue.main.async {
+                isLoading = false
+                
+                if let error = error {
+                    errorMessage = "Ошибка сети: \(error.localizedDescription)"
+                    showErrorAlert = true
+                    return
+                }
+                
+                guard let httpResponse = response as? HTTPURLResponse else {
+                    errorMessage = "Неверный ответ сервера"
+                    showErrorAlert = true
+                    return
+                }
+                
+                if !(200...299).contains(httpResponse.statusCode) {
+                    errorMessage = "Ошибка сервера (код \(httpResponse.statusCode))"
+                    showErrorAlert = true
+                    return
+                }
+                
+                guard let data = data else {
+                    errorMessage = "Пустой ответ от сервера"
+                    showErrorAlert = true
+                    return
+                }
+                
+                do {
+                    let list = try JSONDecoder().decode([CalendarEvent].self, from: data)
+                    self.events = list
+                } catch {
+                    errorMessage = "Ошибка обработки данных: \(error.localizedDescription)"
+                    showErrorAlert = true
+                }
+            }
         }.resume()
     }
     
     func createEvent(title: String, desc: String, date: Date, type: String) {
-        guard let token = authManager.token else { return }
+        guard let token = authManager.token else {
+            errorMessage = "Пользователь не авторизован"
+            showErrorAlert = true
+            return
+        }
+        
+        isSaving = true
+        errorMessage = nil
+        
         let urlStr = authManager.baseURL.hasSuffix("/") ? "\(authManager.baseURL)calendar/events" : "\(authManager.baseURL)/calendar/events"
         var req = URLRequest(url: URL(string: urlStr)!)
         req.httpMethod = "POST"
@@ -87,8 +165,22 @@ struct CalendarView: View {
         ]
         req.httpBody = try? JSONSerialization.data(withJSONObject: body)
         
-        URLSession.shared.dataTask(with: req) { _, _, _ in
+        URLSession.shared.dataTask(with: req) { data, response, error in
             DispatchQueue.main.async {
+                isSaving = false
+                
+                if let error = error {
+                    errorMessage = "Ошибка сохранения: \(error.localizedDescription)"
+                    showErrorAlert = true
+                    return
+                }
+                
+                guard let httpResponse = response as? HTTPURLResponse, (200...299).contains(httpResponse.statusCode) else {
+                    errorMessage = "Ошибка сервера при создании события"
+                    showErrorAlert = true
+                    return
+                }
+                
                 showingAddSheet = false
                 loadEvents()
             }
@@ -96,13 +188,41 @@ struct CalendarView: View {
     }
     
     func deleteEvent(id: Int) {
-        guard let token = authManager.token else { return }
+        guard let token = authManager.token else {
+            errorMessage = "Пользователь не авторизован"
+            showErrorAlert = true
+            return
+        }
+        
+        // Оптимистичное удаление из UI
+        let originalEvents = events
+        events.removeAll { $0.id == id }
+        
         let urlStr = authManager.baseURL.hasSuffix("/") ? "\(authManager.baseURL)calendar/events/\(id)" : "\(authManager.baseURL)/calendar/events/\(id)"
         var req = URLRequest(url: URL(string: urlStr)!)
         req.httpMethod = "DELETE"
         req.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
-        URLSession.shared.dataTask(with: req) { _, _, _ in
-            DispatchQueue.main.async { loadEvents() }
+        
+        URLSession.shared.dataTask(with: req) { data, response, error in
+            DispatchQueue.main.async {
+                if let error = error {
+                    // Откат изменений при ошибке
+                    self.events = originalEvents
+                    errorMessage = "Ошибка удаления: \(error.localizedDescription)"
+                    showErrorAlert = true
+                    return
+                }
+                
+                guard let httpResponse = response as? HTTPURLResponse, (200...299).contains(httpResponse.statusCode) else {
+                    // Откат изменений при ошибке
+                    self.events = originalEvents
+                    errorMessage = "Ошибка сервера при удалении"
+                    showErrorAlert = true
+                    return
+                }
+                
+                loadEvents()
+            }
         }.resume()
     }
     
@@ -120,7 +240,7 @@ struct CalendarView: View {
     }
 }
 
-// --- НОВЫЙ КОМПОНЕНТ: КАРТОЧКА СОБЫТИЯ ---
+// --- КОМПОНЕНТ: КАРТОЧКА СОБЫТИЯ ---
 struct EventCard: View {
     let event: CalendarView.CalendarEvent
     
@@ -133,7 +253,6 @@ struct EventCard: View {
     
     var body: some View {
         HStack(spacing: 16) {
-            // Цветной индикатор слева
             Rectangle()
                 .fill(accentColor)
                 .frame(width: 6)
@@ -182,6 +301,8 @@ struct EventCard: View {
 struct AddEventView: View {
     @Binding var isPresented: Bool
     let onSave: (String, String, Date, String) -> Void
+    let isSaving: Bool
+    
     @State private var title: String = ""
     @State private var description: String = ""
     @State private var date: Date = Date()
@@ -200,12 +321,25 @@ struct AddEventView: View {
             }
             .navigationTitle("Новое событие")
             .toolbar {
-                ToolbarItem(placement: .cancellationAction) { Button("Отмена") { isPresented = false } }
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Отмена") { isPresented = false }
+                        .disabled(isSaving)
+                }
                 ToolbarItem(placement: .confirmationAction) {
                     Button("Сохранить") {
                         guard !title.isEmpty else { return }
                         onSave(title, description, date, type)
                     }
+                    .disabled(isSaving)
+                    .overlay(
+                        Group {
+                            if isSaving {
+                                ProgressView()
+                                    .progressViewStyle(CircularProgressViewStyle(tint: .white))
+                                    .scaleEffect(0.7)
+                            }
+                        }
+                    )
                 }
             }
         }

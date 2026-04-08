@@ -30,6 +30,11 @@ struct BudgetView: View {
     // Для выбора даты баланса
     @State private var balanceDate = Date()
     @State private var showBalanceCalendar = false
+    
+    // Состояния для обработки ошибок и загрузки
+    @State private var errorMessage: String?
+    @State private var showErrorAlert = false
+    @State private var isSaving = false
 
     // Вычисляемые свойства для доступных опций
     var availableCategories: [Category] {
@@ -289,6 +294,11 @@ struct BudgetView: View {
                     onDelete: deleteTransaction
                 )
             }
+            .alert("Ошибка", isPresented: $showErrorAlert) {
+                Button("OK", role: .cancel) { }
+            } message: {
+                Text(errorMessage ?? "Неизвестная ошибка")
+            }
             .onAppear(perform: loadData)
             .refreshable {
                 await withCheckedContinuation { continuation in
@@ -387,7 +397,11 @@ struct BudgetView: View {
             DispatchQueue.main.async {
                 switch result {
                 case .success(let data): self.summary = data
-                case .failure(let error): print("Ошибка баланса: \(error)")
+                case .failure(let error):
+                    print("❌ Ошибка баланса: \(error)")
+                    // Можно показать ошибку, если это критично
+                    // errorMessage = "Не удалось загрузить баланс: \(error.localizedDescription)"
+                    // showErrorAlert = true
                 }
                 self.isLoadingBalance = false
             }
@@ -395,13 +409,47 @@ struct BudgetView: View {
     }
     
     func loadTransactions() {
-        guard let token = authManager.token else { return }
+        guard let token = authManager.token else {
+            errorMessage = "Требуется авторизация"
+            showErrorAlert = true
+            return
+        }
+        
         var req = URLRequest(url: URL(string: "\(authManager.baseURL)/budget/transactions")!)
         req.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
         req.cachePolicy = .reloadIgnoringLocalCacheData
-        URLSession.shared.dataTask(with: req) { data, _, _ in
-            guard let data = data, let list = try? JSONDecoder().decode([Transaction].self, from: data) else { return }
-            DispatchQueue.main.async { self.allTransactions = list }
+        
+        URLSession.shared.dataTask(with: req) { data, response, error in
+            DispatchQueue.main.async {
+                if let error = error {
+                    print("❌ Ошибка сети (транзакции): \(error)")
+                    errorMessage = "Нет соединения с сервером"
+                    showErrorAlert = true
+                    return
+                }
+                
+                guard let httpResponse = response as? HTTPURLResponse, (200...299).contains(httpResponse.statusCode) else {
+                    print("❌ Ошибка HTTP (транзакции): \(response?.description ?? "nil")")
+                    errorMessage = "Ошибка сервера при загрузке транзакций"
+                    showErrorAlert = true
+                    return
+                }
+                
+                guard let data = data else {
+                    errorMessage = "Пустой ответ от сервера"
+                    showErrorAlert = true
+                    return
+                }
+                
+                do {
+                    let list = try JSONDecoder().decode([Transaction].self, from: data)
+                    self.allTransactions = list
+                } catch {
+                    print("❌ Ошибка парсинга JSON (транзакции): \(error)")
+                    errorMessage = "Неверный формат данных"
+                    showErrorAlert = true
+                }
+            }
         }.resume()
     }
     
@@ -409,9 +457,19 @@ struct BudgetView: View {
         guard let token = authManager.token else { return }
         var req = URLRequest(url: URL(string: "\(authManager.baseURL)/budget/categories")!)
         req.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
-        URLSession.shared.dataTask(with: req) { data, _, _ in
-            guard let data = data, let list = try? JSONDecoder().decode([Category].self, from: data) else { return }
-            DispatchQueue.main.async { categories = list }
+        
+        URLSession.shared.dataTask(with: req) { data, response, error in
+            DispatchQueue.main.async {
+                if let error = error {
+                    print("❌ Ошибка сети (категории): \(error)")
+                    return
+                }
+                guard let data = data, let list = try? JSONDecoder().decode([Category].self, from: data) else {
+                    print("❌ Ошибка парсинга категорий")
+                    return
+                }
+                categories = list
+            }
         }.resume()
     }
     
@@ -419,7 +477,13 @@ struct BudgetView: View {
     func editTransaction(_ t: Transaction) { editingTransactionId = t.id; loadCategories(); showingAddSheet = true }
     
     func saveTransaction(id: Int?, amount: Double, type: String, categoryId: Int, description: String, date: Date) {
-        guard let token = authManager.token else { return }
+        guard let token = authManager.token else {
+            errorMessage = "Требуется авторизация"
+            showErrorAlert = true
+            return
+        }
+        
+        isSaving = true
         var req = URLRequest(url: URL(string: "\(authManager.baseURL)/budget/transactions")!)
         req.httpMethod = (id != nil) ? "PUT" : "POST"
         if let tid = id { req.url = URL(string: "\(authManager.baseURL)/budget/transactions/\(tid)") }
@@ -430,19 +494,69 @@ struct BudgetView: View {
         var body: [String: Any] = ["amount": amount, "transaction_type": type, "category_id": categoryId, "description": description, "date": isoFormatter.string(from: date)]
         req.httpBody = try? JSONSerialization.data(withJSONObject: body)
         
-        URLSession.shared.dataTask(with: req) { _, _, _ in
-            DispatchQueue.main.async { showingAddSheet = false; editingTransactionId = nil; loadTransactions(); loadBalance() }
+        URLSession.shared.dataTask(with: req) { data, response, error in
+            DispatchQueue.main.async {
+                isSaving = false
+                
+                if let error = error {
+                    print("❌ Ошибка сохранения: \(error)")
+                    errorMessage = "Не удалось сохранить: \(error.localizedDescription)"
+                    showErrorAlert = true
+                    return
+                }
+                
+                guard let httpResponse = response as? HTTPURLResponse, (200...299).contains(httpResponse.statusCode) else {
+                    errorMessage = "Ошибка сервера при сохранении"
+                    showErrorAlert = true
+                    return
+                }
+                
+                // Успех
+                showingAddSheet = false
+                editingTransactionId = nil
+                loadTransactions()
+                loadBalance()
+            }
         }.resume()
     }
     
     func deleteTransaction(id: Int) {
-        guard let token = authManager.token else { return }
-        DispatchQueue.main.async { self.allTransactions.removeAll { $0.id == id } }
+        guard let token = authManager.token else {
+            errorMessage = "Требуется авторизация"
+            showErrorAlert = true
+            return
+        }
+        
+        // Оптимистичное обновление UI
+        let originalTransactions = allTransactions
+        allTransactions.removeAll { $0.id == id }
+        
         var req = URLRequest(url: URL(string: "\(authManager.baseURL)/budget/transactions/\(id)")!)
         req.httpMethod = "DELETE"
         req.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
-        URLSession.shared.dataTask(with: req) { _, _, error in
-            if error != nil { DispatchQueue.main.async { loadTransactions(); loadBalance() } }
+        
+        URLSession.shared.dataTask(with: req) { data, response, error in
+            DispatchQueue.main.async {
+                if let error = error {
+                    print("❌ Ошибка удаления: \(error)")
+                    // Откат изменений при ошибке
+                    self.allTransactions = originalTransactions
+                    self.errorMessage = "Не удалось удалить: \(error.localizedDescription)"
+                    self.showErrorAlert = true
+                    return
+                }
+                
+                guard let httpResponse = response as? HTTPURLResponse, (200...299).contains(httpResponse.statusCode) else {
+                    // Откат изменений при ошибке
+                    self.allTransactions = originalTransactions
+                    self.errorMessage = "Ошибка сервера при удалении"
+                    self.showErrorAlert = true
+                    return
+                }
+                
+                // Успех, баланс нужно обновить
+                loadBalance()
+            }
         }.resume()
     }
 }

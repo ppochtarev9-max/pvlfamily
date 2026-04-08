@@ -7,11 +7,17 @@ struct TrackerFormView: View {
     let onSave: (String, Date, Date?, String) -> Void
     let onDelete: (Int) -> Void
     
+    // Данные
     @State private var selectedType: String = "sleep"
     @State private var startTime: Date = Date()
     @State private var endTime: Date? = nil
     @State private var isOngoing: Bool = true
     @State private var note: String = ""
+    
+    // Состояния UI
+    @State private var isSaving = false
+    @State private var errorMessage: String?
+    @State private var showErrorAlert = false
     
     let types: [(id: String, name: String, icon: String)] = [
         ("sleep", "Сон", "moon.fill"),
@@ -41,6 +47,7 @@ struct TrackerFormView: View {
                                 .background(selectedType == type.id ? Color.blue : Color(.systemGray5))
                                 .cornerRadius(12)
                             }
+                            .disabled(isSaving)
                         }
                     }
                     .buttonStyle(PlainButtonStyle())
@@ -48,19 +55,23 @@ struct TrackerFormView: View {
                 
                 Section("Время") {
                     DatePicker("Начало", selection: $startTime, displayedComponents: [.date, .hourAndMinute])
+                        .disabled(isSaving)
                     
                     Toggle("Событие еще идет", isOn: $isOngoing)
+                        .disabled(isSaving)
                     
                     if !isOngoing {
                         DatePicker("Окончание", selection: Binding(
                             get: { endTime ?? Date() },
                             set: { endTime = $0 }
                         ), displayedComponents: [.date, .hourAndMinute])
+                        .disabled(isSaving)
                     }
                 }
                 
                 Section("Заметка") {
                     TextField("Например: хорошо покушал", text: $note)
+                        .disabled(isSaving)
                 }
                 
                 if let log = existingLog {
@@ -70,10 +81,17 @@ struct TrackerFormView: View {
                         }) {
                             HStack {
                                 Spacer()
-                                Text("Удалить запись")
+                                if isSaving {
+                                    ProgressView()
+                                        .progressViewStyle(CircularProgressViewStyle(tint: .red))
+                                        .scaleEffect(0.8)
+                                } else {
+                                    Text("Удалить запись")
+                                }
                                 Spacer()
                             }
                         }
+                        .disabled(isSaving)
                     }
                 }
                 
@@ -81,24 +99,34 @@ struct TrackerFormView: View {
                     Button(action: submit) {
                         HStack {
                             Spacer()
-                            Text(existingLog != nil ? "Сохранить" : "Добавить")
+                            if isSaving {
+                                ProgressView()
+                                    .progressViewStyle(CircularProgressViewStyle(tint: .white))
+                                    .scaleEffect(0.8)
+                            }
+                            Text(isSaving ? "Сохранение..." : (existingLog != nil ? "Сохранить" : "Добавить"))
                                 .fontWeight(.bold)
                             Spacer()
                         }
                     }
-                    .disabled(false) // Можно добавить валидацию
+                    .disabled(isSaving)
                 }
             }
             .navigationTitle(existingLog != nil ? "Редактирование" : "Новое событие")
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
                     Button("Отмена") { isPresented = false }
+                        .disabled(isSaving)
                 }
+            }
+            .alert("Ошибка", isPresented: $showErrorAlert) {
+                Button("OK", role: .cancel) { errorMessage = nil }
+            } message: {
+                Text(errorMessage ?? "Неизвестная ошибка")
             }
             .onAppear {
                 if let log = existingLog {
                     selectedType = log.event_type
-                    // Парсинг дат
                     let iso = ISO8601DateFormatter()
                     if let start = iso.date(from: log.start_time) {
                         startTime = start
@@ -116,7 +144,18 @@ struct TrackerFormView: View {
     }
     
     func submit() {
+        guard let token = authManager.token else {
+            errorMessage = "Пользователь не авторизован"
+            showErrorAlert = true
+            return
+        }
+        
+        isSaving = true
         let finalEndTime = isOngoing ? nil : endTime
         onSave(selectedType, startTime, finalEndTime, note)
+    }
+    
+    func setSaving(_ saving: Bool) {
+        self.isSaving = saving
     }
 }

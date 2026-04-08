@@ -2,9 +2,16 @@ import SwiftUI
 
 struct TrackerView: View {
     @EnvironmentObject var authManager: AuthManager
+    
+    // Данные
     @State private var logs: [BabyLog] = []
+    
+    // Состояния UI
     @State private var showingAddSheet = false
     @State private var selectedLog: BabyLog? = nil
+    @State private var isLoading = false
+    @State private var errorMessage: String?
+    @State private var showErrorAlert = false
     
     struct BabyLog: Identifiable, Codable {
         let id: Int
@@ -19,7 +26,16 @@ struct TrackerView: View {
     var body: some View {
         NavigationStack {
             Group {
-                if logs.isEmpty {
+                if isLoading && logs.isEmpty {
+                    ProgressView("Загрузка...")
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                } else if let error = errorMessage, logs.isEmpty {
+                    ContentUnavailableView(
+                        "Ошибка загрузки",
+                        systemImage: "exclamationmark.triangle.fill",
+                        description: Text(error)
+                    )
+                } else if logs.isEmpty {
                     ContentUnavailableView(
                         "Записей пока нет",
                         systemImage: "heart.fill",
@@ -54,6 +70,11 @@ struct TrackerView: View {
                     onDelete: deleteLog
                 )
             }
+            .alert("Ошибка", isPresented: $showErrorAlert) {
+                Button("OK", role: .cancel) { errorMessage = nil }
+            } message: {
+                Text(errorMessage ?? "Неизвестная ошибка")
+            }
             .onAppear(perform: loadLogs)
             .refreshable {
                 await withCheckedContinuation { continuation in
@@ -67,19 +88,65 @@ struct TrackerView: View {
     }
     
     func loadLogs() {
-        guard let token = authManager.token else { return }
+        guard let token = authManager.token else {
+            errorMessage = "Пользователь не авторизован"
+            showErrorAlert = true
+            return
+        }
+        
+        isLoading = true
+        errorMessage = nil
+        
         var req = URLRequest(url: URL(string: "\(authManager.baseURL)/tracker/logs")!)
         req.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
         
-        URLSession.shared.dataTask(with: req) { data, _, error in
-            if let error = error { print("Error loading logs: \(error)"); return }
-            guard let data = data, let list = try? JSONDecoder().decode([BabyLog].self, from: data) else { return }
-            DispatchQueue.main.async { self.logs = list }
+        URLSession.shared.dataTask(with: req) { data, response, error in
+            DispatchQueue.main.async {
+                isLoading = false
+                
+                if let error = error {
+                    errorMessage = "Ошибка сети: \(error.localizedDescription)"
+                    showErrorAlert = true
+                    return
+                }
+                
+                guard let httpResponse = response as? HTTPURLResponse else {
+                    errorMessage = "Неверный ответ сервера"
+                    showErrorAlert = true
+                    return
+                }
+                
+                if !(200...299).contains(httpResponse.statusCode) {
+                    errorMessage = "Ошибка сервера (код \(httpResponse.statusCode))"
+                    showErrorAlert = true
+                    return
+                }
+                
+                guard let data = data else {
+                    errorMessage = "Пустой ответ от сервера"
+                    showErrorAlert = true
+                    return
+                }
+                
+                do {
+                    let list = try JSONDecoder().decode([BabyLog].self, from: data)
+                    self.logs = list
+                } catch {
+                    errorMessage = "Ошибка обработки данных: \(error.localizedDescription)"
+                    showErrorAlert = true
+                }
+            }
         }.resume()
     }
     
+    // Исправленная функция saveLog - убираем completion из сигнатуры
     func saveLog(type: String, startTime: Date, endTime: Date?, note: String) {
-        guard let token = authManager.token else { return }
+        guard let token = authManager.token else {
+            errorMessage = "Пользователь не авторизован"
+            showErrorAlert = true
+            return
+        }
+        
         var req = URLRequest(url: URL(string: "\(authManager.baseURL)/tracker/logs")!)
         req.httpMethod = "POST"
         req.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
@@ -95,8 +162,23 @@ struct TrackerView: View {
         
         req.httpBody = try? JSONSerialization.data(withJSONObject: body)
         
-        URLSession.shared.dataTask(with: req) { _, _, _ in
+        URLSession.shared.dataTask(with: req) { data, response, error in
             DispatchQueue.main.async {
+                if let error = error {
+                    errorMessage = "Ошибка сохранения: \(error.localizedDescription)"
+                    showErrorAlert = true
+                    // Не закрываем форму при ошибке
+                    return
+                }
+                
+                guard let httpResponse = response as? HTTPURLResponse, (200...299).contains(httpResponse.statusCode) else {
+                    errorMessage = "Ошибка сервера при сохранении"
+                    showErrorAlert = true
+                    // Не закрываем форму при ошибке
+                    return
+                }
+                
+                // Успех - закрываем форму и обновляем список
                 showingAddSheet = false
                 selectedLog = nil
                 loadLogs()
@@ -104,14 +186,41 @@ struct TrackerView: View {
         }.resume()
     }
     
+    // Исправленная функция deleteLog - убираем completion из сигнатуры
     func deleteLog(id: Int) {
-        guard let token = authManager.token else { return }
+        guard let token = authManager.token else {
+            errorMessage = "Пользователь не авторизован"
+            showErrorAlert = true
+            return
+        }
+        
+        // Оптимистичное удаление из UI
+        let originalLogs = logs
+        logs.removeAll { $0.id == id }
+        
         var req = URLRequest(url: URL(string: "\(authManager.baseURL)/tracker/logs/\(id)")!)
         req.httpMethod = "DELETE"
         req.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
         
-        URLSession.shared.dataTask(with: req) { _, _, _ in
+        URLSession.shared.dataTask(with: req) { data, response, error in
             DispatchQueue.main.async {
+                if let error = error {
+                    // Откат изменений при ошибке
+                    self.logs = originalLogs
+                    errorMessage = "Ошибка удаления: \(error.localizedDescription)"
+                    showErrorAlert = true
+                    return
+                }
+                
+                guard let httpResponse = response as? HTTPURLResponse, (200...299).contains(httpResponse.statusCode) else {
+                    // Откат изменений при ошибке
+                    self.logs = originalLogs
+                    errorMessage = "Ошибка сервера при удалении"
+                    showErrorAlert = true
+                    return
+                }
+                
+                // Успех - закрываем форму и обновляем список
                 showingAddSheet = false
                 selectedLog = nil
                 loadLogs()

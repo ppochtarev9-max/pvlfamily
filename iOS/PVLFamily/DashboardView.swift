@@ -8,20 +8,21 @@ struct DashboardView: View {
     @State private var showingEventSheet = false
     @State private var showingTrackerSheet = false
     
-    // Для транзакции используем тип из BudgetView
+    // Данные и состояния загрузки
     @State private var transactionCategories: [BudgetView.Category] = []
-
+    @State private var isLoadingCategories = false
+    
+    // Состояния ошибок и сохранения
+    @State private var errorMessage: String?
+    @State private var showErrorAlert = false
+    @State private var isSavingTransaction = false
+    @State private var isSavingEvent = false
+    @State private var isSavingLog = false
+    
     var body: some View {
         NavigationStack {
             ScrollView {
                 VStack(spacing: 20) {
-                    
-                    // Заголовок
-//                    Text("Быстрые действия")
-//                        .font(.largeTitle)
-//                        .fontWeight(.bold)
-//                        .frame(maxWidth: .infinity, alignment: .leading)
-//                        .padding(.horizontal)
                     
                     // Сетка карточек
                     LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 16) {
@@ -49,7 +50,6 @@ struct DashboardView: View {
                         // Транзакция
                         ActionCard(title: "Транзакция", icon: "dollarsign.circle.fill", color: .green) {
                             loadCategories()
-                            showingTransactionSheet = true
                         }
                         
                         // Событие
@@ -59,10 +59,19 @@ struct DashboardView: View {
                     }
                     .padding(.horizontal)
                     
+                    if isLoadingCategories {
+                        ProgressView("Загрузка категорий...")
+                            .padding()
+                    }
                 }
                 .padding(.vertical)
             }
             .navigationTitle("Быстрые действия")
+            .alert("Ошибка", isPresented: $showErrorAlert) {
+                Button("OK", role: .cancel) { errorMessage = nil }
+            } message: {
+                Text(errorMessage ?? "Неизвестная ошибка")
+            }
             .sheet(isPresented: $showingTransactionSheet) {
                 TransactionFormView(
                     isPresented: $showingTransactionSheet,
@@ -75,7 +84,11 @@ struct DashboardView: View {
                 )
             }
             .sheet(isPresented: $showingEventSheet) {
-                AddEventView(isPresented: $showingEventSheet, onSave: createEvent)
+                AddEventView(
+                    isPresented: $showingEventSheet,
+                    onSave: createEvent,
+                    isSaving: isSavingEvent
+                )
             }
             .sheet(isPresented: $showingTrackerSheet) {
                 TrackerFormView(
@@ -90,20 +103,55 @@ struct DashboardView: View {
         }
     }
     
-    // --- Логика сохранения ---
+    // --- Логика загрузки и сохранения ---
     
     func loadCategories() {
-        guard let token = authManager.token else { return }
+        guard let token = authManager.token else {
+            errorMessage = "Пользователь не авторизован"
+            showErrorAlert = true
+            return
+        }
+        
+        isLoadingCategories = true
         var req = URLRequest(url: URL(string: "\(authManager.baseURL)/budget/categories")!)
         req.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
-        URLSession.shared.dataTask(with: req) { data, _, _ in
-            guard let data = data, let list = try? JSONDecoder().decode([BudgetView.Category].self, from: data) else { return }
-            DispatchQueue.main.async { transactionCategories = list }
+        
+        URLSession.shared.dataTask(with: req) { data, response, error in
+            DispatchQueue.main.async {
+                isLoadingCategories = false
+                
+                if let error = error {
+                    errorMessage = "Ошибка сети: \(error.localizedDescription)"
+                    showErrorAlert = true
+                    return
+                }
+                
+                guard let httpResponse = response as? HTTPURLResponse, (200...299).contains(httpResponse.statusCode) else {
+                    errorMessage = "Ошибка сервера при загрузке категорий"
+                    showErrorAlert = true
+                    return
+                }
+                
+                guard let data = data, let list = try? JSONDecoder().decode([BudgetView.Category].self, from: data) else {
+                    errorMessage = "Ошибка обработки данных"
+                    showErrorAlert = true
+                    return
+                }
+                
+                self.transactionCategories = list
+                self.showingTransactionSheet = true
+            }
         }.resume()
     }
     
     func saveTransaction(amount: Double, type: String, categoryId: Int, description: String, date: Date) {
-        guard let token = authManager.token else { return }
+        guard let token = authManager.token else {
+            errorMessage = "Пользователь не авторизован"
+            showErrorAlert = true
+            return
+        }
+        
+        isSavingTransaction = true
         var req = URLRequest(url: URL(string: "\(authManager.baseURL)/budget/transactions")!)
         req.httpMethod = "POST"
         req.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
@@ -113,13 +161,35 @@ struct DashboardView: View {
         var body: [String: Any] = ["amount": amount, "transaction_type": type, "category_id": categoryId, "description": description, "date": isoFormatter.string(from: date)]
         req.httpBody = try? JSONSerialization.data(withJSONObject: body)
         
-        URLSession.shared.dataTask(with: req) { _, _, _ in
-            DispatchQueue.main.async { showingTransactionSheet = false }
+        URLSession.shared.dataTask(with: req) { data, response, error in
+            DispatchQueue.main.async {
+                isSavingTransaction = false
+                
+                if let error = error {
+                    errorMessage = "Ошибка сети: \(error.localizedDescription)"
+                    showErrorAlert = true
+                    return
+                }
+                
+                guard let httpResponse = response as? HTTPURLResponse, (200...299).contains(httpResponse.statusCode) else {
+                    errorMessage = "Ошибка сервера при создании транзакции"
+                    showErrorAlert = true
+                    return
+                }
+                
+                showingTransactionSheet = false
+            }
         }.resume()
     }
     
     func createEvent(title: String, desc: String, date: Date, type: String) {
-        guard let token = authManager.token else { return }
+        guard let token = authManager.token else {
+            errorMessage = "Пользователь не авторизован"
+            showErrorAlert = true
+            return
+        }
+        
+        isSavingEvent = true
         let urlStr = authManager.baseURL.hasSuffix("/") ? "\(authManager.baseURL)calendar/events" : "\(authManager.baseURL)/calendar/events"
         var req = URLRequest(url: URL(string: urlStr)!)
         req.httpMethod = "POST"
@@ -135,13 +205,35 @@ struct DashboardView: View {
         ]
         req.httpBody = try? JSONSerialization.data(withJSONObject: body)
         
-        URLSession.shared.dataTask(with: req) { _, _, _ in
-            DispatchQueue.main.async { showingEventSheet = false }
+        URLSession.shared.dataTask(with: req) { data, response, error in
+            DispatchQueue.main.async {
+                isSavingEvent = false
+                
+                if let error = error {
+                    errorMessage = "Ошибка сети: \(error.localizedDescription)"
+                    showErrorAlert = true
+                    return
+                }
+                
+                guard let httpResponse = response as? HTTPURLResponse, (200...299).contains(httpResponse.statusCode) else {
+                    errorMessage = "Ошибка сервера при создании события"
+                    showErrorAlert = true
+                    return
+                }
+                
+                showingEventSheet = false
+            }
         }.resume()
     }
     
     func saveLog(type: String, startTime: Date, endTime: Date?, note: String) {
-        guard let token = authManager.token else { return }
+        guard let token = authManager.token else {
+            errorMessage = "Пользователь не авторизован"
+            showErrorAlert = true
+            return
+        }
+        
+        isSavingLog = true
         var req = URLRequest(url: URL(string: "\(authManager.baseURL)/tracker/logs")!)
         req.httpMethod = "POST"
         req.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
@@ -161,8 +253,24 @@ struct DashboardView: View {
         
         req.httpBody = try? JSONSerialization.data(withJSONObject: body)
         
-        URLSession.shared.dataTask(with: req) { _, _, _ in
-            DispatchQueue.main.async { showingTrackerSheet = false }
+        URLSession.shared.dataTask(with: req) { data, response, error in
+            DispatchQueue.main.async {
+                isSavingLog = false
+                
+                if let error = error {
+                    errorMessage = "Ошибка сети: \(error.localizedDescription)"
+                    showErrorAlert = true
+                    return
+                }
+                
+                guard let httpResponse = response as? HTTPURLResponse, (200...299).contains(httpResponse.statusCode) else {
+                    errorMessage = "Ошибка сервера при сохранении записи"
+                    showErrorAlert = true
+                    return
+                }
+                
+                showingTrackerSheet = false
+            }
         }.resume()
     }
 }

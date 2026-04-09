@@ -8,10 +8,76 @@ from .models import BabyLog, User
 from .schemas import BabyLogCreate, BabyLogOut, BabyLogUpdate
 from .auth import get_current_user
 
+from datetime import datetime, timezone, timedelta
+
 router = APIRouter()
 
 def get_utc_now():
     return datetime.now(timezone.utc)
+
+@router.get("/stats", response_model=Dict[str, Any])
+def get_tracker_stats(
+    days: int = 7, # По умолчанию статистика за неделю
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """
+    Возвращает статистику по сну и бодрствованию за последние N дней.
+    Группирует данные по дням.
+    """
+    now = get_utc_now()
+    start_date = now - timedelta(days=days)
+
+    # Получаем все записи сна за период
+    logs = db.query(BabyLog).filter(
+        BabyLog.user_id == current_user.id,
+        BabyLog.event_type == "sleep",
+        BabyLog.start_time >= start_date
+    ).order_by(BabyLog.start_time.asc()).all()
+
+    daily_stats = []
+    
+    # Группируем по дням
+    # Создаем словарь {date_str: {"sleep_seconds": 0, "count": 0}}
+    stats_map = {}
+    
+    # Инициализируем дни, даже если данных нет (для графиков)
+    for i in range(days):
+        d = (now - timedelta(days=i)).date()
+        key = d.isoformat()
+        stats_map[key] = {"date": key, "sleep_minutes": 0, "sessions_count": 0}
+
+    total_sleep_minutes = 0
+    total_sessions = 0
+
+    for log in logs:
+        if not log.end_time:
+            continue # Пропускаем активный сон для точной статистики или считаем до "сейчас"
+        
+        duration_min = log.duration_minutes
+        if duration_min is None:
+            delta = log.end_time - log.start_time
+            duration_min = int(delta.total_seconds() / 60)
+        
+        day_key = log.start_time.date().isoformat()
+        
+        if day_key in stats_map:
+            stats_map[day_key]["sleep_minutes"] += duration_min
+            stats_map[day_key]["sessions_count"] += 1
+            
+        total_sleep_minutes += duration_min
+        total_sessions += 1
+
+    # Преобразуем словарь в список и сортируем по дате
+    daily_stats = sorted(stats_map.values(), key=lambda x: x["date"])
+
+    return {
+        "period_days": days,
+        "total_sleep_minutes": total_sleep_minutes,
+        "total_sessions": total_sessions,
+        "average_sleep_minutes": int(total_sleep_minutes / total_sessions) if total_sessions > 0 else 0,
+        "daily_breakdown": daily_stats
+    }
 
 @router.get("/status", response_model=Dict[str, Any])
 def get_tracker_status(

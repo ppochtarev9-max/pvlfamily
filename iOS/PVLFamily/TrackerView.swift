@@ -60,9 +60,17 @@ struct TrackerView: View {
             .navigationTitle("История трекера")
             .toolbar {
                 ToolbarItem(placement: .topBarTrailing) {
+                    // Кнопка статистики
+                    NavigationLink(destination: TrackerStatsView()) {
+                        Image(systemName: "chart.bar.fill")
+                            .font(.title3)
+                    }
+                }
+                ToolbarItem(placement: .topBarLeading) {
+                     // Существующая кнопка "+"
                     Button(action: {
                         selectedLog = nil
-                        preselectedType = nil // Открываем пустую форму выбора
+                        preselectedType = nil
                         showingAddSheet = true
                     }) {
                         Image(systemName: "plus.circle.fill")
@@ -209,6 +217,7 @@ struct TrackerView: View {
                 showingAddSheet = false
                 selectedLog = nil
                 loadLogs()
+                NotificationCenter.default.post(name: .trackerDataUpdated, object: nil) // <--- ДОБАВИТЬ ЭТУ СТРОКУ
             }
         }.resume()
     }
@@ -246,6 +255,7 @@ struct TrackerView: View {
                 showingAddSheet = false
                 selectedLog = nil
                 loadLogs()
+                NotificationCenter.default.post(name: .trackerDataUpdated, object: nil) // <--- ДОБАВИТЬ ЭТУ СТРОКУ
             }
         }.resume()
     }

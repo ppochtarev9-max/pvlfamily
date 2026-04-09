@@ -6,8 +6,41 @@
 	objectVersion = 77;
 	objects = {
 
+/* Begin PBXBuildFile section */
+		E9F622AB2F87E9E200F05A5A /* WidgetKit.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = E9F622AA2F87E9E200F05A5A /* WidgetKit.framework */; };
+		E9F622AD2F87E9E300F05A5A /* SwiftUI.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = E9F622AC2F87E9E300F05A5A /* SwiftUI.framework */; };
+		E9F622BE2F87E9E500F05A5A /* PVLFamilyActivityExtension.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = E9F622A82F87E9E200F05A5A /* PVLFamilyActivityExtension.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
+/* End PBXBuildFile section */
+
+/* Begin PBXContainerItemProxy section */
+		E9F622BC2F87E9E500F05A5A /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = E9326F622F7BA18E00A85416 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = E9F622A72F87E9E200F05A5A;
+			remoteInfo = PVLFamilyActivityExtension;
+		};
+/* End PBXContainerItemProxy section */
+
+/* Begin PBXCopyFilesBuildPhase section */
+		E9F622C32F87E9E500F05A5A /* Embed Foundation Extensions */ = {
+			isa = PBXCopyFilesBuildPhase;
+			buildActionMask = 2147483647;
+			dstPath = "";
+			dstSubfolderSpec = 13;
+			files = (
+				E9F622BE2F87E9E500F05A5A /* PVLFamilyActivityExtension.appex in Embed Foundation Extensions */,
+			);
+			name = "Embed Foundation Extensions";
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXCopyFilesBuildPhase section */
+
 /* Begin PBXFileReference section */
 		E9326F6A2F7BA18E00A85416 /* PVLFamily.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = PVLFamily.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		E9F622A82F87E9E200F05A5A /* PVLFamilyActivityExtension.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = PVLFamilyActivityExtension.appex; sourceTree = BUILT_PRODUCTS_DIR; };
+		E9F622AA2F87E9E200F05A5A /* WidgetKit.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = WidgetKit.framework; path = System/Library/Frameworks/WidgetKit.framework; sourceTree = SDKROOT; };
+		E9F622AC2F87E9E300F05A5A /* SwiftUI.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = SwiftUI.framework; path = System/Library/Frameworks/SwiftUI.framework; sourceTree = SDKROOT; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedBuildFileExceptionSet section */
@@ -15,6 +48,20 @@
 			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
 			membershipExceptions = (
 				Info.plist,
+			);
+			target = E9326F692F7BA18E00A85416 /* PVLFamily */;
+		};
+		E9F622C22F87E9E500F05A5A /* Exceptions for "PVLFamilyActivity" folder in "PVLFamilyActivityExtension" target */ = {
+			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
+			membershipExceptions = (
+				Info.plist,
+			);
+			target = E9F622A72F87E9E200F05A5A /* PVLFamilyActivityExtension */;
+		};
+		E9F622C72F87EF0600F05A5A /* Exceptions for "PVLFamilyActivity" folder in "PVLFamily" target */ = {
+			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
+			membershipExceptions = (
+				SleepActivityAttributes.swift,
 			);
 			target = E9326F692F7BA18E00A85416 /* PVLFamily */;
 		};
@@ -29,6 +76,15 @@
 			path = PVLFamily;
 			sourceTree = "<group>";
 		};
+		E9F622AE2F87E9E300F05A5A /* PVLFamilyActivity */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			exceptions = (
+				E9F622C72F87EF0600F05A5A /* Exceptions for "PVLFamilyActivity" folder in "PVLFamily" target */,
+				E9F622C22F87E9E500F05A5A /* Exceptions for "PVLFamilyActivity" folder in "PVLFamilyActivityExtension" target */,
+			);
+			path = PVLFamilyActivity;
+			sourceTree = "<group>";
+		};
 /* End PBXFileSystemSynchronizedRootGroup section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -39,6 +95,15 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		E9F622A52F87E9E200F05A5A /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				E9F622AD2F87E9E300F05A5A /* SwiftUI.framework in Frameworks */,
+				E9F622AB2F87E9E200F05A5A /* WidgetKit.framework in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 /* End PBXFrameworksBuildPhase section */
 
 /* Begin PBXGroup section */
@@ -46,6 +111,8 @@
 			isa = PBXGroup;
 			children = (
 				E9326F6C2F7BA18E00A85416 /* PVLFamily */,
+				E9F622AE2F87E9E300F05A5A /* PVLFamilyActivity */,
+				E9F622A92F87E9E200F05A5A /* Frameworks */,
 				E9326F6B2F7BA18E00A85416 /* Products */,
 			);
 			sourceTree = "<group>";
@@ -54,8 +121,18 @@
 			isa = PBXGroup;
 			children = (
 				E9326F6A2F7BA18E00A85416 /* PVLFamily.app */,
+				E9F622A82F87E9E200F05A5A /* PVLFamilyActivityExtension.appex */,
 			);
 			name = Products;
+			sourceTree = "<group>";
+		};
+		E9F622A92F87E9E200F05A5A /* Frameworks */ = {
+			isa = PBXGroup;
+			children = (
+				E9F622AA2F87E9E200F05A5A /* WidgetKit.framework */,
+				E9F622AC2F87E9E300F05A5A /* SwiftUI.framework */,
+			);
+			name = Frameworks;
 			sourceTree = "<group>";
 		};
 /* End PBXGroup section */
@@ -68,10 +145,12 @@
 				E9326F662F7BA18E00A85416 /* Sources */,
 				E9326F672F7BA18E00A85416 /* Frameworks */,
 				E9326F682F7BA18E00A85416 /* Resources */,
+				E9F622C32F87E9E500F05A5A /* Embed Foundation Extensions */,
 			);
 			buildRules = (
 			);
 			dependencies = (
+				E9F622BD2F87E9E500F05A5A /* PBXTargetDependency */,
 			);
 			fileSystemSynchronizedGroups = (
 				E9326F6C2F7BA18E00A85416 /* PVLFamily */,
@@ -82,6 +161,28 @@
 			productName = PVLFamily;
 			productReference = E9326F6A2F7BA18E00A85416 /* PVLFamily.app */;
 			productType = "com.apple.product-type.application";
+		};
+		E9F622A72F87E9E200F05A5A /* PVLFamilyActivityExtension */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = E9F622BF2F87E9E500F05A5A /* Build configuration list for PBXNativeTarget "PVLFamilyActivityExtension" */;
+			buildPhases = (
+				E9F622A42F87E9E200F05A5A /* Sources */,
+				E9F622A52F87E9E200F05A5A /* Frameworks */,
+				E9F622A62F87E9E200F05A5A /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			fileSystemSynchronizedGroups = (
+				E9F622AE2F87E9E300F05A5A /* PVLFamilyActivity */,
+			);
+			name = PVLFamilyActivityExtension;
+			packageProductDependencies = (
+			);
+			productName = PVLFamilyActivityExtension;
+			productReference = E9F622A82F87E9E200F05A5A /* PVLFamilyActivityExtension.appex */;
+			productType = "com.apple.product-type.app-extension";
 		};
 /* End PBXNativeTarget section */
 
@@ -94,6 +195,9 @@
 				LastUpgradeCheck = 2640;
 				TargetAttributes = {
 					E9326F692F7BA18E00A85416 = {
+						CreatedOnToolsVersion = 26.4;
+					};
+					E9F622A72F87E9E200F05A5A = {
 						CreatedOnToolsVersion = 26.4;
 					};
 				};
@@ -113,12 +217,20 @@
 			projectRoot = "";
 			targets = (
 				E9326F692F7BA18E00A85416 /* PVLFamily */,
+				E9F622A72F87E9E200F05A5A /* PVLFamilyActivityExtension */,
 			);
 		};
 /* End PBXProject section */
 
 /* Begin PBXResourcesBuildPhase section */
 		E9326F682F7BA18E00A85416 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		E9F622A62F87E9E200F05A5A /* Resources */ = {
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
@@ -135,7 +247,22 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		E9F622A42F87E9E200F05A5A /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 /* End PBXSourcesBuildPhase section */
+
+/* Begin PBXTargetDependency section */
+		E9F622BD2F87E9E500F05A5A /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = E9F622A72F87E9E200F05A5A /* PVLFamilyActivityExtension */;
+			targetProxy = E9F622BC2F87E9E500F05A5A /* PBXContainerItemProxy */;
+		};
+/* End PBXTargetDependency section */
 
 /* Begin XCBuildConfiguration section */
 		E9326F732F7BA19100A85416 /* Debug */ = {
@@ -340,6 +467,71 @@
 			};
 			name = Release;
 		};
+		E9F622C02F87E9E500F05A5A /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				ASSETCATALOG_COMPILER_WIDGET_BACKGROUND_COLOR_NAME = WidgetBackground;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = 2VPAPJP6U8;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = PVLFamilyActivity/Info.plist;
+				INFOPLIST_KEY_CFBundleDisplayName = PVLFamilyActivity;
+				INFOPLIST_KEY_NSHumanReadableCopyright = "";
+				IPHONEOS_DEPLOYMENT_TARGET = 26.4;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@executable_path/../../Frameworks",
+				);
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.pvlfamily.PVLFamily.PVLFamilyActivity;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = iphoneos;
+				SKIP_INSTALL = YES;
+				STRING_CATALOG_GENERATE_SYMBOLS = YES;
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Debug;
+		};
+		E9F622C12F87E9E500F05A5A /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				ASSETCATALOG_COMPILER_WIDGET_BACKGROUND_COLOR_NAME = WidgetBackground;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = 2VPAPJP6U8;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = PVLFamilyActivity/Info.plist;
+				INFOPLIST_KEY_CFBundleDisplayName = PVLFamilyActivity;
+				INFOPLIST_KEY_NSHumanReadableCopyright = "";
+				IPHONEOS_DEPLOYMENT_TARGET = 26.4;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@executable_path/../../Frameworks",
+				);
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.pvlfamily.PVLFamily.PVLFamilyActivity;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = iphoneos;
+				SKIP_INSTALL = YES;
+				STRING_CATALOG_GENERATE_SYMBOLS = YES;
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+				VALIDATE_PRODUCT = YES;
+			};
+			name = Release;
+		};
 /* End XCBuildConfiguration section */
 
 /* Begin XCConfigurationList section */
@@ -357,6 +549,15 @@
 			buildConfigurations = (
 				E9326F762F7BA19100A85416 /* Debug */,
 				E9326F772F7BA19100A85416 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		E9F622BF2F87E9E500F05A5A /* Build configuration list for PBXNativeTarget "PVLFamilyActivityExtension" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				E9F622C02F87E9E500F05A5A /* Debug */,
+				E9F622C12F87E9E500F05A5A /* Release */,
 			);
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;

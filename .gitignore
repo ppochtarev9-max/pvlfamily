@@ -1,6 +1,7 @@
 ```
 #!!!
 *.db
+*.sqlite3
 
 # Logs and temp files
 *.log

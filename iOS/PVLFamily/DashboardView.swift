@@ -362,29 +362,38 @@ struct DashboardView: View {
     // --- LIVE ACTIVITY METHODS ---
     
     func startLiveActivity(startTime: Date) {
-        // Проверка поддержки
-        guard ActivityAuthorizationInfo().areActivitiesEnabled else {
-            print("⚠️ Live Activities не включены")
+        print("🔍 [APP] Попытка запуска Live Activity...")
+        
+        let authInfo = ActivityAuthorizationInfo()
+        print("🔍 [APP] Статус разрешений: \(authInfo.areActivitiesEnabled)")
+        
+        guard authInfo.areActivitiesEnabled else {
+            print("❌ [APP] Live Activities запрещены системой!")
             return
         }
         
         let attributes = SleepActivityAttributes(childName: "Малыш")
+        print("🔍 [APP] Атрибуты созданы: \(attributes.childName)")
+        
         let contentState = SleepActivityAttributes.ContentState(
             isSleeping: true,
             startTime: startTime,
             elapsedSeconds: 0,
-            statusText: "Сон начался"
+            statusText: "🚀 Старт активности!"
         )
         
         let content = ActivityContent(state: contentState, staleDate: nil)
         
         do {
-            let activity = try Activity.request(attributes: attributes, content: content, pushType: nil)
-            self.currentActivity = activity
-            print("✅ Live Activity запущена: \(activity.id)")
-        } catch {
-            print("❌ Ошибка запуска Live Activity: \(error)")
-        }
+             print("📡 [APP] Отправка запроса Activity.request...")
+             let activity = try Activity.request(attributes: attributes, content: content, pushType: nil)
+             self.currentActivity = activity
+             print("✅ [APP] Activity успешно запрошена! ID: \(activity.id)")
+             print("📄 [APP] Статус активности: \(activity.activityState)")
+         } catch {
+             print("❌ [APP] Ошибка при запросе Activity: \(error.localizedDescription)")
+             print("❌ [APP] Детали ошибки: \(error)")
+         }
     }
     
     func updateLiveActivity(elapsed: Int) {

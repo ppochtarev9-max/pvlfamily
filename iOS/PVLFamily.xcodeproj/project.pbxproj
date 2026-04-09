@@ -76,8 +76,16 @@
 			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
 			membershipExceptions = (
 				Info.plist,
+				PVLFamilyActivityBundle.swift,
 			);
 			target = E9326F692F7BA18E00A85416 /* PVLFamily */;
+		};
+		E9F622D92F88409500F05A5A /* Exceptions for "PVLFamily" folder in "PVLFamilyActivityExtension" target */ = {
+			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
+			membershipExceptions = (
+				SleepActivityAttributes.swift,
+			);
+			target = E9F622A72F87E9E200F05A5A /* PVLFamilyActivityExtension */;
 		};
 /* End PBXFileSystemSynchronizedBuildFileExceptionSet section */
 
@@ -86,6 +94,7 @@
 			isa = PBXFileSystemSynchronizedRootGroup;
 			exceptions = (
 				E9326F922F7BA28F00A85416 /* Exceptions for "PVLFamily" folder in "PVLFamily" target */,
+				E9F622D92F88409500F05A5A /* Exceptions for "PVLFamily" folder in "PVLFamilyActivityExtension" target */,
 			);
 			path = PVLFamily;
 			sourceTree = "<group>";

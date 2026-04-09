@@ -2,6 +2,30 @@ import SwiftUI
 import UserNotifications
 import ActivityKit // <-- 1. ИМПОРТ ДЛЯ LIVE ACTIVITY
 
+func requestLiveActivityPermission() {
+    Task {
+        // Запрос прав на уведомления (обязательно для активностей)
+        let center = UNUserNotificationCenter.current()
+        let granted = try? await center.requestAuthorization(options: [.alert, .sound, .badge])
+        
+        if granted == true {
+            print("✅ Разрешения на уведомления получены")
+        } else {
+            print("⚠️ Пользователь отклонил уведомления")
+        }
+        
+        // Проверка статуса Live Activities
+        let authStatus = ActivityAuthorizationInfo().areActivitiesEnabled
+        if authStatus {
+            print("✅ Live Activities разрешены")
+        } else {
+            print("⚠️ Live Activities запрещены в настройках")
+            // Здесь можно показать пользователю алерт с инструкцией, как включить в Настройках
+        }
+    }
+}
+
+
 struct DashboardView: View {
     @EnvironmentObject var authManager: AuthManager
     @EnvironmentObject var notificationManager: NotificationManager
@@ -102,6 +126,13 @@ struct DashboardView: View {
                     recalculateTimer()
                     startTimer()
                 }
+                let status = ActivityAuthorizationInfo().areActivitiesEnabled
+                if !status {
+                    print("⚠️ Live Activities отключены в настройках системы")
+                }
+                //if !hasLoadedInitialStatus {
+                //     notificationManager.requestLiveActivityPermission() // или вызови напрямую
+                // }
             }
             .onDisappear {
                 // Не останавливаем таймер полностью, если активность идет, но можно оптимизировать
@@ -205,27 +236,52 @@ struct DashboardView: View {
         recalculateTimer(referenceDate: sleepStartTime!)
         
         authManager.startSleep { result in
-            DispatchQueue.main.async {
-                switch result {
-                case .success(let status):
-                    syncWithStatus(status)
-                    scheduleSleepNotificationIfNeeded()
-                    
-                    // ЗАПУСК LIVE ACTIVITY
-                    if ActivityAuthorizationInfo().areActivitiesEnabled {
-                        startLiveActivity(startTime: sleepStartTime!)
-                    }
-                    
-                case .failure(let error):
-                    isSleeping = oldState
-                    if oldState { sleepStartTime = oldRef } else { lastWakeUpTime = oldRef }
-                    if let ref = oldState ? oldRef : oldRef { recalculateTimer(referenceDate: ref) }
-                    
-                    errorMessage = "Ошибка запуска сна: \(error.localizedDescription)"
-                    showErrorAlert = true
-                }
-            }
-        }
+             DispatchQueue.main.async {
+                 switch result {
+                 case .success(let status):
+                     self.syncWithStatus(status)
+                     self.scheduleSleepNotificationIfNeeded()
+                     
+                     // ПРОВЕРКА И ЗАПУСК LIVE ACTIVITY
+                     Task {
+                         let authInfo = ActivityAuthorizationInfo()
+                         // areActivitiesEnabled возвращает true, если функция доступна и разрешена
+                         if authInfo.areActivitiesEnabled {
+                             self.startLiveActivity(startTime: self.sleepStartTime ?? Date())
+                         } else {
+                             print("⚠️ Live Activities отключены в настройках устройства или недоступны")
+                             // Можно показать пользователю алерт с инструкцией
+                         }
+                     }
+                     
+                 case .failure(let error):
+                     // ОТКАТ состояния UI
+                     isSleeping = oldState
+                     if oldState {
+                         sleepStartTime = oldRef
+                     } else {
+                         lastWakeUpTime = oldRef
+                     }
+                     
+                     // Пересчет таймера для возврата к старому времени
+                     if let ref = oldRef {
+                         recalculateTimer(referenceDate: ref)
+                     }
+                     
+                     // Показ ошибки пользователю
+                     errorMessage = "Ошибка запуска сна: \(error.localizedDescription)"
+                     showErrorAlert = true
+                     
+                     // Гарантируем, что активность не запущена при ошибке
+                     if let activity = currentActivity {
+                         Task {
+                             await activity.end(nil, dismissalPolicy: .immediate)
+                             self.currentActivity = nil
+                         }
+                     }
+                 }
+             }
+         }
     }
     
     func finishSleepAction() {

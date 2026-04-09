@@ -2,8 +2,8 @@ import WidgetKit
 import SwiftUI
 import ActivityKit
 
-// --- ПРОВАЙДЕР ДАННЫХ ---
-struct SleepActivityProvider: TimelineProvider { // Заменили AppIntentTimelineProvider на простой TimelineProvider для начала
+// 1. Используем обычный TimelineProvider
+struct SleepActivityProvider: TimelineProvider {
     func placeholder(in context: Context) -> SimpleEntry {
         SimpleEntry(date: Date(), isSleeping: true, startTime: Date(), elapsedSeconds: 3600, statusText: "Спит")
     }
@@ -14,8 +14,7 @@ struct SleepActivityProvider: TimelineProvider { // Заменили AppIntentTi
     }
 
     func getTimeline(in context: Context, completion: @escaping (Timeline<SimpleEntry>) -> Void) {
-        // Для Live Activity мы обновляем данные вручную из приложения,
-        // поэтому таймлайн здесь не критичен, но нужен для компиляции
+        // В реальном приложении здесь нужно брать данные из контейнера App Group
         let entry = SimpleEntry(date: Date(), isSleeping: true, startTime: Date(), elapsedSeconds: 0, statusText: "Загрузка...")
         let timeline = Timeline(entries: [entry], policy: .atEnd)
         completion(timeline)
@@ -30,70 +29,48 @@ struct SimpleEntry: TimelineEntry {
     let statusText: String
 }
 
-// --- КОНФИГУРАЦИЯ ВИДЖЕТА ---
+// 2. Конфигурация виджета
 struct PVLFamilyLiveActivity: Widget {
     var body: some WidgetConfiguration {
         ActivityConfiguration(for: SleepActivityAttributes.self) { context in
-            // ЭКРАН БЛОКИРОВКИ
+            // ... Ваш код интерфейса (Lock Screen) ...
             VStack(spacing: 12) {
                 HStack {
                     Image(systemName: context.state.isSleeping ? "moon.fill" : "sun.max.fill")
-                        .font(.title2)
-                        .foregroundColor(context.state.isSleeping ? .purple : .orange)
-                    
-                    Text(context.state.statusText)
-                        .font(.headline)
-                        .bold()
-                    
+                        .font(.title2).foregroundColor(context.state.isSleeping ? .purple : .orange)
+                    Text(context.state.statusText).font(.headline).bold()
                     Spacer()
-                    
                     Text(formatTime(context.state.elapsedSeconds))
-                        .font(.system(.title2, design: .rounded))
-                        .monospacedDigit()
-                        .foregroundColor(.secondary)
+                        .font(.system(.title2, design: .rounded)).monospacedDigit().foregroundColor(.secondary)
                 }
-                
                 if context.state.isSleeping {
-                    Text("Начало: \(formatDate(context.state.startTime))")
-                        .font(.caption)
-                        .foregroundColor(.secondary)
-                } else {
-                    Text("Бодрствует")
-                        .font(.caption)
-                        .foregroundColor(.secondary)
+                    Text("Начало: \(formatDate(context.state.startTime))").font(.caption).foregroundColor(.secondary)
                 }
             }
             .padding()
             .activityBackgroundTint(Color(.systemBackground).opacity(0.9))
             .activitySystemActionForegroundColor(.primary)
-
         } dynamicIsland: { context in
+            // ... Ваш код Dynamic Island ...
             DynamicIsland {
                 DynamicIslandExpandedRegion(.leading) {
                     VStack(alignment: .leading) {
                         Text(context.state.statusText).font(.headline)
-                        Text(formatTime(context.state.elapsedSeconds))
-                            .font(.title3)
-                            .monospacedDigit()
+                        Text(formatTime(context.state.elapsedSeconds)).font(.title3).monospacedDigit()
                     }
                 }
                 DynamicIslandExpandedRegion(.trailing) {
                     Image(systemName: context.state.isSleeping ? "moon.fill" : "sun.max.fill")
-                        .font(.title2)
-                        .foregroundColor(context.state.isSleeping ? .purple : .orange)
+                        .font(.title2).foregroundColor(context.state.isSleeping ? .purple : .orange)
                 }
                 DynamicIslandExpandedRegion(.bottom) {
-                    Text("Нажмите, чтобы открыть приложение")
-                        .font(.caption)
-                        .foregroundColor(.gray)
+                    Text("Откройте приложение").font(.caption).foregroundColor(.gray)
                 }
             } compactLeading: {
                 Image(systemName: context.state.isSleeping ? "moon.fill" : "sun.max.fill")
                     .foregroundColor(context.state.isSleeping ? .purple : .orange)
             } compactTrailing: {
-                Text(formatTime(context.state.elapsedSeconds))
-                    .font(.caption2)
-                    .monospacedDigit()
+                Text(formatTime(context.state.elapsedSeconds)).font(.caption2).monospacedDigit()
             } minimal: {
                 Image(systemName: context.state.isSleeping ? "moon.fill" : "sun.max.fill")
                     .foregroundColor(context.state.isSleeping ? .purple : .orange)
@@ -108,35 +85,9 @@ func formatTime(_ seconds: Int) -> String {
     let h = seconds / 3600
     let m = (seconds % 3600) / 60
     let s = seconds % 60
-    if h > 0 { return String(format: "%d:%02d:%02d", h, m, s) }
-    return String(format: "%02d:%02d", m, s)
+    return h > 0 ? String(format: "%d:%02d:%02d", h, m, s) : String(format: "%02d:%02d", m, s)
 }
-
 func formatDate(_ date: Date) -> String {
-    let f = DateFormatter()
-    f.timeStyle = .short
-    f.locale = Locale(identifier: "ru_RU")
+    let f = DateFormatter(); f.timeStyle = .short; f.locale = Locale(identifier: "ru_RU")
     return f.string(from: date)
 }
-
-#if DEBUG
-struct PVLFamilyLiveActivity_Previews: PreviewProvider {
-    static var attributes: SleepActivityAttributes {
-        SleepActivityAttributes(childName: "Малыш")
-    }
-    
-    static var contentState: SleepActivityAttributes.ContentState {
-        SleepActivityAttributes.ContentState(
-            isSleeping: true,
-            startTime: Date(),
-            elapsedSeconds: 125,
-            statusText: "Ребенок спит"
-        )
-    }
-
-    static var previews: some View {
-        attributes
-            .previewContext(contentState, viewKind: .dynamicIsland(.compact))
-    }
-}
-#endif

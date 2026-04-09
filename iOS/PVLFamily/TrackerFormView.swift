@@ -19,18 +19,16 @@ struct TrackerFormView: View {
     @State private var errorMessage: String?
     @State private var showErrorAlert = false
     
+    // Оставляем только Сон, так как Кормление теперь быстрое
     let types: [(id: String, name: String, icon: String)] = [
-        ("sleep", "Сон", "moon.fill"),
-        ("feed", "Кормление", "fork.knife"),
-        ("diaper", "Памперс", "drop.triangle.fill"),
-        ("play", "Игра", "star.fill")
+        ("sleep", "Сон", "moon.fill")
     ]
     
     var body: some View {
         NavigationStack {
             Form {
                 Section("Тип события") {
-                    LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible()), GridItem(.flexible()), GridItem(.flexible())], spacing: 12) {
+                    LazyVGrid(columns: [GridItem(.flexible())], spacing: 12) {
                         ForEach(types, id: \.id) { type in
                             Button(action: { selectedType = type.id }) {
                                 VStack(spacing: 6) {
@@ -70,7 +68,7 @@ struct TrackerFormView: View {
                 }
                 
                 Section("Заметка") {
-                    TextField("Например: хорошо покушал", text: $note)
+                    TextField("Например: плохо засыпал", text: $note)
                         .disabled(isSaving)
                 }
                 
@@ -112,7 +110,7 @@ struct TrackerFormView: View {
                     .disabled(isSaving)
                 }
             }
-            .navigationTitle(existingLog != nil ? "Редактирование" : "Новое событие")
+            .navigationTitle(existingLog != nil ? "Редактирование сна" : "Новый сон")
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
                     Button("Отмена") { isPresented = false }
@@ -144,7 +142,7 @@ struct TrackerFormView: View {
     }
     
     func submit() {
-        if authManager.token == nil {
+        guard authManager.token != nil else {
             errorMessage = "Пользователь не авторизован"
             showErrorAlert = true
             return

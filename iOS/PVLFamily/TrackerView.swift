@@ -5,13 +5,14 @@ struct TrackerView: View {
     
     // Данные
     @State private var logs: [BabyLog] = []
-    
-    // Состояния UI
-    @State private var showingAddSheet = false
-    @State private var selectedLog: BabyLog? = nil
     @State private var isLoading = false
     @State private var errorMessage: String?
     @State private var showErrorAlert = false
+    
+    // Управление формой
+    @State private var showingAddSheet = false
+    @State private var selectedLog: BabyLog? = nil
+    @State private var preselectedType: String? = nil // Для быстрого создания
     
     struct BabyLog: Identifiable, Codable {
         let id: Int
@@ -21,13 +22,14 @@ struct TrackerView: View {
         let end_time: String?
         let duration_minutes: Int?
         let note: String?
+        let is_active: Bool // Новое поле с бэка
     }
     
     var body: some View {
         NavigationStack {
             Group {
                 if isLoading && logs.isEmpty {
-                    ProgressView("Загрузка...")
+                    ProgressView("Загрузка истории...")
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
                 } else if let error = errorMessage, logs.isEmpty {
                     ContentUnavailableView(
@@ -37,25 +39,32 @@ struct TrackerView: View {
                     )
                 } else if logs.isEmpty {
                     ContentUnavailableView(
-                        "Записей пока нет",
-                        systemImage: "heart.fill",
+                        "История пуста",
+                        systemImage: "clock.badge.exclamationmark",
                         description: Text("Нажмите +, чтобы добавить событие")
                     )
                 } else {
                     List {
                         ForEach(logs.sorted(by: { $0.start_time > $1.start_time })) { log in
-                            LogCard(log: log, onTap: { selectedLog = log; showingAddSheet = true })
-                                .listRowInsets(EdgeInsets(top: 8, leading: 0, bottom: 8, trailing: 0))
-                                .listRowSeparator(.hidden)
+                            LogCard(log: log, onTap: {
+                                selectedLog = log
+                                showingAddSheet = true
+                            })
+                            .listRowInsets(EdgeInsets(top: 8, leading: 0, bottom: 8, trailing: 0))
+                            .listRowSeparator(.hidden)
                         }
                     }
                     .listStyle(.plain)
                 }
             }
-            .navigationTitle("Трекер")
+            .navigationTitle("История трекера")
             .toolbar {
                 ToolbarItem(placement: .topBarTrailing) {
-                    Button(action: { showingAddSheet = true }) {
+                    Button(action: {
+                        selectedLog = nil
+                        preselectedType = nil // Открываем пустую форму выбора
+                        showingAddSheet = true
+                    }) {
                         Image(systemName: "plus.circle.fill")
                             .font(.title2)
                             .foregroundColor(.blue)
@@ -63,13 +72,35 @@ struct TrackerView: View {
                 }
             }
             .sheet(isPresented: $showingAddSheet) {
-                TrackerFormView(
-                    isPresented: $showingAddSheet,
-                    existingLog: selectedLog,
-                    onSave: saveLog,
-                    onDelete: deleteLog
-                )
+                if let type = preselectedType {
+                    // Быстрое действие (Кормление) - отдельный обработчик
+                    QuickActionHandler(
+                        eventType: type,
+                        authManager: authManager,
+                        onComplete: {
+                            showingAddSheet = false
+                            preselectedType = nil
+                            loadLogs()
+                        },
+                        onError: { err in
+                            errorMessage = err
+                            showErrorAlert = true
+                            showingAddSheet = false
+                            preselectedType = nil
+                        }
+                    )
+                } else {
+                    // Обычная форма (Сон или Редактирование)
+                    // Убедись, что TrackerFormView принимает именно эти параметры
+                    TrackerFormView(
+                        isPresented: $showingAddSheet,
+                        existingLog: selectedLog,
+                        onSave: saveLog,
+                        onDelete: deleteLog
+                    )
+                }
             }
+        
             .alert("Ошибка", isPresented: $showErrorAlert) {
                 Button("OK", role: .cancel) { errorMessage = nil }
             } message: {
@@ -139,7 +170,6 @@ struct TrackerView: View {
         }.resume()
     }
     
-    // Исправленная функция saveLog - убираем completion из сигнатуры
     func saveLog(type: String, startTime: Date, endTime: Date?, note: String) {
         guard let token = authManager.token else {
             errorMessage = "Пользователь не авторизован"
@@ -167,18 +197,15 @@ struct TrackerView: View {
                 if let error = error {
                     errorMessage = "Ошибка сохранения: \(error.localizedDescription)"
                     showErrorAlert = true
-                    // Не закрываем форму при ошибке
                     return
                 }
                 
                 guard let httpResponse = response as? HTTPURLResponse, (200...299).contains(httpResponse.statusCode) else {
                     errorMessage = "Ошибка сервера при сохранении"
                     showErrorAlert = true
-                    // Не закрываем форму при ошибке
                     return
                 }
                 
-                // Успех - закрываем форму и обновляем список
                 showingAddSheet = false
                 selectedLog = nil
                 loadLogs()
@@ -186,7 +213,6 @@ struct TrackerView: View {
         }.resume()
     }
     
-    // Исправленная функция deleteLog - убираем completion из сигнатуры
     func deleteLog(id: Int) {
         guard let token = authManager.token else {
             errorMessage = "Пользователь не авторизован"
@@ -194,7 +220,6 @@ struct TrackerView: View {
             return
         }
         
-        // Оптимистичное удаление из UI
         let originalLogs = logs
         logs.removeAll { $0.id == id }
         
@@ -205,7 +230,6 @@ struct TrackerView: View {
         URLSession.shared.dataTask(with: req) { data, response, error in
             DispatchQueue.main.async {
                 if let error = error {
-                    // Откат изменений при ошибке
                     self.logs = originalLogs
                     errorMessage = "Ошибка удаления: \(error.localizedDescription)"
                     showErrorAlert = true
@@ -213,17 +237,88 @@ struct TrackerView: View {
                 }
                 
                 guard let httpResponse = response as? HTTPURLResponse, (200...299).contains(httpResponse.statusCode) else {
-                    // Откат изменений при ошибке
                     self.logs = originalLogs
                     errorMessage = "Ошибка сервера при удалении"
                     showErrorAlert = true
                     return
                 }
                 
-                // Успех - закрываем форму и обновляем список
                 showingAddSheet = false
                 selectedLog = nil
                 loadLogs()
+            }
+        }.resume()
+    }
+}
+
+// --- Вспомогательный виджет для быстрого действия ---
+struct QuickActionHandler: View {
+    let eventType: String
+    let authManager: AuthManager
+    let onComplete: () -> Void
+    let onError: (String) -> Void
+    
+    @State private var isProcessing = true
+    
+    var body: some View {
+        VStack(spacing: 20) {
+            if isProcessing {
+                ProgressView("Запись события...")
+                    .progressViewStyle(CircularProgressViewStyle())
+                    .scaleEffect(1.5)
+            } else {
+                Text("Готово")
+            }
+        }
+        .frame(width: 200, height: 200)
+        .background(Color(.systemBackground))
+        .cornerRadius(20)
+        .shadow(radius: 10)
+        .onAppear {
+            performQuickAction()
+        }
+    }
+    
+    func performQuickAction() {
+        guard let token = authManager.token else {
+            onError("Не авторизован")
+            return
+        }
+        
+        var req = URLRequest(url: URL(string: "\(authManager.baseURL)/tracker/logs/quick-feed")!)
+        // Если вдруг захотим быстро создать что-то еще, можно сделать универсальный эндпоинт
+        // Пока используем общий POST, но без формы
+        req.httpMethod = "POST"
+        req.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        req.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        
+        let isoFormatter = ISO8601DateFormatter()
+        let now = Date()
+        let body: [String: Any] = [
+            "event_type": eventType,
+            "start_time": isoFormatter.string(from: now),
+            "end_time": isoFormatter.string(from: now), // Кормление мгновенное
+            "note": "Быстрая запись"
+        ]
+        
+        req.httpBody = try? JSONSerialization.data(withJSONObject: body)
+        
+        URLSession.shared.dataTask(with: req) { data, response, error in
+            DispatchQueue.main.async {
+                if let error = error {
+                    onError(error.localizedDescription)
+                    return
+                }
+                
+                guard let httpResponse = response as? HTTPURLResponse, (200...299).contains(httpResponse.statusCode) else {
+                    onError("Ошибка сервера")
+                    return
+                }
+                
+                isProcessing = false
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+                    onComplete()
+                }
             }
         }.resume()
     }
@@ -252,7 +347,7 @@ struct LogCard: View {
                                 Text("• \(dur) мин").font(.caption).fontWeight(.medium).foregroundColor(.blue)
                             }
                         } else {
-                            Text("...в процессе").font(.caption).foregroundColor(.orange).fontWeight(.medium)
+                            Text("• Идет...").font(.caption).foregroundColor(.orange).fontWeight(.medium)
                         }
                     }
                     if let note = log.note, !note.isEmpty {
@@ -274,8 +369,6 @@ struct LogCard: View {
         switch type {
         case "sleep": return "moon.fill"
         case "feed": return "fork.knife"
-        case "diaper": return "drop.fill"
-        case "play": return "heart.fill"
         default: return "clock.fill"
         }
     }
@@ -284,8 +377,6 @@ struct LogCard: View {
         switch type {
         case "sleep": return .purple
         case "feed": return .orange
-        case "diaper": return .blue
-        case "play": return .pink
         default: return .gray
         }
     }
@@ -294,8 +385,6 @@ struct LogCard: View {
         switch type {
         case "sleep": return "Сон"
         case "feed": return "Кормление"
-        case "diaper": return "Смена памперса"
-        case "play": return "Игра / Бодрствование"
         default: return "Событие"
         }
     }

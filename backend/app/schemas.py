@@ -95,4 +95,6 @@ class BabyLogOut(BabyLogBase):
     created_at: datetime
     # Добавлено поле для имени создателя
     creator_name: Optional[str] = None
+    # Новое поле: активно ли событие (нет end_time)
+    is_active: bool = False    
     model_config = ConfigDict(from_attributes=True)

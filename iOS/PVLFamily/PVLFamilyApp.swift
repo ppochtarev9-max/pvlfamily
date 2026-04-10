@@ -12,40 +12,47 @@ struct PVLFamilyApp: App {
                 .environmentObject(authManager)
                 .environmentObject(notificationManager)
                 .onAppear {
-                    // Запрос прав при старте приложения
                     notificationManager.requestPermission()
-                    
-                    // Настройка делегата для обработки действий с уведомлениями (опционально)
                     UNUserNotificationCenter.current().delegate = UserNotificationCenterDelegate.shared
+                }
+                // ДОБАВЛЕНО: Обработка глубоких ссылок из виджета
+                .onOpenURL { url in
+                    handleDeepLink(url)
                 }
         }
     }
+    
+    // Функция обработки ссылок
+    func handleDeepLink(_ url: URL) {
+        guard let host = url.host else { return }
+        
+        // Отправляем уведомление внутрь приложения, чтобы DashboardView мог отреагировать
+        // Так как у нас нет прямого доступа к состоянию DashboardView отсюда
+        NotificationCenter.default.post(name: NSNotification.Name("WidgetActionTriggered"), object: host)
+        
+        print("🔗 Deep Link received: \(host)")
+    }
 }
 
-// Делегат для обработки нажатий на уведомления (если нужно будет действие по клику)
+// ... остальной код (Delegate, ContentView) без изменений ...
 class UserNotificationCenterDelegate: NSObject, UNUserNotificationCenterDelegate {
     static let shared = UserNotificationCenterDelegate()
-    
     func userNotificationCenter(_ center: UNUserNotificationCenter, willPresent notification: UNNotification, withCompletionHandler completionHandler: @escaping (UNNotificationPresentationOptions) -> Void) {
-        // Показывать уведомление даже если приложение открыто
         completionHandler([.banner, .sound])
     }
-    
     func userNotificationCenter(_ center: UNUserNotificationCenter, didReceive response: UNNotificationResponse, withCompletionHandler completionHandler: @escaping () -> Void) {
-        // Обработка нажатия на уведомление
         completionHandler()
     }
 }
 
 struct ContentView: View {
     @EnvironmentObject var authManager: AuthManager
-
     var body: some View {
         Group {
             if authManager.isLoggedIn {
-                MainTabView() // Убедись, что этот вид существует
+                MainTabView()
             } else {
-                LoginView() // Убедись, что этот вид существует
+                LoginView()
             }
         }
     }

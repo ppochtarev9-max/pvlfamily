@@ -1,28 +1,21 @@
 import WidgetKit
 import SwiftUI
 import ActivityKit
-import OSLog // Для логов внутри виджета
+import OSLog
 
-// Создаем логгер для отладки виджета
 let widgetLogger = OSLog(subsystem: "com.pvlfamily.PVLFamily", category: "LiveActivityWidget")
 
-// 1. ПРОВАЙДЕР ДАННЫХ
 struct SleepActivityProvider: TimelineProvider {
     func placeholder(in context: Context) -> SimpleEntry {
-        os_log("🟢 [Widget] Placeholder generated", log: widgetLogger, type: .info)
         return SimpleEntry(date: Date(), isSleeping: true, startTime: Date(), elapsedSeconds: 3600, statusText: "Спит")
     }
 
     func getSnapshot(in context: Context, completion: @escaping (SimpleEntry) -> Void) {
-        os_log("🟡 [Widget] Snapshot requested", log: widgetLogger, type: .info)
         let entry = SimpleEntry(date: Date(), isSleeping: true, startTime: Date(), elapsedSeconds: 3600, statusText: "Спит")
         completion(entry)
     }
 
     func getTimeline(in context: Context, completion: @escaping (Timeline<SimpleEntry>) -> Void) {
-        os_log("🔵 [Widget] Timeline requested", log: widgetLogger, type: .info)
-        // В реальном приложении данные берутся из контекста activity, а не генерируются заново
-        // Здесь мы просто передаем текущее состояние, которое придет от системы
         let entry = SimpleEntry(date: Date(), isSleeping: true, startTime: Date(), elapsedSeconds: 0, statusText: "Загрузка...")
         let timeline = Timeline(entries: [entry], policy: .atEnd)
         completion(timeline)
@@ -37,15 +30,10 @@ struct SimpleEntry: TimelineEntry {
     let statusText: String
 }
 
-// 2. КОНФИГУРАЦИЯ ВИДЖЕТА
 struct PVLFamilyLiveActivity: Widget {
     var body: some WidgetConfiguration {
         ActivityConfiguration(for: SleepActivityAttributes.self) { context in
-            // Логирование получения контекста (Lock Screen)
-            // Примечание: os_log здесь может работать нестабильно в зависимости от версии iOS,
-            // но попытка записать лог допустима.
-            
-            // ЭКРАН БЛОКИРОВКИ
+            // --- ЭКРАН БЛОКИРОВКИ ---
             VStack(spacing: 12) {
                 HStack {
                     Image(systemName: context.state.isSleeping ? "moon.fill" : "sun.max.fill")
@@ -77,11 +65,12 @@ struct PVLFamilyLiveActivity: Widget {
             .padding()
             .activityBackgroundTint(Color(.systemBackground).opacity(0.9))
             .activitySystemActionForegroundColor(.primary)
+            // Клик по всему виджету открывает приложение
+            .containerBackground(.fill.tertiary, for: .widget)
 
         } dynamicIsland: { context in
-            // DYNAMIC ISLAND
             DynamicIsland {
-                // Расширенный вид
+                // --- DYNAMIC ISLAND EXPANDED ---
                 DynamicIslandExpandedRegion(.leading) {
                     VStack(alignment: .leading) {
                         Text(context.state.statusText).font(.headline)
@@ -95,30 +84,65 @@ struct PVLFamilyLiveActivity: Widget {
                         .font(.title2)
                         .foregroundColor(context.state.isSleeping ? .purple : .orange)
                 }
+                
+                // --- КНОПКИ ВНИЗУ ---
                 DynamicIslandExpandedRegion(.bottom) {
-                    Text("Нажмите, чтобы открыть приложение")
-                        .font(.caption)
-                        .foregroundColor(.gray)
+                    HStack(spacing: 20) {
+                        if context.state.isSleeping {
+                            // Кнопка: Завершить сон
+                            Button(action: {}) {
+                                Label("Завершить", systemImage: "checkmark.circle.fill")
+                                    .labelStyle(.iconOnly)
+                                    .font(.title2)
+                                    .frame(width: 44, height: 44)
+                                    .background(Circle().fill(Color.purple.opacity(0.2)))
+                                    .foregroundColor(.purple)
+                            }
+                            .widgetURL(URL(string: "pvlfamily://finish_sleep"))
+                        } else {
+                            // Кнопка: Начать сон
+                            Button(action: {}) {
+                                Label("Начать", systemImage: "moon.fill")
+                                    .labelStyle(.iconOnly)
+                                    .font(.title2)
+                                    .frame(width: 44, height: 44)
+                                    .background(Circle().fill(Color.purple.opacity(0.2)))
+                                    .foregroundColor(.purple)
+                            }
+                            .widgetURL(URL(string: "pvlfamily://start_sleep"))
+                        }
+                        
+                        // Кнопка: Кормление
+                        Button(action: {}) {
+                            Label("Кормление", systemImage: "drop.fill")
+                                .labelStyle(.iconOnly)
+                                .font(.title2)
+                                .frame(width: 44, height: 44)
+                                .background(Circle().fill(Color.orange.opacity(0.2)))
+                                .foregroundColor(.orange)
+                        }
+                        .widgetURL(URL(string: "pvlfamily://quick_feed"))
+                    }
                 }
             } compactLeading: {
+                // Компактный вид: Иконка
                 Image(systemName: context.state.isSleeping ? "moon.fill" : "sun.max.fill")
                     .foregroundColor(context.state.isSleeping ? .purple : .orange)
+                    .widgetURL(URL(string: "pvlfamily://open_tracker"))
             } compactTrailing: {
+                // Компактный вид: Таймер
                 Text(formatTime(context.state.elapsedSeconds))
                     .font(.caption2)
                     .monospacedDigit()
+                    .widgetURL(URL(string: "pvlfamily://open_tracker"))
             } minimal: {
                 Image(systemName: context.state.isSleeping ? "moon.fill" : "sun.max.fill")
                     .foregroundColor(context.state.isSleeping ? .purple : .orange)
             }
-            .widgetURL(URL(string: "pvlfamily://open_tracker"))
-            // onAppear внутри DynamicIsland недоступен в старых версиях SDK или требует специфики.
-            // Убрали его, чтобы избежать ошибки компиляции.
         }
     }
 }
 
-// Хелперы
 func formatTime(_ seconds: Int) -> String {
     let h = seconds / 3600
     let m = (seconds % 3600) / 60
@@ -134,7 +158,6 @@ func formatDate(_ date: Date) -> String {
     return f.string(from: date)
 }
 
-// Preview
 #if DEBUG
 struct PVLFamilyLiveActivity_Previews: PreviewProvider {
     static var attributes: SleepActivityAttributes {

@@ -76,7 +76,9 @@
 			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
 			membershipExceptions = (
 				Info.plist,
+				PVLFamilyActivity.swift,
 				PVLFamilyActivityBundle.swift,
+				SleepIntents.swift,
 			);
 			target = E9326F692F7BA18E00A85416 /* PVLFamily */;
 		};

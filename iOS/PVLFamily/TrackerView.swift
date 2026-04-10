@@ -12,7 +12,7 @@ struct TrackerView: View {
     // Управление формой
     @State private var showingAddSheet = false
     @State private var selectedLog: BabyLog? = nil
-    @State private var preselectedType: String? = nil // Для быстрого создания
+    @State private var preselectedType: String? = nil
     
     struct BabyLog: Identifiable, Codable {
         let id: Int
@@ -22,7 +22,7 @@ struct TrackerView: View {
         let end_time: String?
         let duration_minutes: Int?
         let note: String?
-        let is_active: Bool // Новое поле с бэка
+        let is_active: Bool
     }
     
     var body: some View {
@@ -46,12 +46,29 @@ struct TrackerView: View {
                 } else {
                     List {
                         ForEach(logs.sorted(by: { $0.start_time > $1.start_time })) { log in
-                            LogCard(log: log, onTap: {
-                                selectedLog = log
-                                showingAddSheet = true
-                            })
-                            .listRowInsets(EdgeInsets(top: 8, leading: 0, bottom: 8, trailing: 0))
-                            .listRowSeparator(.hidden)
+                            LogCard(log: log)
+                                .listRowInsets(EdgeInsets(top: 8, leading: 0, bottom: 8, trailing: 0))
+                                .listRowSeparator(.hidden)
+                                .contentShape(Rectangle())
+                                .onTapGesture {
+                                    selectedLog = log
+                                    showingAddSheet = true
+                                }
+                                .swipeActions(edge: .trailing, allowsFullSwipe: false) {
+                                    Button(role: .destructive) {
+                                        deleteLog(id: log.id)
+                                    } label: {
+                                        Label("Удалить", systemImage: "trash")
+                                    }
+                                    
+                                    Button {
+                                        selectedLog = log
+                                        showingAddSheet = true
+                                    } label: {
+                                        Label("Изменить", systemImage: "pencil")
+                                    }
+                                    .tint(.blue)
+                                }
                         }
                     }
                     .listStyle(.plain)
@@ -60,14 +77,12 @@ struct TrackerView: View {
             .navigationTitle("История трекера")
             .toolbar {
                 ToolbarItem(placement: .topBarTrailing) {
-                    // Кнопка статистики
                     NavigationLink(destination: TrackerStatsView()) {
                         Image(systemName: "chart.bar.fill")
                             .font(.title3)
                     }
                 }
                 ToolbarItem(placement: .topBarLeading) {
-                     // Существующая кнопка "+"
                     Button(action: {
                         selectedLog = nil
                         preselectedType = nil
@@ -81,7 +96,6 @@ struct TrackerView: View {
             }
             .sheet(isPresented: $showingAddSheet) {
                 if let type = preselectedType {
-                    // Быстрое действие (Кормление) - отдельный обработчик
                     QuickActionHandler(
                         eventType: type,
                         authManager: authManager,
@@ -89,6 +103,7 @@ struct TrackerView: View {
                             showingAddSheet = false
                             preselectedType = nil
                             loadLogs()
+                            NotificationCenter.default.post(name: .trackerDataUpdated, object: nil)
                         },
                         onError: { err in
                             errorMessage = err
@@ -98,8 +113,6 @@ struct TrackerView: View {
                         }
                     )
                 } else {
-                    // Обычная форма (Сон или Редактирование)
-                    // Убедись, что TrackerFormView принимает именно эти параметры
                     TrackerFormView(
                         isPresented: $showingAddSheet,
                         existingLog: selectedLog,
@@ -108,7 +121,6 @@ struct TrackerView: View {
                     )
                 }
             }
-        
             .alert("Ошибка", isPresented: $showErrorAlert) {
                 Button("OK", role: .cancel) { errorMessage = nil }
             } message: {
@@ -185,11 +197,6 @@ struct TrackerView: View {
             return
         }
         
-        var req = URLRequest(url: URL(string: "\(authManager.baseURL)/tracker/logs")!)
-        req.httpMethod = "POST"
-        req.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
-        req.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        
         let isoFormatter = ISO8601DateFormatter()
         var body: [String: Any] = [
             "event_type": type,
@@ -198,18 +205,33 @@ struct TrackerView: View {
         if let end = endTime { body["end_time"] = isoFormatter.string(from: end) }
         if !note.isEmpty { body["note"] = note }
         
+        var req: URLRequest
+        let urlString: String
+        
+        if let log = selectedLog {
+            urlString = "\(authManager.baseURL)/tracker/logs/\(log.id)"
+            req = URLRequest(url: URL(string: urlString)!)
+            req.httpMethod = "PUT"
+        } else {
+            urlString = "\(authManager.baseURL)/tracker/logs"
+            req = URLRequest(url: URL(string: urlString)!)
+            req.httpMethod = "POST"
+        }
+        
+        req.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        req.setValue("application/json", forHTTPHeaderField: "Content-Type")
         req.httpBody = try? JSONSerialization.data(withJSONObject: body)
         
         URLSession.shared.dataTask(with: req) { data, response, error in
             DispatchQueue.main.async {
                 if let error = error {
-                    errorMessage = "Ошибка сохранения: \(error.localizedDescription)"
+                    errorMessage = "Ошибка: \(error.localizedDescription)"
                     showErrorAlert = true
                     return
                 }
                 
                 guard let httpResponse = response as? HTTPURLResponse, (200...299).contains(httpResponse.statusCode) else {
-                    errorMessage = "Ошибка сервера при сохранении"
+                    errorMessage = "Ошибка сервера"
                     showErrorAlert = true
                     return
                 }
@@ -217,7 +239,7 @@ struct TrackerView: View {
                 showingAddSheet = false
                 selectedLog = nil
                 loadLogs()
-                NotificationCenter.default.post(name: .trackerDataUpdated, object: nil) // <--- ДОБАВИТЬ ЭТУ СТРОКУ
+                NotificationCenter.default.post(name: .trackerDataUpdated, object: nil)
             }
         }.resume()
     }
@@ -255,7 +277,7 @@ struct TrackerView: View {
                 showingAddSheet = false
                 selectedLog = nil
                 loadLogs()
-                NotificationCenter.default.post(name: .trackerDataUpdated, object: nil) // <--- ДОБАВИТЬ ЭТУ СТРОКУ
+                NotificationCenter.default.post(name: .trackerDataUpdated, object: nil)
             }
         }.resume()
     }
@@ -296,8 +318,6 @@ struct QuickActionHandler: View {
         }
         
         var req = URLRequest(url: URL(string: "\(authManager.baseURL)/tracker/logs/quick-feed")!)
-        // Если вдруг захотим быстро создать что-то еще, можно сделать универсальный эндпоинт
-        // Пока используем общий POST, но без формы
         req.httpMethod = "POST"
         req.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
         req.setValue("application/json", forHTTPHeaderField: "Content-Type")
@@ -307,7 +327,7 @@ struct QuickActionHandler: View {
         let body: [String: Any] = [
             "event_type": eventType,
             "start_time": isoFormatter.string(from: now),
-            "end_time": isoFormatter.string(from: now), // Кормление мгновенное
+            "end_time": isoFormatter.string(from: now),
             "note": "Быстрая запись"
         ]
         
@@ -336,43 +356,55 @@ struct QuickActionHandler: View {
 
 struct LogCard: View {
     let log: TrackerView.BabyLog
-    let onTap: () -> Void
     
     var body: some View {
-        Button(action: onTap) {
-            HStack(spacing: 16) {
-                ZStack {
-                    Circle().fill(colorForType(log.event_type).opacity(0.15)).frame(width: 44, height: 44)
-                    Image(systemName: iconForType(log.event_type)).font(.title3).foregroundColor(colorForType(log.event_type))
-                }
-                
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(alignment: .top, spacing: 12) {
                 VStack(alignment: .leading, spacing: 4) {
-                    Text(titleForType(log.event_type)).font(.headline).foregroundColor(.primary)
-                    HStack(spacing: 8) {
-                        Text(formatTime(log.start_time)).font(.caption).foregroundColor(.secondary)
-                        if let end = log.end_time {
-                            Text("•").foregroundColor(.secondary)
-                            Text(formatTime(end)).font(.caption).foregroundColor(.secondary)
-                            if let dur = log.duration_minutes {
-                                Text("• \(dur) мин").font(.caption).fontWeight(.medium).foregroundColor(.blue)
-                            }
-                        } else {
-                            Text("• Идет...").font(.caption).foregroundColor(.orange).fontWeight(.medium)
-                        }
-                    }
+                    Text(titleForType(log.event_type)).font(.headline).fontWeight(.semibold).lineLimit(1)
                     if let note = log.note, !note.isEmpty {
-                        Text(note).font(.caption).foregroundColor(.secondary).lineLimit(1)
+                        Text(note).font(.caption).foregroundColor(.secondary).lineLimit(2)
                     }
                 }
                 Spacer()
-                Image(systemName: "chevron.right").font(.caption).foregroundColor(.gray)
+                if let dur = log.duration_minutes, dur > 0 {
+                    Text("\(dur) мин")
+                        .font(.title3).fontWeight(.bold)
+                        .foregroundColor(colorForType(log.event_type))
+                } else if log.is_active {
+                    Text("Идет...")
+                        .font(.caption).fontWeight(.bold)
+                        .foregroundColor(.orange)
+                }
             }
-            .padding()
-            .background(Color(.systemBackground))
-            .cornerRadius(16)
-            .shadow(color: Color.black.opacity(0.04), radius: 6, x: 0, y: 3)
+            
+            Divider().background(Color.gray.opacity(0.2))
+            
+            HStack(alignment: .center) {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Начало").font(.caption2).foregroundColor(.secondary).textCase(.uppercase)
+                    Text(formatDateTime(log.start_time)).font(.title3).fontWeight(.medium)
+                }
+                
+                Spacer()
+                
+                VStack(alignment: .trailing, spacing: 1) {
+                    if let end = log.end_time {
+                        Text("Окончание").font(.caption2).foregroundColor(.secondary).textCase(.uppercase)
+                        Text(formatDateTime(end)).font(.title3)
+                    } else {
+                        Text("Активно").font(.caption2).foregroundColor(.orange).textCase(.uppercase)
+                        Text("—").font(.title3)
+                    }
+                }
+            }
+            .foregroundColor(.gray)
         }
-        .buttonStyle(PlainButtonStyle())
+        .padding(14)
+        .background(Color(.systemBackground))
+        .cornerRadius(14)
+        .shadow(color: Color.black.opacity(0.06), radius: 6, x: 0, y: 3)
+        .overlay(RoundedRectangle(cornerRadius: 14).strokeBorder(colorForType(log.event_type).opacity(0.15), lineWidth: 1))
     }
     
     func iconForType(_ type: String) -> String {
@@ -399,13 +431,23 @@ struct LogCard: View {
         }
     }
     
-    func formatTime(_ string: String) -> String {
+    func formatDateTime(_ string: String) -> String {
         let iso = ISO8601DateFormatter()
+        iso.formatOptions = [.withInternetDateTime]
         if let d = iso.date(from: string) {
             let f = DateFormatter()
             f.locale = Locale(identifier: "ru_RU")
+            f.dateStyle = .short
             f.timeStyle = .short
             return f.string(from: d)
+        }
+        // Fallback для старых форматов
+        if let tIndex = string.firstIndex(of: "T") {
+            let datePart = String(string[..<tIndex])
+            let timePart = String(string[string.index(after: tIndex)...]).prefix(5)
+            let parts = datePart.split(separator: "-")
+            if parts.count == 3 { return "\(parts[2]).\(parts[1]).\(String(parts[0].suffix(2))), \(timePart)" }
+            return datePart
         }
         return string
     }

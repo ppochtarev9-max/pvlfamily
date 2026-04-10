@@ -39,7 +39,15 @@ class AuthManager: ObservableObject {
     @Published var errorMessage: String?
     @Published var users: [[String: Any]] = []
     
-    @Published var selectedServer: ServerMode = .local
+    @Published var selectedServer: ServerMode {
+         didSet {
+             // Сохраняем выбор сразу при изменении
+             let rawValue = selectedServer == .cloud ? "cloud" : "local"
+             UserDefaults.standard.set(rawValue, forKey: "savedServerMode")
+             updateBaseURL()
+         }
+     }
+
     var baseURL: String = "http://127.0.0.1:8000"
     
     private let session: URLSession = {
@@ -50,6 +58,16 @@ class AuthManager: ObservableObject {
     }()
     
     init() {
+        // 2. Восстанавливаем сервер из памяти при старте
+          let savedMode = UserDefaults.standard.string(forKey: "savedServerMode")
+          if savedMode == "cloud" {
+              self.selectedServer = .cloud
+          } else {
+              // Если ничего не сохранено (первый запуск после удаления), ставим Cloud по умолчанию
+              // Или оставь .local, если хочешь, но тогда придется переключать вручную каждый раз
+              self.selectedServer = .cloud
+          }
+        
         updateBaseURL()
         loadStoredUser()
         loadUsers()

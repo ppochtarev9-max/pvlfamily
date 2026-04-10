@@ -76,7 +76,7 @@ class AuthManager: ObservableObject {
     func updateBaseURL() {
         switch selectedServer {
         case .local: self.baseURL = "http://127.0.0.1:8000"
-        case .cloud: self.baseURL = "http://213.171.28.80:8000"
+        case .cloud: self.baseURL = "https://pvlfamily.ru"
         }
         print("🌐 Сервер: \(baseURL)")
     }

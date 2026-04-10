@@ -99,11 +99,12 @@ struct DashboardView: View {
             }
             .onDisappear {
                 isViewActive = false
-                if !isSleeping {
+                // Таймер не останавливаем, если идет активность (сон или бодрствование)
+                // Останавливаем только если ничего не идет и ушли в фон
+                if !isSleeping && currentActivity == nil {
                     stopTimer()
                 }
             }
-            // Подписка на переход в фон/передний план для синхронизации таймера
             .onReceive(NotificationCenter.default.publisher(for: UIApplication.willEnterForegroundNotification)) { _ in
                 handleAppEnterForeground()
             }
@@ -159,7 +160,7 @@ struct DashboardView: View {
         }
     }
     
-    // --- РАЗБИТЫЕ МЕТОДЫ ДЛЯ КОМПИЛЯТОРА ---
+    // --- РАЗБИТЫЕ МЕТОДЫ ---
     
     private func performOnAppear() {
         isViewActive = true
@@ -188,12 +189,11 @@ struct DashboardView: View {
     
     private func handleAppEnterBackground() {
         isViewActive = false
-        if !isSleeping {
-            stopTimer()
-        }
+        // В фоне таймер может работать для обновления виджета, если есть активность
+        // Но iOS может приостановить Timer, поэтому полагаемся на периодические обновления виджета
     }
     
-    // --- ЛОГИКА ЗАГРУЗКИ СТАТУСА ---
+    // --- ЗАГРУЗКА СТАТУСА ---
     
     func loadTrackerStatus() {
         authManager.getTrackerStatus { result in
@@ -221,7 +221,6 @@ struct DashboardView: View {
         case .failure(let error):
             print("⚠️ Ошибка загрузки статуса: \(error.localizedDescription)")
             
-            // Безопасная проверка на 401 без Equatable
             var isUnauthorized = false
             if let apiError = error as? APIError {
                 if case .unauthorized = apiError {
@@ -273,9 +272,12 @@ struct DashboardView: View {
             if let ref = newRefDate { recalculateTimer(referenceDate: ref) }
             
             if newState {
+                // Начался сон -> запускаем или обновляем активность
                 if let ref = newRefDate { startLiveActivity(startTime: ref) }
             } else {
-                endLiveActivity(durationMinutes: Int(elapsedSeconds / 60))
+                // Сон закончился -> НЕ завершаем активность, а переключаем её в режим бодрствования
+                // endLiveActivity вызываем только если хотим совсем закрыть виджет (например, через сутки)
+                // Пока просто обновим состояние ниже в timer/updateLiveActivity
             }
         } else {
             if let ref = newRefDate { recalculateTimer(referenceDate: ref) }
@@ -296,7 +298,8 @@ struct DashboardView: View {
         guard timer == nil else { return }
         timer = Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { _ in
             elapsedSeconds += 1
-            if isSleeping {
+            // Обновляем виджет каждую секунду и для сна, и для бодрствования
+            if currentActivity != nil {
                 updateLiveActivity(elapsed: elapsedSeconds)
             }
         }
@@ -308,7 +311,7 @@ struct DashboardView: View {
         timer = nil
     }
     
-    // --- ДЕЙСТВИЯ ПОЛЬЗОВАТЕЛЯ ---
+    // --- ДЕЙСТВИЯ ---
     
     func handleDeepLink(_ url: URL) {
         guard let host = url.host else { return }
@@ -352,6 +355,7 @@ struct DashboardView: View {
         let oldState = isSleeping
         let oldRef = isSleeping ? sleepStartTime : lastWakeUpTime
         
+        // Локально сразу переключаем состояние для отзывчивости
         isSleeping = false
         lastWakeUpTime = Date()
         sleepStartTime = nil
@@ -371,7 +375,8 @@ struct DashboardView: View {
             DispatchQueue.main.async {
                 switch result {
                 case .success(let status):
-                    syncWithStatus(status)
+                    syncWithStatus(status) // Синхронизируем с сервером (подтверждаем время)
+                    // Активность НЕ закрываем, она обновится в режиме "Бодрствует"
                 case .failure(let error):
                     loadTrackerStatus()
                     errorMessage = "Ошибка завершения: \(error.localizedDescription)"
@@ -404,11 +409,28 @@ struct DashboardView: View {
         }
     }
     
-    // --- LIVE ACTIVITY ---
+    // --- LIVE ACTIVITY (ОБНОВЛЕННАЯ ЛОГИКА) ---
     
     func startLiveActivity(startTime: Date) {
         guard ActivityAuthorizationInfo().areActivitiesEnabled else { return }
         
+        // Если уже есть активность, завершим старую перед запуском новой
+        if let activity = currentActivity ?? Activity<SleepActivityAttributes>.activities.first {
+            Task {
+                await activity.end(nil, dismissalPolicy: .immediate)
+                self.currentActivity = nil
+                // Небольшая задержка перед запуском новой
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+                    self.forceStartLiveActivity(startTime: startTime)
+                }
+            }
+            return
+        }
+        
+        forceStartLiveActivity(startTime: startTime)
+    }
+    
+    private func forceStartLiveActivity(startTime: Date) {
         let attributes = SleepActivityAttributes(childName: "Малыш")
         let contentState = SleepActivityAttributes.ContentState(
             isSleeping: true,
@@ -421,7 +443,7 @@ struct DashboardView: View {
         do {
             let activity = try Activity.request(attributes: attributes, content: content, pushType: nil)
             self.currentActivity = activity
-            print("✅ Live Activity запущена")
+            print("✅ Live Activity запущена (Сон)")
         } catch {
             print("❌ Ошибка запуска Live Activity: \(error)")
         }
@@ -431,36 +453,41 @@ struct DashboardView: View {
         let activityToUpdate = currentActivity ?? Activity<SleepActivityAttributes>.activities.first
         guard let activity = activityToUpdate else { return }
         
+        let statusText = isSleeping ? "Спит" : "Бодрствует"
+        let iconStartTime = isSleeping ? (sleepStartTime ?? Date()) : (lastWakeUpTime ?? Date())
+        
         let contentState = SleepActivityAttributes.ContentState(
-            isSleeping: true,
-            startTime: sleepStartTime ?? Date(),
+            isSleeping: isSleeping,
+            startTime: iconStartTime,
             elapsedSeconds: elapsed,
-            statusText: "Спит"
+            statusText: statusText
         )
         let content = ActivityContent(state: contentState, staleDate: nil)
         
         Task { await activity.update(content) }
     }
     
-    func endLiveActivity(durationMinutes: Int) {
+    // Метод для полного закрытия активности (если понадобится, например, по кнопке или через 24ч)
+    func endLiveActivityExplicitly() {
         let activityToEnd = currentActivity ?? Activity<SleepActivityAttributes>.activities.first
         guard let activity = activityToEnd else { return }
         
         let contentState = SleepActivityAttributes.ContentState(
             isSleeping: false,
             startTime: lastWakeUpTime ?? Date(),
-            elapsedSeconds: durationMinutes * 60,
-            statusText: "Сон завершен"
+            elapsedSeconds: elapsedSeconds,
+            statusText: "Активность завершена"
         )
         let content = ActivityContent(state: contentState, staleDate: nil)
         
         Task {
             await activity.end(content, dismissalPolicy: .immediate)
             self.currentActivity = nil
+            print("✅ Live Activity завершена пользователем")
         }
     }
     
-    // --- ТРАНЗАКЦИИ И СОБЫТИЯ ---
+    // --- ТРАНЗАКЦИИ И СОБЫТИЯ (без изменений) ---
     func loadCategories() {
         guard let token = authManager.token else {
             errorMessage = "Пользователь не авторизован"; showErrorAlert = true; return

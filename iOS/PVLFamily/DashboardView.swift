@@ -32,7 +32,7 @@ struct DashboardView: View {
     @State private var isSavingTransaction = false
     @State private var isSavingEvent = false
     
-    // --- СОСТОЯНИЯ ТРЕКЕРА ---
+    // --- СОСТОЯНИЯ ТРЕКЕРА (ЕДИНЫЙ ИСТОЧНИК) ---
     @State private var trackerStatus: TrackerStatus?
     @State private var isSleeping: Bool = false
     @State private var sleepStartTime: Date?
@@ -45,6 +45,7 @@ struct DashboardView: View {
     // Флаги
     @State private var hasLoadedInitialStatus = false
     @State private var isViewActive = false
+    @State private var isSyncing = false // Защита от гонок запросов
     
     // Live Activity
     @State private var currentActivity: Activity<SleepActivityAttributes>?
@@ -91,19 +92,16 @@ struct DashboardView: View {
                 .padding(.vertical)
             }
             .navigationTitle("Главная")
+            // Обработка Deep Links вынесена в безопасное место
             .onOpenURL { url in handleDeepLink(url) }
             
-            // --- ЖИЗНЕННЫЙ ЦИКЛ ЭКРАНА ---
+            // --- ЖИЗНЕННЫЙ ЦИКЛ ---
             .onAppear {
                 performOnAppear()
             }
             .onDisappear {
                 isViewActive = false
-                // Таймер не останавливаем, если идет активность (сон или бодрствование)
-                // Останавливаем только если ничего не идет и ушли в фон
-                if !isSleeping && currentActivity == nil {
-                    stopTimer()
-                }
+                // Таймер оставляем, если идет активность, чтобы виджет обновлялся
             }
             .onReceive(NotificationCenter.default.publisher(for: UIApplication.willEnterForegroundNotification)) { _ in
                 handleAppEnterForeground()
@@ -112,12 +110,13 @@ struct DashboardView: View {
                 handleAppEnterBackground()
             }
             
+            // --- REFRESHABLE (БЕЗ СБРОСА ТАЙМЕРА) ---
             .refreshable {
-                hasLoadedInitialStatus = false
-                await loadTrackerStatusAsync()
+                await forceRefreshStatus()
             }
             
             .onReceive(NotificationCenter.default.publisher(for: .trackerDataUpdated)) { _ in
+                // При уведомлении просто обновляем данные, не сбрасывая флаг инициализации
                 loadTrackerStatus()
             }
             .onReceive(NotificationCenter.default.publisher(for: .deepLinkReceived)) { notification in
@@ -160,7 +159,7 @@ struct DashboardView: View {
         }
     }
     
-    // --- РАЗБИТЫЕ МЕТОДЫ ---
+    // --- МЕТОДЫ ЖИЗНЕННОГО ЦИКЛА ---
     
     private func performOnAppear() {
         isViewActive = true
@@ -168,6 +167,7 @@ struct DashboardView: View {
             loadTrackerStatus()
             hasLoadedInitialStatus = true
         } else {
+            // При возврате на экран просто синхронизируем таймер с текущим состоянием
             recalculateTimer()
             startTimer()
         }
@@ -183,19 +183,20 @@ struct DashboardView: View {
     
     private func handleAppEnterForeground() {
         isViewActive = true
-        recalculateTimer()
+        recalculateTimer() // Корректируем время по факту возврата
         startTimer()
+        // Можно сделать легкий запрос статуса, если прошло много времени, но пока ограничимся таймером
     }
     
     private func handleAppEnterBackground() {
         isViewActive = false
-        // В фоне таймер может работать для обновления виджета, если есть активность
-        // Но iOS может приостановить Timer, поэтому полагаемся на периодические обновления виджета
+        // Таймер не стопим, если есть активность
     }
     
     // --- ЗАГРУЗКА СТАТУСА ---
     
     func loadTrackerStatus() {
+        guard !isSyncing else { return } // Защита от повторных вызовов
         authManager.getTrackerStatus { result in
             DispatchQueue.main.async {
                 handleTrackerResult(result)
@@ -203,21 +204,25 @@ struct DashboardView: View {
         }
     }
     
-    func loadTrackerStatusAsync() async {
-        await withCheckedContinuation { continuation in
+    func forceRefreshStatus() async {
+        guard !isSyncing else { return }
+        isSyncing = true
+        defer { isSyncing = false }
+        
+        return await withCheckedContinuation { continuation in
             authManager.getTrackerStatus { result in
                 DispatchQueue.main.async {
-                    handleTrackerResult(result)
+                    handleTrackerResult(result, isManualRefresh: true)
                     continuation.resume()
                 }
             }
         }
     }
     
-    func handleTrackerResult(_ result: Result<TrackerStatus, Error>) {
+    func handleTrackerResult(_ result: Result<TrackerStatus, Error>, isManualRefresh: Bool = false) {
         switch result {
         case .success(let status):
-            syncWithStatus(status)
+            syncWithStatus(status, isManualRefresh: isManualRefresh)
         case .failure(let error):
             print("⚠️ Ошибка загрузки статуса: \(error.localizedDescription)")
             
@@ -238,53 +243,67 @@ struct DashboardView: View {
         }
     }
     
-    // --- СИНХРОНИЗАЦИЯ И ТАЙМЕР ---
+    // --- СИНХРОНИЗАЦИЯ (УМНАЯ) ---
     
-    func syncWithStatus(_ status: TrackerStatus) {
+    func syncWithStatus(_ status: TrackerStatus, isManualRefresh: Bool = false) {
         self.trackerStatus = status
         let newState = status.is_sleeping
         
         let formatter = ISO8601DateFormatter()
         var newRefDate: Date? = nil
         
+        // Парсим даты
         if newState {
             if let startStr = status.current_sleep_start, let d = formatter.date(from: startStr) {
-                self.sleepStartTime = d
                 newRefDate = d
-            } else {
-                self.sleepStartTime = Date()
-                newRefDate = Date()
             }
-            self.lastWakeUpTime = nil
         } else {
-            self.sleepStartTime = nil
             if let wakeStr = status.last_wake_up, let d = formatter.date(from: wakeStr) {
-                self.lastWakeUpTime = d
                 newRefDate = d
-            } else {
-                self.lastWakeUpTime = Date()
-                newRefDate = Date()
             }
         }
         
+        // Сценарий 1: Состояние изменилось (Сон <-> Бодрствование)
         if self.isSleeping != newState {
             self.isSleeping = newState
-            if let ref = newRefDate { recalculateTimer(referenceDate: ref) }
             
             if newState {
-                // Начался сон -> запускаем или обновляем активность
-                if let ref = newRefDate { startLiveActivity(startTime: ref) }
+                // Начался сон
+                self.sleepStartTime = newRefDate ?? Date()
+                self.lastWakeUpTime = nil
+                recalculateTimer(referenceDate: self.sleepStartTime!)
+                startLiveActivity(startTime: self.sleepStartTime!)
             } else {
-                // Сон закончился -> НЕ завершаем активность, а переключаем её в режим бодрствования
-                // endLiveActivity вызываем только если хотим совсем закрыть виджет (например, через сутки)
-                // Пока просто обновим состояние ниже в timer/updateLiveActivity
+                // Закончился сон
+                self.lastWakeUpTime = newRefDate ?? Date()
+                self.sleepStartTime = nil
+                recalculateTimer(referenceDate: self.lastWakeUpTime!)
+                // Не завершаем Live Activity, а переключаем её режим
             }
-        } else {
-            if let ref = newRefDate { recalculateTimer(referenceDate: ref) }
+            
+            // Запускаем таймер, если экран активен
+            if isViewActive { startTimer() }
+            
         }
-        
-        if isViewActive && timer == nil {
-            startTimer()
+        // Сценарий 2: Состояние НЕ изменилось (просто обновление данных)
+        else {
+            // Если это ручной рефреш (pull-to-refresh), мы должны быть осторожны.
+            // Если сервер прислал дату, которая отличается от нашей локальной больше чем на 5 сек,
+            // значит была рассинхронизация – корректируем.
+            // Если разница маленькая – НЕ трогаем таймер, чтобы не было скачков.
+            
+            if let ref = newRefDate {
+                let currentRef = isSleeping ? (sleepStartTime ?? Date()) : (lastWakeUpTime ?? Date())
+                let diff = abs(ref.timeIntervalSince(currentRef))
+                
+                // Если рассинхрон > 5 секунд или это первый лоад – применяем новую дату
+                if diff > 5.0 || !hasLoadedInitialStatus {
+                    if isSleeping { self.sleepStartTime = ref }
+                    else { self.lastWakeUpTime = ref }
+                    recalculateTimer(referenceDate: ref)
+                }
+                // Иначе оставляем наш локальный таймер идти дальше (чтобы не сбрасывался визуально)
+            }
         }
     }
     
@@ -298,7 +317,6 @@ struct DashboardView: View {
         guard timer == nil else { return }
         timer = Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { _ in
             elapsedSeconds += 1
-            // Обновляем виджет каждую секунду и для сна, и для бодрствования
             if currentActivity != nil {
                 updateLiveActivity(elapsed: elapsedSeconds)
             }
@@ -316,54 +334,64 @@ struct DashboardView: View {
     func handleDeepLink(_ url: URL) {
         guard let host = url.host else { return }
         print("🔗 Deep Link: \(host)")
-        switch host {
-        case "start_sleep": startSleepAction()
-        case "finish_sleep": finishSleepAction()
-        case "quick_feed": performQuickFeed()
-        default: break
-        }
+        // Используем NotificationCenter, чтобы не ломать навигацию
+        NotificationCenter.default.post(name: .deepLinkReceived, object: nil, userInfo: ["action": host])
     }
     
     func startSleepAction() {
+        guard !isSyncing else { return }
+        isSyncing = true
+        
         let oldState = isSleeping
         let oldRef = isSleeping ? sleepStartTime : lastWakeUpTime
         
+        // Оптимистичное обновление UI
         isSleeping = true
         sleepStartTime = Date()
         lastWakeUpTime = nil
         recalculateTimer(referenceDate: sleepStartTime!)
+        startLiveActivity(startTime: sleepStartTime!)
+        if isViewActive { startTimer() }
         
         authManager.startSleep { result in
             DispatchQueue.main.async {
+                self.isSyncing = false
                 switch result {
                 case .success(let status):
-                    syncWithStatus(status)
-                    scheduleSleepNotificationIfNeeded()
+                    self.syncWithStatus(status) // Синхронизируем с реальным временем сервера
+                    self.scheduleSleepNotificationIfNeeded()
                 case .failure(let error):
-                    isSleeping = oldState
-                    if oldState { sleepStartTime = oldRef } else { lastWakeUpTime = oldRef }
-                    if let ref = oldRef { recalculateTimer(referenceDate: ref) }
+                    // Откат
+                    self.isSleeping = oldState
+                    if oldState { self.sleepStartTime = oldRef } else { self.lastWakeUpTime = oldRef }
+                    if let ref = oldRef { self.recalculateTimer(referenceDate: ref) }
                     
-                    errorMessage = "Ошибка запуска сна: \(error.localizedDescription)"
-                    showErrorAlert = true
+                    self.errorMessage = "Ошибка запуска сна: \(error.localizedDescription)"
+                    self.showErrorAlert = true
                 }
             }
         }
     }
     
     func finishSleepAction() {
+        guard !isSyncing else { return }
+        isSyncing = true
+        
         let oldState = isSleeping
         let oldRef = isSleeping ? sleepStartTime : lastWakeUpTime
         
-        // Локально сразу переключаем состояние для отзывчивости
+        // Оптимистичное обновление UI
         isSleeping = false
         lastWakeUpTime = Date()
         sleepStartTime = nil
         recalculateTimer(referenceDate: lastWakeUpTime!)
+        // Live Activity обновится в timer/updateLiveActivity
         
         guard let status = trackerStatus, let sleepId = status.current_sleep_id else {
+            self.isSyncing = false
             errorMessage = "Не найден активный сон."
             showErrorAlert = true
+            // Откат
             isSleeping = true
             sleepStartTime = oldRef
             lastWakeUpTime = nil
@@ -373,14 +401,15 @@ struct DashboardView: View {
         
         authManager.finishSleep(sleepId: sleepId) { result in
             DispatchQueue.main.async {
+                self.isSyncing = false
                 switch result {
                 case .success(let status):
-                    syncWithStatus(status) // Синхронизируем с сервером (подтверждаем время)
-                    // Активность НЕ закрываем, она обновится в режиме "Бодрствует"
+                    self.syncWithStatus(status)
                 case .failure(let error):
-                    loadTrackerStatus()
-                    errorMessage = "Ошибка завершения: \(error.localizedDescription)"
-                    showErrorAlert = true
+                    // Принудительно перезагружаем статус, чтобы узнать правду
+                    self.loadTrackerStatus()
+                    self.errorMessage = "Ошибка завершения: \(error.localizedDescription)"
+                    self.showErrorAlert = true
                 }
             }
         }
@@ -409,24 +438,22 @@ struct DashboardView: View {
         }
     }
     
-    // --- LIVE ACTIVITY (ОБНОВЛЕННАЯ ЛОГИКА) ---
+    // --- LIVE ACTIVITY ---
     
     func startLiveActivity(startTime: Date) {
         guard ActivityAuthorizationInfo().areActivitiesEnabled else { return }
         
-        // Если уже есть активность, завершим старую перед запуском новой
+        // Если уже есть, завершаем перед запуском новой
         if let activity = currentActivity ?? Activity<SleepActivityAttributes>.activities.first {
             Task {
                 await activity.end(nil, dismissalPolicy: .immediate)
                 self.currentActivity = nil
-                // Небольшая задержка перед запуском новой
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
                     self.forceStartLiveActivity(startTime: startTime)
                 }
             }
             return
         }
-        
         forceStartLiveActivity(startTime: startTime)
     }
     
@@ -467,27 +494,7 @@ struct DashboardView: View {
         Task { await activity.update(content) }
     }
     
-    // Метод для полного закрытия активности (если понадобится, например, по кнопке или через 24ч)
-    func endLiveActivityExplicitly() {
-        let activityToEnd = currentActivity ?? Activity<SleepActivityAttributes>.activities.first
-        guard let activity = activityToEnd else { return }
-        
-        let contentState = SleepActivityAttributes.ContentState(
-            isSleeping: false,
-            startTime: lastWakeUpTime ?? Date(),
-            elapsedSeconds: elapsedSeconds,
-            statusText: "Активность завершена"
-        )
-        let content = ActivityContent(state: contentState, staleDate: nil)
-        
-        Task {
-            await activity.end(content, dismissalPolicy: .immediate)
-            self.currentActivity = nil
-            print("✅ Live Activity завершена пользователем")
-        }
-    }
-    
-    // --- ТРАНЗАКЦИИ И СОБЫТИЯ (без изменений) ---
+    // --- ТРАНЗАКЦИИ И СОБЫТИЯ ---
     func loadCategories() {
         guard let token = authManager.token else {
             errorMessage = "Пользователь не авторизован"; showErrorAlert = true; return

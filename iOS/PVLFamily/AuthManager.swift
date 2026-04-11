@@ -308,4 +308,15 @@ extension AuthManager {
             }
         }.resume()
     }
+
+    func getTrackerDailyStats(date: Date, completion: @escaping (Result<[String: Any], Error>) -> Void) {
+        let formatter = DateFormatter()
+        formatter.dateFormat = "yyyy-MM-dd"
+        let dateStr = formatter.string(from: date)
+        
+        // Пока заглушка, если на бэке нет такого эндпоинта.
+        // В идеале: request(endpoint: "/tracker/stats?date=\(dateStr)", ...)
+        // Сейчас вернем пустой результат, так как логика считается на клиенте в TrackerView
+        completion(.success(["total_sleep_minutes": 0, "sessions_count": 0]))
+    }
 }

@@ -8,11 +8,9 @@ func requestLiveActivityPermission() {
         let center = UNUserNotificationCenter.current()
         let granted = try? await center.requestAuthorization(options: [.alert, .sound, .badge])
         if granted == true { print("✅ Разрешения на уведомления получены") }
-        else { print("⚠️ Пользователь отклонил уведомления") }
         
         let authStatus = ActivityAuthorizationInfo().areActivitiesEnabled
         if authStatus { print("✅ Live Activities разрешены") }
-        else { print("⚠️ Live Activities запрещены в настройках") }
     }
 }
 
@@ -29,10 +27,8 @@ struct DashboardView: View {
     // Ошибки
     @State private var errorMessage: String?
     @State private var showErrorAlert = false
-    @State private var isSavingTransaction = false
-    @State private var isSavingEvent = false
     
-    // --- СОСТОЯНИЯ ТРЕКЕРА (ЕДИНЫЙ ИСТОЧНИК) ---
+    // --- СОСТОЯНИЯ ТРЕКЕРА (Единый источник истины) ---
     @State private var trackerStatus: TrackerStatus?
     @State private var isSleeping: Bool = false
     @State private var sleepStartTime: Date?
@@ -42,10 +38,10 @@ struct DashboardView: View {
     @State private var timer: Timer?
     @State private var elapsedSeconds: Int = 0
     
-    // Флаги
+    // Флаги управления
     @State private var hasLoadedInitialStatus = false
-    @State private var isViewActive = false
     @State private var isSyncing = false // Защита от гонок запросов
+    @State private var isViewActive = false
     
     // Live Activity
     @State private var currentActivity: Activity<SleepActivityAttributes>?
@@ -54,7 +50,6 @@ struct DashboardView: View {
         NavigationStack {
             ScrollView {
                 VStack(spacing: 24) {
-                    // 1. ВИДЖЕТ УПРАВЛЕНИЯ
                     TrackerStatusWidget(
                         isSleeping: isSleeping,
                         elapsedSeconds: elapsedSeconds,
@@ -66,7 +61,6 @@ struct DashboardView: View {
                     
                     Divider().padding(.horizontal)
                     
-                    // 2. ДРУГИЕ ДЕЙСТВИЯ
                     Text("Другие действия")
                         .font(.headline)
                         .foregroundColor(.secondary)
@@ -92,31 +86,38 @@ struct DashboardView: View {
                 .padding(.vertical)
             }
             .navigationTitle("Главная")
-            // Обработка Deep Links вынесена в безопасное место
             .onOpenURL { url in handleDeepLink(url) }
             
-            // --- ЖИЗНЕННЫЙ ЦИКЛ ---
+            // ЖИЗНЕННЫЙ ЦИКЛ
             .onAppear {
-                performOnAppear()
+                if !hasLoadedInitialStatus {
+                    loadTrackerStatus()
+                    hasLoadedInitialStatus = true
+                } else {
+                    recalculateTimer()
+                    startTimer()
+                }
+                isViewActive = true
             }
             .onDisappear {
                 isViewActive = false
-                // Таймер оставляем, если идет активность, чтобы виджет обновлялся
+                // Таймер оставляем, если идет активность, чтобы обновлять виджет
             }
             .onReceive(NotificationCenter.default.publisher(for: UIApplication.willEnterForegroundNotification)) { _ in
-                handleAppEnterForeground()
+                isViewActive = true
+                recalculateTimer()
+                startTimer()
             }
             .onReceive(NotificationCenter.default.publisher(for: UIApplication.didEnterBackgroundNotification)) { _ in
-                handleAppEnterBackground()
+                isViewActive = false
             }
             
-            // --- REFRESHABLE (БЕЗ СБРОСА ТАЙМЕРА) ---
+            // REFRESH: Не сбрасываем hasLoadedInitialStatus, чтобы не потерять состояние таймера
             .refreshable {
-                await forceRefreshStatus()
+                await loadTrackerStatusAsync()
             }
             
             .onReceive(NotificationCenter.default.publisher(for: .trackerDataUpdated)) { _ in
-                // При уведомлении просто обновляем данные, не сбрасывая флаг инициализации
                 loadTrackerStatus()
             }
             .onReceive(NotificationCenter.default.publisher(for: .deepLinkReceived)) { notification in
@@ -153,158 +154,98 @@ struct DashboardView: View {
                 AddEventView(
                     isPresented: $showingEventSheet,
                     onSave: createEvent,
-                    isSaving: isSavingEvent
+                    isSaving: false
                 )
             }
         }
     }
     
-    // --- МЕТОДЫ ЖИЗНЕННОГО ЦИКЛА ---
-    
-    private func performOnAppear() {
-        isViewActive = true
-        if !hasLoadedInitialStatus {
-            loadTrackerStatus()
-            hasLoadedInitialStatus = true
-        } else {
-            // При возврате на экран просто синхронизируем таймер с текущим состоянием
-            recalculateTimer()
-            startTimer()
-        }
-        checkLiveActivityStatus()
-    }
-    
-    private func checkLiveActivityStatus() {
-        let status = ActivityAuthorizationInfo().areActivitiesEnabled
-        if !status {
-            print("⚠️ Live Activities отключены в настройках системы")
-        }
-    }
-    
-    private func handleAppEnterForeground() {
-        isViewActive = true
-        recalculateTimer() // Корректируем время по факту возврата
-        startTimer()
-        // Можно сделать легкий запрос статуса, если прошло много времени, но пока ограничимся таймером
-    }
-    
-    private func handleAppEnterBackground() {
-        isViewActive = false
-        // Таймер не стопим, если есть активность
-    }
-    
-    // --- ЗАГРУЗКА СТАТУСА ---
+    // --- ЛОГИКА ---
     
     func loadTrackerStatus() {
-        guard !isSyncing else { return } // Защита от повторных вызовов
+        guard !isSyncing else { return } // Защита от повторного вызова
+        isSyncing = true
+        
         authManager.getTrackerStatus { result in
             DispatchQueue.main.async {
+                isSyncing = false
                 handleTrackerResult(result)
             }
         }
     }
     
-    func forceRefreshStatus() async {
+    func loadTrackerStatusAsync() async {
         guard !isSyncing else { return }
         isSyncing = true
-        defer { isSyncing = false }
         
-        return await withCheckedContinuation { continuation in
+        await withCheckedContinuation { continuation in
             authManager.getTrackerStatus { result in
                 DispatchQueue.main.async {
-                    handleTrackerResult(result, isManualRefresh: true)
+                    handleTrackerResult(result)
                     continuation.resume()
                 }
             }
         }
     }
     
-    func handleTrackerResult(_ result: Result<TrackerStatus, Error>, isManualRefresh: Bool = false) {
+    func handleTrackerResult(_ result: Result<TrackerStatus, Error>) {
         switch result {
         case .success(let status):
-            syncWithStatus(status, isManualRefresh: isManualRefresh)
+            syncWithStatus(status)
         case .failure(let error):
-            print("⚠️ Ошибка загрузки статуса: \(error.localizedDescription)")
-            
+            print("⚠️ Ошибка статуса: \(error.localizedDescription)")
             var isUnauthorized = false
             if let apiError = error as? APIError {
-                if case .unauthorized = apiError {
-                    isUnauthorized = true
-                }
+                if case .unauthorized = apiError { isUnauthorized = true }
             }
             
             if isUnauthorized {
-                errorMessage = "Сессия истекла. Пожалуйста, войдите снова."
+                errorMessage = "Сессия истекла."
                 showErrorAlert = true
             } else if isViewActive {
-                errorMessage = "Нет связи с сервером. Проверьте интернет."
+                errorMessage = "Нет связи с сервером."
                 showErrorAlert = true
             }
         }
     }
     
-    // --- СИНХРОНИЗАЦИЯ (УМНАЯ) ---
-    
-    func syncWithStatus(_ status: TrackerStatus, isManualRefresh: Bool = false) {
-        self.trackerStatus = status
+    func syncWithStatus(_ status: TrackerStatus) {
         let newState = status.is_sleeping
-        
         let formatter = ISO8601DateFormatter()
         var newRefDate: Date? = nil
         
-        // Парсим даты
         if newState {
             if let startStr = status.current_sleep_start, let d = formatter.date(from: startStr) {
-                newRefDate = d
+                self.sleepStartTime = d; newRefDate = d
+            } else {
+                self.sleepStartTime = Date(); newRefDate = Date()
             }
+            self.lastWakeUpTime = nil
         } else {
+            self.sleepStartTime = nil
             if let wakeStr = status.last_wake_up, let d = formatter.date(from: wakeStr) {
-                newRefDate = d
+                self.lastWakeUpTime = d; newRefDate = d
+            } else {
+                self.lastWakeUpTime = Date(); newRefDate = Date()
             }
         }
         
-        // Сценарий 1: Состояние изменилось (Сон <-> Бодрствование)
+        // Если состояние изменилось (сон <-> бодрствование)
         if self.isSleeping != newState {
             self.isSleeping = newState
+            if let ref = newRefDate { recalculateTimer(referenceDate: ref) }
             
             if newState {
-                // Начался сон
-                self.sleepStartTime = newRefDate ?? Date()
-                self.lastWakeUpTime = nil
-                recalculateTimer(referenceDate: self.sleepStartTime!)
-                startLiveActivity(startTime: self.sleepStartTime!)
+                if let ref = newRefDate { startLiveActivity(startTime: ref) }
             } else {
-                // Закончился сон
-                self.lastWakeUpTime = newRefDate ?? Date()
-                self.sleepStartTime = nil
-                recalculateTimer(referenceDate: self.lastWakeUpTime!)
-                // Не завершаем Live Activity, а переключаем её режим
+                // Не завершаем, а обновляем виджет в режиме бодрствования
             }
-            
-            // Запускаем таймер, если экран активен
-            if isViewActive { startTimer() }
-            
+        } else {
+            // Состояние то же, просто синхронизируем время (коррекция рассинхрона)
+            if let ref = newRefDate { recalculateTimer(referenceDate: ref) }
         }
-        // Сценарий 2: Состояние НЕ изменилось (просто обновление данных)
-        else {
-            // Если это ручной рефреш (pull-to-refresh), мы должны быть осторожны.
-            // Если сервер прислал дату, которая отличается от нашей локальной больше чем на 5 сек,
-            // значит была рассинхронизация – корректируем.
-            // Если разница маленькая – НЕ трогаем таймер, чтобы не было скачков.
-            
-            if let ref = newRefDate {
-                let currentRef = isSleeping ? (sleepStartTime ?? Date()) : (lastWakeUpTime ?? Date())
-                let diff = abs(ref.timeIntervalSince(currentRef))
-                
-                // Если рассинхрон > 5 секунд или это первый лоад – применяем новую дату
-                if diff > 5.0 || !hasLoadedInitialStatus {
-                    if isSleeping { self.sleepStartTime = ref }
-                    else { self.lastWakeUpTime = ref }
-                    recalculateTimer(referenceDate: ref)
-                }
-                // Иначе оставляем наш локальный таймер идти дальше (чтобы не сбрасывался визуально)
-            }
-        }
+        
+        if isViewActive && timer == nil { startTimer() }
     }
     
     func recalculateTimer(referenceDate: Date? = nil) {
@@ -333,41 +274,37 @@ struct DashboardView: View {
     
     func handleDeepLink(_ url: URL) {
         guard let host = url.host else { return }
-        print("🔗 Deep Link: \(host)")
-        // Используем NotificationCenter, чтобы не ломать навигацию
-        NotificationCenter.default.post(name: .deepLinkReceived, object: nil, userInfo: ["action": host])
+        switch host {
+        case "start_sleep": startSleepAction()
+        case "finish_sleep": finishSleepAction()
+        case "quick_feed": performQuickFeed()
+        default: break
+        }
     }
     
     func startSleepAction() {
         guard !isSyncing else { return }
-        isSyncing = true
-        
         let oldState = isSleeping
         let oldRef = isSleeping ? sleepStartTime : lastWakeUpTime
         
-        // Оптимистичное обновление UI
         isSleeping = true
         sleepStartTime = Date()
         lastWakeUpTime = nil
         recalculateTimer(referenceDate: sleepStartTime!)
-        startLiveActivity(startTime: sleepStartTime!)
-        if isViewActive { startTimer() }
         
         authManager.startSleep { result in
             DispatchQueue.main.async {
-                self.isSyncing = false
                 switch result {
                 case .success(let status):
-                    self.syncWithStatus(status) // Синхронизируем с реальным временем сервера
-                    self.scheduleSleepNotificationIfNeeded()
+                    syncWithStatus(status)
+                    scheduleSleepNotificationIfNeeded()
                 case .failure(let error):
                     // Откат
-                    self.isSleeping = oldState
-                    if oldState { self.sleepStartTime = oldRef } else { self.lastWakeUpTime = oldRef }
-                    if let ref = oldRef { self.recalculateTimer(referenceDate: ref) }
-                    
-                    self.errorMessage = "Ошибка запуска сна: \(error.localizedDescription)"
-                    self.showErrorAlert = true
+                    isSleeping = oldState
+                    if oldState { sleepStartTime = oldRef } else { lastWakeUpTime = oldRef }
+                    if let ref = oldRef { recalculateTimer(referenceDate: ref) }
+                    errorMessage = "Ошибка: \(error.localizedDescription)"
+                    showErrorAlert = true
                 }
             }
         }
@@ -375,51 +312,38 @@ struct DashboardView: View {
     
     func finishSleepAction() {
         guard !isSyncing else { return }
-        isSyncing = true
+        guard let status = trackerStatus, let sleepId = status.current_sleep_id else {
+            errorMessage = "Активный сон не найден."
+            showErrorAlert = true
+            return
+        }
         
-        let oldState = isSleeping
-        let oldRef = isSleeping ? sleepStartTime : lastWakeUpTime
-        
-        // Оптимистичное обновление UI
+        let oldRef = sleepStartTime
         isSleeping = false
         lastWakeUpTime = Date()
         sleepStartTime = nil
         recalculateTimer(referenceDate: lastWakeUpTime!)
-        // Live Activity обновится в timer/updateLiveActivity
-        
-        guard let status = trackerStatus, let sleepId = status.current_sleep_id else {
-            self.isSyncing = false
-            errorMessage = "Не найден активный сон."
-            showErrorAlert = true
-            // Откат
-            isSleeping = true
-            sleepStartTime = oldRef
-            lastWakeUpTime = nil
-            if let ref = oldRef { recalculateTimer(referenceDate: ref) }
-            return
-        }
         
         authManager.finishSleep(sleepId: sleepId) { result in
             DispatchQueue.main.async {
-                self.isSyncing = false
                 switch result {
                 case .success(let status):
-                    self.syncWithStatus(status)
+                    syncWithStatus(status)
                 case .failure(let error):
-                    // Принудительно перезагружаем статус, чтобы узнать правду
-                    self.loadTrackerStatus()
-                    self.errorMessage = "Ошибка завершения: \(error.localizedDescription)"
-                    self.showErrorAlert = true
+                    loadTrackerStatus() // Принудительная перезагрузка
+                    errorMessage = "Ошибка: \(error.localizedDescription)"
+                    showErrorAlert = true
                 }
             }
         }
     }
     
     func performQuickFeed() {
+        guard !isSyncing else { return }
         authManager.quickFeed { result in
             DispatchQueue.main.async {
                 if case .failure(let error) = result {
-                    errorMessage = "Ошибка кормления: \(error.localizedDescription)"
+                    errorMessage = "Ошибка: \(error.localizedDescription)"
                     showErrorAlert = true
                 }
             }
@@ -443,13 +367,12 @@ struct DashboardView: View {
     func startLiveActivity(startTime: Date) {
         guard ActivityAuthorizationInfo().areActivitiesEnabled else { return }
         
-        // Если уже есть, завершаем перед запуском новой
         if let activity = currentActivity ?? Activity<SleepActivityAttributes>.activities.first {
             Task {
                 await activity.end(nil, dismissalPolicy: .immediate)
                 self.currentActivity = nil
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
-                    self.forceStartLiveActivity(startTime: startTime)
+                    forceStartLiveActivity(startTime: startTime)
                 }
             }
             return
@@ -460,20 +383,14 @@ struct DashboardView: View {
     private func forceStartLiveActivity(startTime: Date) {
         let attributes = SleepActivityAttributes(childName: "Малыш")
         let contentState = SleepActivityAttributes.ContentState(
-            isSleeping: true,
-            startTime: startTime,
-            elapsedSeconds: 0,
-            statusText: "Сон начался"
+            isSleeping: true, startTime: startTime, elapsedSeconds: 0, statusText: "Сон начался"
         )
         let content = ActivityContent(state: contentState, staleDate: nil)
         
         do {
             let activity = try Activity.request(attributes: attributes, content: content, pushType: nil)
             self.currentActivity = activity
-            print("✅ Live Activity запущена (Сон)")
-        } catch {
-            print("❌ Ошибка запуска Live Activity: \(error)")
-        }
+        } catch { print("❌ Ошибка Live Activity: \(error)") }
     }
     
     func updateLiveActivity(elapsed: Int) {
@@ -484,35 +401,25 @@ struct DashboardView: View {
         let iconStartTime = isSleeping ? (sleepStartTime ?? Date()) : (lastWakeUpTime ?? Date())
         
         let contentState = SleepActivityAttributes.ContentState(
-            isSleeping: isSleeping,
-            startTime: iconStartTime,
-            elapsedSeconds: elapsed,
-            statusText: statusText
+            isSleeping: isSleeping, startTime: iconStartTime, elapsedSeconds: elapsed, statusText: statusText
         )
         let content = ActivityContent(state: contentState, staleDate: nil)
         
         Task { await activity.update(content) }
     }
     
-    // --- ТРАНЗАКЦИИ И СОБЫТИЯ ---
+    // --- ТРАНЗАКЦИИ И СОБЫТИЯ (без изменений) ---
     func loadCategories() {
-        guard let token = authManager.token else {
-            errorMessage = "Пользователь не авторизован"; showErrorAlert = true; return
-        }
+        guard let token = authManager.token else { errorMessage = "Нет авторизации"; showErrorAlert = true; return }
         isLoadingCategories = true
         var req = URLRequest(url: URL(string: "\(authManager.baseURL)/budget/categories")!)
         req.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
-        
         URLSession.shared.dataTask(with: req) { data, response, error in
             DispatchQueue.main.async {
                 isLoadingCategories = false
                 if let error = error { errorMessage = error.localizedDescription; showErrorAlert = true; return }
-                guard let httpResponse = response as? HTTPURLResponse, (200...299).contains(httpResponse.statusCode) else {
-                    errorMessage = "Ошибка сервера"; showErrorAlert = true; return
-                }
-                guard let data = data, let list = try? JSONDecoder().decode([BudgetView.Category].self, from: data) else {
-                    errorMessage = "Ошибка данных"; showErrorAlert = true; return
-                }
+                guard let httpResponse = response as? HTTPURLResponse, (200...299).contains(httpResponse.statusCode) else { return }
+                guard let data = data, let list = try? JSONDecoder().decode([BudgetView.Category].self, from: data) else { return }
                 self.transactionCategories = list
                 self.showingTransactionSheet = true
             }
@@ -520,72 +427,47 @@ struct DashboardView: View {
     }
     
     func saveTransaction(amount: Double, type: String, categoryId: Int, description: String, date: Date) {
-        guard let token = authManager.token else {
-            errorMessage = "Пользователь не авторизован"; showErrorAlert = true; return
-        }
-        isSavingTransaction = true
+        guard let token = authManager.token else { errorMessage = "Нет авторизации"; showErrorAlert = true; return }
         var req = URLRequest(url: URL(string: "\(authManager.baseURL)/budget/transactions")!)
         req.httpMethod = "POST"
         req.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
         req.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        
         let isoFormatter = ISO8601DateFormatter()
-        let body: [String: Any] = [
-            "amount": amount, "transaction_type": type, "category_id": categoryId,
-            "description": description, "date": isoFormatter.string(from: date)
-        ]
+        let body: [String: Any] = ["amount": amount, "transaction_type": type, "category_id": categoryId, "description": description, "date": isoFormatter.string(from: date)]
         req.httpBody = try? JSONSerialization.data(withJSONObject: body)
-        
         URLSession.shared.dataTask(with: req) { data, response, error in
             DispatchQueue.main.async {
-                isSavingTransaction = false
                 if let error = error { errorMessage = error.localizedDescription; showErrorAlert = true; return }
-                guard let httpResponse = response as? HTTPURLResponse, (200...299).contains(httpResponse.statusCode) else {
-                    errorMessage = "Ошибка сервера"; showErrorAlert = true; return
-                }
+                guard let httpResponse = response as? HTTPURLResponse, (200...299).contains(httpResponse.statusCode) else { return }
                 showingTransactionSheet = false
             }
         }.resume()
     }
     
     func createEvent(title: String, desc: String, date: Date, type: String) {
-        guard let token = authManager.token else {
-            errorMessage = "Пользователь не авторизован"; showErrorAlert = true; return
-        }
-        isSavingEvent = true
+        guard let token = authManager.token else { errorMessage = "Нет авторизации"; showErrorAlert = true; return }
         let urlStr = authManager.baseURL.hasSuffix("/") ? "\(authManager.baseURL)calendar/events" : "\(authManager.baseURL)/calendar/events"
         var req = URLRequest(url: URL(string: urlStr)!)
         req.httpMethod = "POST"
         req.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
         req.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        
         let isoFormatter = ISO8601DateFormatter()
-        let body: [String: Any] = [
-            "title": title, "description": desc, "event_date": isoFormatter.string(from: date), "event_type": type
-        ]
+        let body: [String: Any] = ["title": title, "description": desc, "event_date": isoFormatter.string(from: date), "event_type": type]
         req.httpBody = try? JSONSerialization.data(withJSONObject: body)
-        
         URLSession.shared.dataTask(with: req) { data, response, error in
             DispatchQueue.main.async {
-                isSavingEvent = false
                 if let error = error { errorMessage = error.localizedDescription; showErrorAlert = true; return }
-                guard let httpResponse = response as? HTTPURLResponse, (200...299).contains(httpResponse.statusCode) else {
-                    errorMessage = "Ошибка сервера"; showErrorAlert = true; return
-                }
+                guard let httpResponse = response as? HTTPURLResponse, (200...299).contains(httpResponse.statusCode) else { return }
                 showingEventSheet = false
             }
         }.resume()
     }
 }
 
-// --- ВСПОМОГАТЕЛЬНЫЕ СТРУКТУРЫ ---
+// --- ВИДЖЕТЫ ---
 struct TrackerStatusWidget: View {
-    let isSleeping: Bool
-    let elapsedSeconds: Int
-    let onStartSleep: () -> Void
-    let onFinishSleep: () -> Void
-    let onQuickFeed: () -> Void
-    
+    let isSleeping: Bool; let elapsedSeconds: Int
+    let onStartSleep: () -> Void; let onFinishSleep: () -> Void; let onQuickFeed: () -> Void
     var body: some View {
         VStack(spacing: 16) {
             HStack {
@@ -618,15 +500,11 @@ struct TrackerStatusWidget: View {
         .cornerRadius(20)
         .shadow(color: Color.black.opacity(0.1), radius: 10, x: 0, y: 5)
     }
-    
     func formattedElapsedTime() -> String {
-        let h = elapsedSeconds / 3600
-        let m = (elapsedSeconds % 3600) / 60
-        let s = elapsedSeconds % 60
+        let h = elapsedSeconds / 3600; let m = (elapsedSeconds % 3600) / 60; let s = elapsedSeconds % 60
         return String(format: "%02d:%02d:%02d", h, m, s)
     }
 }
-
 struct ActionCard: View {
     let title: String; let icon: String; let color: Color; let action: () -> Void
     var body: some View {
@@ -638,7 +516,6 @@ struct ActionCard: View {
         }
     }
 }
-
 extension Notification.Name {
     static let trackerDataUpdated = Notification.Name("trackerDataUpdated")
     static let deepLinkReceived = Notification.Name("deepLinkReceived")

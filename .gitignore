@@ -2,6 +2,7 @@
 #!!!
 *.db
 *.sqlite3
+COMMANDS_full.md
 
 # Logs and temp files
 *.log

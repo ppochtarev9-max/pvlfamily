@@ -314,33 +314,72 @@ struct DashboardView: View {
     }
     
     func finishSleepAction() {
-        guard !isSyncing else { return }
-        guard let status = trackerStatus, let sleepId = status.current_sleep_id else {
-            errorMessage = "Активный сон не найден."
-            showErrorAlert = true
-            return
-        }
+        // Не проверяем isSyncing здесь, чтобы не блокировать действие пользователя
         
+        // Сначала принудительно запрашиваем свежий статус, чтобы получить актуальный ID
+        authManager.getTrackerStatus { result in
+            DispatchQueue.main.async {
+                switch result {
+                case .success(let status):
+                    self.syncWithStatus(status) // Обновляем локальное состояние
+                    
+                    guard let sleepId = status.current_sleep_id else {
+                        self.errorMessage = "Активный сон не найден на сервере."
+                        self.showErrorAlert = true
+                        return
+                    }
+                    
+                    // Теперь пытаемся завершить
+                    self.isSleeping = false
+                    self.lastWakeUpTime = Date()
+                    self.sleepStartTime = nil
+                    self.recalculateTimer(referenceDate: self.lastWakeUpTime!)
+                    
+                    self.authManager.finishSleep(sleepId: sleepId) { finishResult in
+                        DispatchQueue.main.async {
+                            switch finishResult {
+                            case .success(let finalStatus):
+                                self.syncWithStatus(finalStatus)
+                            case .failure(let error):
+                                self.loadTrackerStatus() // Откат
+                                self.errorMessage = "Ошибка завершения: \(error.localizedDescription)"
+                                self.showErrorAlert = true
+                            }
+                        }
+                    }
+                    
+                case .failure(let error):
+                    self.errorMessage = "Не удалось получить статус: \(error.localizedDescription)"
+                    self.showErrorAlert = true
+                }
+            }
+        }
+    }
+    
+    // Вынесенная логика завершения
+    private func performFinishSleep(id: Int) {
         let oldRef = sleepStartTime
         isSleeping = false
         lastWakeUpTime = Date()
         sleepStartTime = nil
         recalculateTimer(referenceDate: lastWakeUpTime!)
         
-        authManager.finishSleep(sleepId: sleepId) { result in
+        print("🛑 Завершаем сон ID: \(id)")
+        
+        authManager.finishSleep(sleepId: id) { result in
             DispatchQueue.main.async {
                 switch result {
                 case .success(let status):
                     syncWithStatus(status)
                 case .failure(let error):
-                    loadTrackerStatus() // Принудительная перезагрузка
+                    // При ошибке восстановления пытаемся вернуть состояние сна
+                    loadTrackerStatus()
                     errorMessage = "Ошибка: \(error.localizedDescription)"
                     showErrorAlert = true
                 }
             }
         }
     }
-    
     func performQuickFeed() {
         guard !isSyncing else { return }
         authManager.quickFeed { result in

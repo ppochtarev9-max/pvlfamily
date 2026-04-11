@@ -312,7 +312,7 @@ extension AuthManager {
     func getTrackerDailyStats(date: Date, completion: @escaping (Result<[String: Any], Error>) -> Void) {
         let formatter = DateFormatter()
         formatter.dateFormat = "yyyy-MM-dd"
-        let dateStr = formatter.string(from: date)
+        let _ = formatter.string(from: date)
         
         // Пока заглушка, если на бэке нет такого эндпоинта.
         // В идеале: request(endpoint: "/tracker/stats?date=\(dateStr)", ...)

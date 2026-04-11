@@ -7,12 +7,25 @@
 		<key>PVLFamily.xcscheme_^#shared#^_</key>
 		<dict>
 			<key>orderHint</key>
-			<integer>0</integer>
+			<integer>1</integer>
 		</dict>
 		<key>PVLFamilyActivityExtension.xcscheme_^#shared#^_</key>
 		<dict>
 			<key>orderHint</key>
 			<integer>0</integer>
+		</dict>
+	</dict>
+	<key>SuppressBuildableAutocreation</key>
+	<dict>
+		<key>E9326F692F7BA18E00A85416</key>
+		<dict>
+			<key>primary</key>
+			<true/>
+		</dict>
+		<key>E9F622A72F87E9E200F05A5A</key>
+		<dict>
+			<key>primary</key>
+			<true/>
 		</dict>
 	</dict>
 </dict>

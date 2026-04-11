@@ -323,3 +323,73 @@ struct LogCard: View {
         return string
     }
 }
+// --- Вспомогательный виджет для быстрого действия ---
+struct QuickActionHandler: View {
+    let eventType: String
+    let authManager: AuthManager
+    let onComplete: () -> Void
+    let onError: (String) -> Void
+    
+    @State private var isProcessing = true
+    
+    var body: some View {
+        VStack(spacing: 20) {
+            if isProcessing {
+                ProgressView("Запись события...")
+                    .progressViewStyle(CircularProgressViewStyle())
+                    .scaleEffect(1.5)
+            } else {
+                Text("Готово")
+            }
+        }
+        .frame(width: 200, height: 200)
+        .background(Color(.systemBackground))
+        .cornerRadius(20)
+        .shadow(radius: 10)
+        .onAppear {
+            performQuickAction()
+        }
+    }
+    
+    func performQuickAction() {
+        guard let token = authManager.token else {
+            onError("Не авторизован")
+            return
+        }
+        
+        var req = URLRequest(url: URL(string: "\(authManager.baseURL)/tracker/logs")!)
+        req.httpMethod = "POST"
+        req.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        req.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        
+        let isoFormatter = ISO8601DateFormatter()
+        let now = Date()
+        let body: [String: Any] = [
+            "event_type": eventType,
+            "start_time": isoFormatter.string(from: now),
+            "end_time": isoFormatter.string(from: now),
+            "note": "Быстрая запись"
+        ]
+        
+        req.httpBody = try? JSONSerialization.data(withJSONObject: body)
+        
+        URLSession.shared.dataTask(with: req) { data, response, error in
+            DispatchQueue.main.async {
+                if let error = error {
+                    onError(error.localizedDescription)
+                    return
+                }
+                
+                guard let httpResponse = response as? HTTPURLResponse, (200...299).contains(httpResponse.statusCode) else {
+                    onError("Ошибка сервера")
+                    return
+                }
+                
+                isProcessing = false
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+                    onComplete()
+                }
+            }
+        }.resume()
+    }
+}

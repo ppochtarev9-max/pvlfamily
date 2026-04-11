@@ -242,7 +242,10 @@ struct DashboardView: View {
             }
         } else {
             // Состояние то же, просто синхронизируем время (коррекция рассинхрона)
-            if let ref = newRefDate { recalculateTimer(referenceDate: ref) }
+            if let ref = newRefDate {
+                recalculateTimer(referenceDate: ref)
+                print("⏳ Синхронизация времени без смены статуса: \(elapsedSeconds)")
+            }
         }
         
         if isViewActive && timer == nil { startTimer() }

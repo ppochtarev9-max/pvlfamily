@@ -6,6 +6,17 @@ struct PVLFamilyApp: App {
     @StateObject var authManager = AuthManager()
     @StateObject var notificationManager = NotificationManager.shared
     
+    init() {
+         // ПРОВЕРКА НА ЗАПУСК ИЗ-ПОД ТЕСТОВ
+         if ProcessInfo.processInfo.arguments.contains("--reset-app-state") {
+             UserDefaults.standard.removeObject(forKey: "userToken")
+             UserDefaults.standard.removeObject(forKey: "userName")
+             UserDefaults.standard.removeObject(forKey: "userId")
+             UserDefaults.standard.removeObject(forKey: "savedServerMode")
+             print("🧪 Тестовый режим: состояние сброшено")
+         }
+     }
+
     var body: some Scene {
         WindowGroup {
             ContentView()

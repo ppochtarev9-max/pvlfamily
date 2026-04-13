@@ -15,6 +15,13 @@
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
+		E96394A92F8CE8B2002C2078 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = E9326F622F7BA18E00A85416 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = E9326F692F7BA18E00A85416;
+			remoteInfo = PVLFamily;
+		};
 		E9F622BC2F87E9E500F05A5A /* PBXContainerItemProxy */ = {
 			isa = PBXContainerItemProxy;
 			containerPortal = E9326F622F7BA18E00A85416 /* Project object */;
@@ -52,6 +59,7 @@
 
 /* Begin PBXFileReference section */
 		E9326F6A2F7BA18E00A85416 /* PVLFamily.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = PVLFamily.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		E96394A32F8CE8B2002C2078 /* PVLFamilyUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = PVLFamilyUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		E9F622A82F87E9E200F05A5A /* PVLFamilyActivityExtension.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = PVLFamilyActivityExtension.appex; sourceTree = BUILT_PRODUCTS_DIR; };
 		E9F622AA2F87E9E200F05A5A /* WidgetKit.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = WidgetKit.framework; path = System/Library/Frameworks/WidgetKit.framework; sourceTree = SDKROOT; };
 		E9F622AC2F87E9E300F05A5A /* SwiftUI.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = SwiftUI.framework; path = System/Library/Frameworks/SwiftUI.framework; sourceTree = SDKROOT; };
@@ -101,6 +109,11 @@
 			path = PVLFamily;
 			sourceTree = "<group>";
 		};
+		E96394A42F8CE8B2002C2078 /* PVLFamilyUITests */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			path = PVLFamilyUITests;
+			sourceTree = "<group>";
+		};
 		E9F622AE2F87E9E300F05A5A /* PVLFamilyActivity */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
 			exceptions = (
@@ -114,6 +127,13 @@
 
 /* Begin PBXFrameworksBuildPhase section */
 		E9326F672F7BA18E00A85416 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		E96394A02F8CE8B2002C2078 /* Frameworks */ = {
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
@@ -137,6 +157,7 @@
 			children = (
 				E9326F6C2F7BA18E00A85416 /* PVLFamily */,
 				E9F622AE2F87E9E300F05A5A /* PVLFamilyActivity */,
+				E96394A42F8CE8B2002C2078 /* PVLFamilyUITests */,
 				E9F622A92F87E9E200F05A5A /* Frameworks */,
 				E9326F6B2F7BA18E00A85416 /* Products */,
 			);
@@ -147,6 +168,7 @@
 			children = (
 				E9326F6A2F7BA18E00A85416 /* PVLFamily.app */,
 				E9F622A82F87E9E200F05A5A /* PVLFamilyActivityExtension.appex */,
+				E96394A32F8CE8B2002C2078 /* PVLFamilyUITests.xctest */,
 			);
 			name = Products;
 			sourceTree = "<group>";
@@ -188,6 +210,29 @@
 			productReference = E9326F6A2F7BA18E00A85416 /* PVLFamily.app */;
 			productType = "com.apple.product-type.application";
 		};
+		E96394A22F8CE8B2002C2078 /* PVLFamilyUITests */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = E96394AB2F8CE8B2002C2078 /* Build configuration list for PBXNativeTarget "PVLFamilyUITests" */;
+			buildPhases = (
+				E963949F2F8CE8B2002C2078 /* Sources */,
+				E96394A02F8CE8B2002C2078 /* Frameworks */,
+				E96394A12F8CE8B2002C2078 /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				E96394AA2F8CE8B2002C2078 /* PBXTargetDependency */,
+			);
+			fileSystemSynchronizedGroups = (
+				E96394A42F8CE8B2002C2078 /* PVLFamilyUITests */,
+			);
+			name = PVLFamilyUITests;
+			packageProductDependencies = (
+			);
+			productName = PVLFamilyUITests;
+			productReference = E96394A32F8CE8B2002C2078 /* PVLFamilyUITests.xctest */;
+			productType = "com.apple.product-type.bundle.ui-testing";
+		};
 		E9F622A72F87E9E200F05A5A /* PVLFamilyActivityExtension */ = {
 			isa = PBXNativeTarget;
 			buildConfigurationList = E9F622BF2F87E9E500F05A5A /* Build configuration list for PBXNativeTarget "PVLFamilyActivityExtension" */;
@@ -224,6 +269,10 @@
 					E9326F692F7BA18E00A85416 = {
 						CreatedOnToolsVersion = 26.4;
 					};
+					E96394A22F8CE8B2002C2078 = {
+						CreatedOnToolsVersion = 26.4;
+						TestTargetID = E9326F692F7BA18E00A85416;
+					};
 					E9F622A72F87E9E200F05A5A = {
 						CreatedOnToolsVersion = 26.4;
 					};
@@ -245,12 +294,20 @@
 			targets = (
 				E9326F692F7BA18E00A85416 /* PVLFamily */,
 				E9F622A72F87E9E200F05A5A /* PVLFamilyActivityExtension */,
+				E96394A22F8CE8B2002C2078 /* PVLFamilyUITests */,
 			);
 		};
 /* End PBXProject section */
 
 /* Begin PBXResourcesBuildPhase section */
 		E9326F682F7BA18E00A85416 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		E96394A12F8CE8B2002C2078 /* Resources */ = {
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
@@ -274,6 +331,13 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		E963949F2F8CE8B2002C2078 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 		E9F622A42F87E9E200F05A5A /* Sources */ = {
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
@@ -284,6 +348,11 @@
 /* End PBXSourcesBuildPhase section */
 
 /* Begin PBXTargetDependency section */
+		E96394AA2F8CE8B2002C2078 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = E9326F692F7BA18E00A85416 /* PVLFamily */;
+			targetProxy = E96394A92F8CE8B2002C2078 /* PBXContainerItemProxy */;
+		};
 		E9F622BD2F87E9E500F05A5A /* PBXTargetDependency */ = {
 			isa = PBXTargetDependency;
 			target = E9F622A72F87E9E200F05A5A /* PVLFamilyActivityExtension */;
@@ -494,6 +563,51 @@
 			};
 			name = Release;
 		};
+		E96394AC2F8CE8B2002C2078 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = 2VPAPJP6U8;
+				GENERATE_INFOPLIST_FILE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 26.4;
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.pvlfamily.PVLFamilyUITests;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = iphoneos;
+				STRING_CATALOG_GENERATE_SYMBOLS = NO;
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_EMIT_LOC_STRINGS = NO;
+				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+				TEST_TARGET_NAME = PVLFamily;
+			};
+			name = Debug;
+		};
+		E96394AD2F8CE8B2002C2078 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = 2VPAPJP6U8;
+				GENERATE_INFOPLIST_FILE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 26.4;
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.pvlfamily.PVLFamilyUITests;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = iphoneos;
+				STRING_CATALOG_GENERATE_SYMBOLS = NO;
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_EMIT_LOC_STRINGS = NO;
+				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+				TEST_TARGET_NAME = PVLFamily;
+				VALIDATE_PRODUCT = YES;
+			};
+			name = Release;
+		};
 		E9F622C02F87E9E500F05A5A /* Debug */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
@@ -576,6 +690,15 @@
 			buildConfigurations = (
 				E9326F762F7BA19100A85416 /* Debug */,
 				E9326F772F7BA19100A85416 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		E96394AB2F8CE8B2002C2078 /* Build configuration list for PBXNativeTarget "PVLFamilyUITests" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				E96394AC2F8CE8B2002C2078 /* Debug */,
+				E96394AD2F8CE8B2002C2078 /* Release */,
 			);
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;

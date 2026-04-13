@@ -532,7 +532,7 @@ struct TrackerStatusWidget: View {
                         Label("Начать сон", systemImage: "moon.fill").frame(maxWidth: .infinity)
                     }.buttonStyle(.borderedProminent).tint(.purple)
                     Button(action: onQuickFeed) {
-                        Image(systemName: "drop.fill").font(.title2).frame(width: 50, height: 50)
+                        Image(systemName: "drop.fill").font(.title2).frame(width: 50, height: 50)     .accessibilityIdentifier("QuickFeedButton")
                     }.buttonStyle(.bordered).tint(.orange)
                 }
             }

@@ -36,9 +36,9 @@ struct LoginView: View {
                                 .font(.system(size: 40, weight: .bold, design: .rounded))
                                 .foregroundColor(.primary)
                             
-                            Text("Учет финансов семьи")
-                                .font(.subheadline)
-                                .foregroundColor(.secondary)
+                            //Text("Учет финансов семьи")
+                            //    .font(.subheadline)
+                            //    .foregroundColor(.secondary)
                         }
                         .opacity(isAnimating ? 1.0 : 0.0)
                         .animation(.easeInOut.delay(0.3), value: isAnimating)
@@ -136,17 +136,20 @@ struct LoginView: View {
                                     .background(Color(.systemBackground))
                                     .cornerRadius(16)
                                     .shadow(color: Color.black.opacity(0.05), radius: 5, x: 0, y: 2)
-                                
+                                    .accessibilityIdentifier("NameInput") // Добавь это
+
                                 Button(action: {
                                     withAnimation {
                                         authManager.login(name: newName)
                                     }
+                                    
                                 }) {
                                     Image(systemName: "arrow.right.circle.fill")
                                         .font(.system(size: 40))
                                         .foregroundColor(newName.isEmpty ? .gray : .blue)
                                 }
                                 .disabled(newName.isEmpty)
+                                .accessibilityIdentifier("LoginButton") // <--- ПРАВИЛЬНО: здесь
                             }
                         }
                         .padding(.horizontal)

@@ -15,6 +15,16 @@ struct PVLFamilyApp: App {
              UserDefaults.standard.removeObject(forKey: "savedServerMode")
              print("🧪 Тестовый режим: состояние сброшено")
          }
+        
+        if ProcessInfo.processInfo.arguments.contains("--uitesting") {
+            // Очищаем UserDefaults (здесь хранится токен и настройки)
+            if let bundleId = Bundle.main.bundleIdentifier {
+                UserDefaults.standard.removePersistentDomain(forName: bundleId)
+                UserDefaults.standard.synchronize()
+            }
+            print("🧹 [UITEST] Данные сброшены для чистого запуска.")
+        }
+  
      }
 
     var body: some Scene {

@@ -47,7 +47,7 @@ def cleanup_test_data():
     db = SessionLocal()
     try:
         # Префиксы тестовых пользователей
-        test_prefixes = ["UITestUser_", "User_", "FeedTestUser_", "FeedTest_", "TimerTestUser_", "TimerBgTest_", "LongTimer_", "LongTestUser_", "NetTestUser_", "NavTest_", "NavTestUser_"]
+        test_prefixes = ["UITestUser_", "User_", "FeedTestUser_", "FeedTest_", "TimerTestUser_", "TimerBg_", "TimerBgTest_", "LongTimer_", "LongTestUser_", "NetTestUser_", "NavTest_", "NavTestUser_", "NetErr_"]
         
         # 1. Находим тестовых пользователей
         # Используем getattr для безопасного доступа, если вдруг модель изменится

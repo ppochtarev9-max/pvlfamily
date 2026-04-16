@@ -9,7 +9,7 @@ let widgetLogger = OSLog(subsystem: "com.pvlfamily.PVLFamily", category: "LiveAc
 struct SimpleEntry: TimelineEntry {
     let date: Date
     let isSleeping: Bool
-    let startTime: Date // Время начала текущего состояния (сна или бодрствования)
+    let startTime: Date
     let elapsedSeconds: Int
     let statusText: String
 }
@@ -17,16 +17,15 @@ struct SimpleEntry: TimelineEntry {
 // --- ПРОВАЙДЕР ---
 struct SleepActivityProvider: TimelineProvider {
     func placeholder(in context: Context) -> SimpleEntry {
-        return SimpleEntry(date: Date(), isSleeping: true, startTime: Date(), elapsedSeconds: 3600, statusText: "Спит")
+        return SimpleEntry(date: Date(), isSleeping: true, startTime: Date(), elapsedSeconds: 0, statusText: "Спит")
     }
 
     func getSnapshot(in context: Context, completion: @escaping (SimpleEntry) -> Void) {
-        let entry = SimpleEntry(date: Date(), isSleeping: false, startTime: Date(), elapsedSeconds: 120, statusText: "Бодрствует")
+        let entry = SimpleEntry(date: Date(), isSleeping: false, startTime: Date(), elapsedSeconds: 0, statusText: "Бодрствует")
         completion(entry)
     }
 
     func getTimeline(in context: Context, completion: @escaping (Timeline<SimpleEntry>) -> Void) {
-        // В реальном приложении данные придут из контента активности
         let entry = SimpleEntry(date: Date(), isSleeping: true, startTime: Date(), elapsedSeconds: 0, statusText: "Загрузка...")
         let timeline = Timeline(entries: [entry], policy: .atEnd)
         completion(timeline)
@@ -34,13 +33,17 @@ struct SleepActivityProvider: TimelineProvider {
 }
 
 // --- КОНФИГУРАЦИЯ ВИДЖЕТА ---
+// --- КОНФИГУРАЦИЯ ВИДЖЕТА ---
 struct PVLFamilyLiveActivity: Widget {
     var body: some WidgetConfiguration {
         ActivityConfiguration(for: SleepActivityAttributes.self) { context in
+            // Вычисляем время прямо здесь
+            let elapsedTime = Date().timeIntervalSince(context.state.startTime)
+            let formattedTime = formatTime(Int(max(0, elapsedTime)))
+
             // --- ЭКРАН БЛОКИРОВКИ ---
             VStack(spacing: 12) {
                 HStack {
-                    // Иконка меняется в зависимости от состояния
                     Image(systemName: context.state.isSleeping ? "moon.fill" : "sun.max.fill")
                         .font(.title2)
                         .foregroundColor(context.state.isSleeping ? .purple : .orange)
@@ -51,7 +54,7 @@ struct PVLFamilyLiveActivity: Widget {
 
                     Spacer()
 
-                    Text(formatTime(context.state.elapsedSeconds))
+                    Text(formattedTime)
                         .font(.system(.title2, design: .rounded))
                         .monospacedDigit()
                         .foregroundColor(context.state.isSleeping ? .purple : .orange)
@@ -71,31 +74,35 @@ struct PVLFamilyLiveActivity: Widget {
             .activityBackgroundTint(Color(.systemBackground).opacity(0.9))
             .activitySystemActionForegroundColor(.primary)
             .containerBackground(.fill.tertiary, for: .widget)
+            //.activityPeriodicUpdate(seconds: 10) // <-- Должно работать после containerBackground в новых iOS
 
         } dynamicIsland: { context in
-            DynamicIsland {
-                // --- DYNAMIC ISLAND EXPANDED ---
+            // Вычисляем время для Dynamic Island
+            let elapsedTime = Date().timeIntervalSince(context.state.startTime)
+            let formattedTime = formatTime(Int(max(0, elapsedTime)))
+            
+            return DynamicIsland {
+                // Expanded Region
                 DynamicIslandExpandedRegion(.leading) {
                     VStack(alignment: .leading) {
                         Text(context.state.statusText)
                             .font(.headline)
-                        Text(formatTime(context.state.elapsedSeconds))
+                        Text(formattedTime)
                             .font(.title3)
                             .monospacedDigit()
                             .foregroundColor(context.state.isSleeping ? .purple : .orange)
                     }
                 }
+                
                 DynamicIslandExpandedRegion(.trailing) {
                     Image(systemName: context.state.isSleeping ? "moon.fill" : "sun.max.fill")
                         .font(.title2)
                         .foregroundColor(context.state.isSleeping ? .purple : .orange)
                 }
                 
-                // --- КНОПКИ ВНИЗУ ---
                 DynamicIslandExpandedRegion(.bottom) {
                     HStack(spacing: 20) {
                         if context.state.isSleeping {
-                            // Кнопка: Завершить сон (начать бодрствование)
                             Button(action: {}) {
                                 Label("Завершить", systemImage: "checkmark.circle.fill")
                                     .labelStyle(.iconOnly)
@@ -106,7 +113,6 @@ struct PVLFamilyLiveActivity: Widget {
                             }
                             .widgetURL(URL(string: "pvlfamily://finish_sleep"))
                         } else {
-                            // Кнопка: Начать сон
                             Button(action: {}) {
                                 Label("Уложить", systemImage: "moon.fill")
                                     .labelStyle(.iconOnly)
@@ -118,7 +124,6 @@ struct PVLFamilyLiveActivity: Widget {
                             .widgetURL(URL(string: "pvlfamily://start_sleep"))
                         }
                         
-                        // Кнопка: Кормление (всегда доступна)
                         Button(action: {}) {
                             Label("Кормление", systemImage: "drop.fill")
                                 .labelStyle(.iconOnly)
@@ -133,12 +138,10 @@ struct PVLFamilyLiveActivity: Widget {
             } compactLeading: {
                 Image(systemName: context.state.isSleeping ? "moon.fill" : "sun.max.fill")
                     .foregroundColor(context.state.isSleeping ? .purple : .orange)
-                    .widgetURL(URL(string: "pvlfamily://open_tracker"))
             } compactTrailing: {
-                Text(formatTime(context.state.elapsedSeconds))
+                Text(formattedTime)
                     .font(.caption2)
                     .monospacedDigit()
-                    .widgetURL(URL(string: "pvlfamily://open_tracker"))
             } minimal: {
                 Image(systemName: context.state.isSleeping ? "moon.fill" : "sun.max.fill")
                     .foregroundColor(context.state.isSleeping ? .purple : .orange)
@@ -173,8 +176,8 @@ struct PVLFamilyLiveActivity_Previews: PreviewProvider {
         SleepActivityAttributes.ContentState(
             isSleeping: true,
             startTime: Date().addingTimeInterval(-3600),
-            elapsedSeconds: 3600,
-            statusText: "Спит"
+            statusText: "Спит",
+            lastUpdated: Date() // <--- ДОБАВИТЬ
         )
     }
     
@@ -182,8 +185,8 @@ struct PVLFamilyLiveActivity_Previews: PreviewProvider {
         SleepActivityAttributes.ContentState(
             isSleeping: false,
             startTime: Date().addingTimeInterval(-125),
-            elapsedSeconds: 125,
-            statusText: "Бодрствует"
+            statusText: "Бодрствует",
+            lastUpdated: Date() // <--- ДОБАВИТЬ
         )
     }
 

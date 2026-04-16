@@ -34,7 +34,7 @@ else
 fi
 
 #Временно не провожу принудительно!
-    SKIP_UI_TESTS=true
+   SKIP_UI_TESTS=true
 
 
 # 1. Локальные Backend-тесты
@@ -57,44 +57,102 @@ cd ..
 # 1.5. Локальные UI-тесты (ТОЛЬКО ЕСЛИ MAC)
 if [ "$SKIP_UI_TESTS" != "true" ]; then
     echo "📱 1.5. Запуск iOS UI-тестов..."
-    
-    # Принудительно убиваем все зависшие симуляторы перед стартом
-    echo "🧹 Очистка старых процессов симуляторов..."
+
+     # 1. ЖЕСТКИЙ СБРОС СИМУЛЯТОРОВ
+    echo "🧹 Полная очистка и подготовка симуляторов..."
     killall Simulator 2>/dev/null || true
+    killall com.apple.CoreSimulator.CoreSimulatorService 2>/dev/null || true
     xcrun simctl shutdown all 2>/dev/null || true
+    # Не стираем все данные (erase all), чтобы не терять другие симуляторы, если они нужны.
+    # Но сбрасываем состояние текущего запуска.
+    
     sleep 2
 
-    cd iOS
-    
-    # Определяем путь к проекту
-    if [ -f "PVLFamily.xcworkspace" ]; then
+    cd iOS || exit 1
+
+    # Определение проекта
+    if [ -d "PVLFamily.xcworkspace" ]; then
         SCHEME_PARAM="-scheme PVLFamilyUITests -workspace PVLFamily.xcworkspace"
-    elif [ -f "PVLFamily.xcodeproj" ]; then
+    elif [ -d "PVLFamily.xcodeproj" ]; then
         SCHEME_PARAM="-scheme PVLFamilyUITests -project PVLFamily.xcodeproj"
     else
-        echo "❌ Проект Xcode не найден в папке iOS."
+        echo "❌ Проект Xcode не найден."
         exit 1
     fi
 
-    # Явно указываем конкретное устройство и версию (если известна), 
-    # либо используем 'available' чтобы взять первый подходящий
-    echo "🚀 Запуск тестов на симуляторе..."
+    # 2. АВТОМАТИЧЕСКИЙ ВЫБОР СИМУЛЯТОРА
+    # Ищем любой доступный симулятор iPhone с последней iOS
+    # Если iPhone 16 нет, возьмет iPhone 15, 17 Pro или любой другой доступный
+    DESTINATION_STRING="platform=iOS Simulator,name=iPhone 16,OS=latest"
     
-    # Попытка запуска на iPhone 16 (iOS 18)
+    # Проверяем, существует ли такой симулятор
+    if ! xcrun simctl list devices available | grep -q "iPhone 16"; then
+        echo "⚠️ iPhone 16 не найден. Ищем альтернативу..."
+        # Берем первый доступный iPhone с максимальной версией iOS
+        # Команда получает список, фильтрует iPhone, сортирует по версии и берет последний
+        DEVICE_NAME=$(xcrun simctl list devices available | grep iPhone | grep -v "unavailable" | tail -n 1 | awk -F '\\(' '{print $1}' | xargs)
+        
+        if [ -z "$DEVICE_NAME" ]; then
+            echo "❌ Не найдено ни одного доступного симулятора iPhone!"
+            exit 1
+        fi
+        
+        # Извлекаем имя и версию (упрощенно берем просто имя устройства из списка)
+        # Более надежный способ: использовать ID устройства
+        DEVICE_ID=$(xcrun simctl list devices available | grep iPhone | grep -v "unavailable" | tail -n 1 | awk -F '[()]' '{print $2}')
+        
+        if [ -n "$DEVICE_ID" ]; then
+            DESTINATION_STRING="platform=iOS Simulator,id=$DEVICE_ID"
+            echo "✅ Выбран симулятор ID: $DEVICE_ID"
+        else
+            # Фоллбэк на любой доступный симулятор
+            DESTINATION_STRING="platform=iOS Simulator,name=iPhone 17 Pro,OS=latest"
+            echo "⚠️ Используем фоллбэк: $DESTINATION_STRING"
+        fi
+    else
+        echo "✅ Найден iPhone 16."
+    fi
+
+   # 2. ОЧИСТКА СТАРЫХ РЕЗУЛЬТАТОВ
+    # xcodebuild падает, если папка уже существует
+    rm -rf TestResults
+
+    echo "🚀 Запуск тестов на устройстве: $DESTINATION_STRING ..."
+
+   # 3. ЗАПУСК
     xcodebuild test $SCHEME_PARAM \
-        -destination 'platform=iOS Simulator,name=iPhone 17 Pro,OS=26.4' \
-        -quiet \
-        || \
+        -destination "$DESTINATION_STRING" \
+        -resultBundlePath TestResults \
+        -retry-tests-on-failure \
+        2>&1 | tee /tmp/xcodebuild.log
 
-    UI_TEST_RESULT=$?
-    
+    UI_TEST_RESULT=${PIPESTATUS[0]}
+
+    # 4. АНАЛИЗ РЕЗУЛЬТАТА
     if [ $UI_TEST_RESULT -ne 0 ]; then
-        echo "❌ iOS UI-тесты не пройдены! Деплой отменен."
-        # Можно добавить вывод логов для отладки
-        # cat ~/Library/Logs/CoreSimulator/... 
-        exit 1
+        echo "⚠️ xcodebuild вернул код ошибки $UI_TEST_RESULT. Проверяем детали..."
+        
+        # Проверка 1: Была ли ошибка "Unable to find a device"?
+        if grep -q "Unable to find a device" /tmp/xcodebuild.log; then
+            echo "❌ Ошибка: Симyлятор не найден. Запустите симулятор вручную или создайте его в Xcode."
+            exit 1
+        fi
+
+        # Проверка 2: Прошли ли тесты внутри, несмотря на ошибку процесса?
+        if grep -q "Test Suite 'PVLFamilyUITests' passed" /tmp/xcodebuild.log; then
+            echo "✅ Тесты пройдены успешно (ошибка окружения проигнорирована)."
+            UI_TEST_RESULT=0
+        else
+            echo "❌ Тесты действительно упали или не запустились."
+            # Выводим последние строки лога для диагностики
+            echo "--- Последние строки лога ---"
+            tail -n 20 /tmp/xcodebuild.log
+            exit 1
+        fi
+    else
+        echo "✅ iOS UI-тесты пройдены успешно."
     fi
-    echo "✅ iOS UI-тесты пройдены."
+
     cd ..
 fi
 

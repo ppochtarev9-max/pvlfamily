@@ -174,4 +174,34 @@ final class PVLFamilyUITests: XCTestCase {
         let sleepBtn = app.buttons.matching(NSPredicate(format: "label CONTAINS[c] 'сон'")).firstMatch
         XCTAssertTrue(sleepBtn.exists, "Кнопки сна не найдены")
     }
+    
+    func testNetworkErrorHandling() throws {
+        // ПРЕДУСЛОВИЕ: Этот тест должен запускаться ПРИ ОСТАНОВЛЕННОМ бэкенде!
+        // Или можно попробовать заблокировать трафик через брандмауэр, но проще остановить сервер.
+        
+        let nameInput = app.textFields["NameInput"]
+        if !nameInput.exists {
+            // Если приложение уже на дашборде, выходим (нужен чистый старт)
+            // Для автотеста лучше требовать чистого запуска
+            XCTFail("Запустите тест при сброшенных данных (--uitesting) и остановленном сервере")
+            return
+        }
+        
+        let testName = "NetErrTest_\(Int(arc4random_uniform(9000) + 1000))"
+        nameInput.tap()
+        sleep(1)
+        nameInput.typeText(testName)
+        app.buttons["LoginButton"].tap()
+        
+        // Ждем появления алерта об ошибке сети (таймаут меньше, чем стандартный, чтобы не висеть)
+        // Ищем текст "Нет связи" или "Ошибка сети"
+        let networkAlert = app.alerts.matching(NSPredicate(format: "label CONTAINS[c] 'Нет связи' OR label CONTAINS[c] 'Ошибка'")).firstMatch
+        
+        // Так как сервер выключен, вход не пройдет.
+        // Мы ожидаем, что появится алерт в течение 10 секунд.
+        XCTAssertTrue(networkAlert.waitForExistence(timeout: 15), "Алерт об ошибке сети не появился при выключенном сервере")
+        
+        // Проверяем наличие кнопки "Попробовать снова" или "OK"
+        XCTAssertTrue(app.buttons["OK"].exists || app.buttons["Попробовать снова"].exists, "Нет кнопки действия в алерте")
+    }
 }

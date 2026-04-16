@@ -28,19 +28,20 @@ struct DashboardView: View {
     @State private var errorMessage: String?
     @State private var showErrorAlert = false
     
-    // --- СОСТОЯНИЯ ТРЕКЕРА (Единый источник истины) ---
+    // --- СОСТОЯНИЯ ТРЕКЕРА ---
     @State private var trackerStatus: TrackerStatus?
     @State private var isSleeping: Bool = false
     @State private var sleepStartTime: Date?
     @State private var lastWakeUpTime: Date?
-    
-    // Таймер
-    @State private var timer: Timer?
-    @State private var elapsedSeconds: Int = 0
+    @State private var lastUpdated: Date?
+
+    // Таймеры
+    // Убираем ручные таймеры, будем использовать TimelineView для UI
+    @State private var backgroundTimer: Timer?
     
     // Флаги управления
     @State private var hasLoadedInitialStatus = false
-    @State private var isSyncing = false // Защита от гонок запросов
+    @State private var isSyncing = false
     @State private var isViewActive = false
     
     // Live Activity
@@ -50,9 +51,37 @@ struct DashboardView: View {
         NavigationStack {
             ScrollView {
                 VStack(spacing: 24) {
+                    
+                    // 🔥 БАННЕР ОФФЛАЙН
+                    if errorMessage?.contains("Нет связи") == true {
+                        HStack {
+                            Image(systemName: "wifi.slash")
+                                .foregroundColor(.white)
+                            Text("Нет связи с сервером.")
+                                .font(.caption)
+                                .fontWeight(.medium)
+                                .foregroundColor(.white)
+                            Spacer()
+                            Button(action: {
+                                print("🔄 [USER] Нажата кнопка обновления (FORCE).")
+                                loadTrackerStatus(force: true)
+                            }) {
+                                Image(systemName: "arrow.clockwise")
+                                    .foregroundColor(.white)
+                                    .font(.caption)
+                            }
+                            .disabled(isSyncing)
+                        }
+                        .padding(8)
+                        .background(Color.orange.opacity(0.9))
+                        .cornerRadius(8)
+                        .padding(.horizontal)
+                    }
+                    
+                    // ✅ ИСПОЛЬЗУЕМ TIMELINEVIEW ДЛЯ ГАРАНТИРОВАННОГО ОБНОВЛЕНИЯ UI
                     TrackerStatusWidget(
                         isSleeping: isSleeping,
-                        elapsedSeconds: elapsedSeconds,
+                        referenceDate: isSleeping ? (sleepStartTime ?? Date()) : (lastWakeUpTime ?? Date()),
                         onStartSleep: { startSleepAction() },
                         onFinishSleep: { finishSleepAction() },
                         onQuickFeed: { performQuickFeed() }
@@ -90,30 +119,37 @@ struct DashboardView: View {
             
             // ЖИЗНЕННЫЙ ЦИКЛ
             .onAppear {
+                print("👁️ [LIFECYCLE] Dashboard появился на экране (onAppear).")
                 if !hasLoadedInitialStatus {
                     loadTrackerStatus()
                     hasLoadedInitialStatus = true
-                } else {
-                    recalculateTimer()
-                    startTimer()
                 }
                 isViewActive = true
+                
+                if isSleeping || lastWakeUpTime != nil {
+                    startBackgroundTimer()
+                }
             }
             .onDisappear {
+                print("👁️ [LIFECYCLE] Dashboard исчез с экрана (onDisappear).")
                 isViewActive = false
-                // Таймер оставляем, если идет активность, чтобы обновлять виджет
+                // Фоновый таймер НЕ останавливаем, он нужен для виджета!
             }
             .onReceive(NotificationCenter.default.publisher(for: UIApplication.willEnterForegroundNotification)) { _ in
+                print("☀️ [LIFECYCLE] Приложение возвращается на передний план.")
                 isViewActive = true
-                recalculateTimer()
-                startTimer()
+                if isSleeping || lastWakeUpTime != nil {
+                    startBackgroundTimer()
+                }
             }
             .onReceive(NotificationCenter.default.publisher(for: UIApplication.didEnterBackgroundNotification)) { _ in
+                print("🌙 [LIFECYCLE] Приложение ушло в фон.")
                 isViewActive = false
+                // Фоновый таймер оставляем работать
             }
             
-            // REFRESH: Не сбрасываем hasLoadedInitialStatus, чтобы не потерять состояние таймера
             .refreshable {
+                print("🔄 [UI] Pull-to-refresh запущен.")
                 await loadTrackerStatusAsync()
             }
             
@@ -130,13 +166,24 @@ struct DashboardView: View {
                 }
             }
             
-            .alert("Ошибка", isPresented: $showErrorAlert) {
-                Button("OK", role: .cancel) { errorMessage = nil }
+            .alert("Внимание", isPresented: $showErrorAlert) {
+                Button("OK", role: .cancel) {
+                    errorMessage = nil
+                }
+                
+                if errorMessage?.contains("Нет связи") == true || errorMessage?.contains("Ошибка сети") == true {
+                    Button("Попробовать снова") {
+                        loadTrackerStatus()
+                    }
+                }
+                
                 if errorMessage?.contains("Сессия истекла") == true {
-                    Button("Выйти", role: .destructive) { authManager.logout() }
+                    Button("Выйти", role: .destructive) {
+                        authManager.logout()
+                    }
                 }
             } message: {
-                Text(errorMessage ?? "Неизвестная ошибка")
+                Text(errorMessage ?? "Произошла неизвестная ошибка.")
             }
             
             .sheet(isPresented: $showingTransactionSheet) {
@@ -160,20 +207,68 @@ struct DashboardView: View {
         }
     }
     
-    // --- ЛОГИКА ---
-    
-    func loadTrackerStatus() {
-        guard !isSyncing else { return } // Защита от повторного вызова
-        isSyncing = true
+    // --- ЛОГИКА ТАЙМЕРОВ ---
+
+    @MainActor
+    func startBackgroundTimer() {
+        guard ActivityAuthorizationInfo().areActivitiesEnabled else { return }
         
-        authManager.getTrackerStatus { result in
-            DispatchQueue.main.async {
-                isSyncing = false
-                handleTrackerResult(result)
+        if backgroundTimer != nil {
+            return
+        }
+        
+        print("🚀 [TIMER] Запуск фонового таймера (интервал 10 сек) для виджета.")
+        
+        backgroundTimer = Timer.scheduledTimer(withTimeInterval: 10.0, repeats: true) { _ in
+            let activity = currentActivity ?? Activity<SleepActivityAttributes>.activities.first
+            
+            if let activity = activity {
+                let refDate = isSleeping ? (sleepStartTime ?? Date()) : (lastWakeUpTime ?? Date())
+                let accurateElapsed = max(0, Int(Date().timeIntervalSince(refDate)))
+                
+                // Логируем только для отладки, чтобы видеть работу фона
+                print("⏱ [WIDGET BG] Тик: \(accurateElapsed) сек. (Старт: \(refDate))")
+                
+                Task { @MainActor in
+                    updateLiveActivity()
+                }
+            } else {
+                print("⏹ [TIMER] Активностей не найдено. Остановка фонового таймера.")
+                stopBackgroundTimer()
             }
         }
+        RunLoop.current.add(backgroundTimer!, forMode: .common)
     }
     
+    @MainActor
+    func stopBackgroundTimer() {
+        backgroundTimer?.invalidate()
+        backgroundTimer = nil
+        print("🛑 [TIMER] Фоновый таймер остановлен.")
+    }
+    
+    // --- ОБЩАЯ ЛОГИКА ---
+    
+    func loadTrackerStatus(force: Bool = false) {
+          if force {
+              isSyncing = false
+              print("🔨 [FORCE] Принудительный сброс блокировки.")
+          }
+
+          guard !isSyncing else { return }
+          
+          print("📡 [NETWORK] Начало запроса статуса...")
+          isSyncing = true
+          
+          authManager.getTrackerStatus { result in
+              DispatchQueue.main.async {
+                  self.isSyncing = false
+                  print("🔓 [NETWORK] Запрос завершен.")
+                  self.handleTrackerResult(result)
+              }
+          }
+      }
+
     func loadTrackerStatusAsync() async {
         guard !isSyncing else { return }
         isSyncing = true
@@ -189,89 +284,99 @@ struct DashboardView: View {
     }
     
     func handleTrackerResult(_ result: Result<TrackerStatus, Error>) {
-        switch result {
-        case .success(let status):
-            syncWithStatus(status)
-        case .failure(let error):
-            print("⚠️ Ошибка статуса: \(error.localizedDescription)")
-            var isUnauthorized = false
-            if let apiError = error as? APIError {
-                if case .unauthorized = apiError { isUnauthorized = true }
-            }
-            
-            if isUnauthorized {
-                errorMessage = "Сессия истекла."
-                showErrorAlert = true
-            } else if isViewActive {
-                errorMessage = "Нет связи с сервером."
-                showErrorAlert = true
-            }
-        }
-    }
+           switch result {
+           case .success(let status):
+               print("✅ [SUCCESS] Статус получен. Сон: \(status.is_sleeping)")
+               
+               if errorMessage?.contains("Нет связи") == true || errorMessage?.contains("Ошибка сети") == true {
+                   print("🟢 [RECOVERY] Связь восстановлена! Очищаем ошибку.")
+                   errorMessage = nil
+                   showErrorAlert = false
+               }
+               
+               syncWithStatus(status)
+               
+           case .failure(let error):
+               print("❌ [ERROR] Ошибка: \(error.localizedDescription)")
+               
+               var isNetworkError = false
+               var isUnauthorized = false
+               
+               if let apiError = error as? APIError {
+                   if case .networkError = apiError { isNetworkError = true }
+                   if case .serverError = apiError { isNetworkError = true }
+                   if case .unauthorized = apiError { isUnauthorized = true }
+               } else if (error as? URLError)?.code == .notConnectedToInternet {
+                   isNetworkError = true
+               }
+               
+               if isUnauthorized {
+                   errorMessage = "Сессия истекла."
+                   showErrorAlert = true
+               } else if isNetworkError {
+                   errorMessage = "Нет связи с сервером."
+                   if !showErrorAlert { showErrorAlert = true }
+               } else {
+                   errorMessage = "Ошибка: \(error.localizedDescription)"
+                   showErrorAlert = true
+               }
+           }
+       }
     
-    func syncWithStatus(_ status: TrackerStatus) {
-        let newState = status.is_sleeping
-        let formatter = ISO8601DateFormatter()
-        var newRefDate: Date? = nil
-        
-        if newState {
-            if let startStr = status.current_sleep_start, let d = formatter.date(from: startStr) {
-                self.sleepStartTime = d; newRefDate = d
-            } else {
-                self.sleepStartTime = Date(); newRefDate = Date()
-            }
-            self.lastWakeUpTime = nil
-        } else {
-            self.sleepStartTime = nil
-            if let wakeStr = status.last_wake_up, let d = formatter.date(from: wakeStr) {
-                self.lastWakeUpTime = d; newRefDate = d
-            } else {
-                self.lastWakeUpTime = Date(); newRefDate = Date()
-            }
-        }
-        
-        // Если состояние изменилось (сон <-> бодрствование)
-        if self.isSleeping != newState {
-            self.isSleeping = newState
-            if let ref = newRefDate { recalculateTimer(referenceDate: ref) }
-            
-            if newState {
-                if let ref = newRefDate { startLiveActivity(startTime: ref) }
-            } else {
-                // Не завершаем, а обновляем виджет в режиме бодрствования
-            }
-        } else {
-            // Состояние то же, просто синхронизируем время (коррекция рассинхрона)
-            if let ref = newRefDate {
-                recalculateTimer(referenceDate: ref)
-                print("⏳ Синхронизация времени без смены статуса: \(elapsedSeconds)")
-            }
-        }
-        
-        if isViewActive && timer == nil { startTimer() }
-    }
-    
-    func recalculateTimer(referenceDate: Date? = nil) {
-        let ref = referenceDate ?? (isSleeping ? (sleepStartTime ?? Date()) : (lastWakeUpTime ?? Date()))
-        let diff = Date().timeIntervalSince(ref)
-        elapsedSeconds = max(0, Int(diff))
-    }
-    
-    func startTimer() {
-        guard timer == nil else { return }
-        timer = Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { _ in
-            elapsedSeconds += 1
-            if currentActivity != nil {
-                updateLiveActivity(elapsed: elapsedSeconds)
-            }
-        }
-        RunLoop.current.add(timer!, forMode: .common)
-    }
-    
-    func stopTimer() {
-        timer?.invalidate()
-        timer = nil
-    }
+     func syncWithStatus(_ status: TrackerStatus) {
+         print("🔄 [SYNC] Синхронизация... Было: \(isSleeping ? "Сон" : "Бод"), Стало: \(status.is_sleeping ? "Сон" : "Бод")")
+         
+         let newState = status.is_sleeping
+         let formatter = ISO8601DateFormatter()
+         var newRefDate: Date? = nil
+         
+         if newState {
+             if let startStr = status.current_sleep_start, let d = formatter.date(from: startStr) {
+                 self.sleepStartTime = d; newRefDate = d
+                 print("🕒 [SYNC] Время начала сна: \(d)")
+             } else {
+                 self.sleepStartTime = Date(); newRefDate = Date()
+                 print("🕒 [SYNC] Время начала сна: NOW")
+             }
+             self.lastWakeUpTime = nil
+         } else {
+             self.sleepStartTime = nil
+             if let wakeStr = status.last_wake_up, let d = formatter.date(from: wakeStr) {
+                 self.lastWakeUpTime = d; newRefDate = d
+                 print("🕒 [SYNC] Время пробуждения: \(d)")
+             } else {
+                 if self.lastWakeUpTime == nil {
+                      self.lastWakeUpTime = Date(); newRefDate = Date()
+                      print("🕒 [SYNC] Время пробуждения: NOW")
+                 } else {
+                     newRefDate = self.lastWakeUpTime
+                     print("🕒 [SYNC] Время пробуждения: CACHED")
+                 }
+             }
+         }
+         
+         if self.isSleeping != newState {
+             print("🔄 [STATE CHANGE] Смена состояния!")
+             self.isSleeping = newState
+             
+             if newState {
+                 if let ref = newRefDate { startLiveActivity(startTime: ref) }
+                 startBackgroundTimer()
+             } else {
+                 startBackgroundTimer()
+             }
+         } else {
+             if isSleeping || lastWakeUpTime != nil {
+                 startBackgroundTimer()
+             }
+         }
+         
+         if (isSleeping || lastWakeUpTime != nil) && (currentActivity == nil && Activity<SleepActivityAttributes>.activities.isEmpty) {
+              let ref = isSleeping ? (sleepStartTime ?? Date()) : (lastWakeUpTime ?? Date())
+              print("🆘 [FIX] Активность потеряна, пересоздаем...")
+              startLiveActivity(startTime: ref)
+         }
+     }
     
     // --- ДЕЙСТВИЯ ---
     
@@ -285,15 +390,15 @@ struct DashboardView: View {
         }
     }
     
+    @MainActor
     func startSleepAction() {
         guard !isSyncing else { return }
-        let oldState = isSleeping
-        let oldRef = isSleeping ? sleepStartTime : lastWakeUpTime
         
         isSleeping = true
         sleepStartTime = Date()
         lastWakeUpTime = nil
-        recalculateTimer(referenceDate: sleepStartTime!)
+        
+        startBackgroundTimer()
         
         authManager.startSleep { result in
             DispatchQueue.main.async {
@@ -302,10 +407,9 @@ struct DashboardView: View {
                     syncWithStatus(status)
                     scheduleSleepNotificationIfNeeded()
                 case .failure(let error):
-                    // Откат
-                    isSleeping = oldState
-                    if oldState { sleepStartTime = oldRef } else { lastWakeUpTime = oldRef }
-                    if let ref = oldRef { recalculateTimer(referenceDate: ref) }
+                    // Откат состояния при ошибке
+                    isSleeping = false
+                    sleepStartTime = nil
                     errorMessage = "Ошибка: \(error.localizedDescription)"
                     showErrorAlert = true
                 }
@@ -313,27 +417,23 @@ struct DashboardView: View {
         }
     }
     
+    @MainActor
     func finishSleepAction() {
-        // Не проверяем isSyncing здесь, чтобы не блокировать действие пользователя
-        
-        // Сначала принудительно запрашиваем свежий статус, чтобы получить актуальный ID
         authManager.getTrackerStatus { result in
             DispatchQueue.main.async {
                 switch result {
                 case .success(let status):
-                    self.syncWithStatus(status) // Обновляем локальное состояние
+                    self.syncWithStatus(status)
                     
                     guard let sleepId = status.current_sleep_id else {
-                        self.errorMessage = "Активный сон не найден на сервере."
+                        self.errorMessage = "Активный сон не найден."
                         self.showErrorAlert = true
                         return
                     }
                     
-                    // Теперь пытаемся завершить
                     self.isSleeping = false
                     self.lastWakeUpTime = Date()
                     self.sleepStartTime = nil
-                    self.recalculateTimer(referenceDate: self.lastWakeUpTime!)
                     
                     self.authManager.finishSleep(sleepId: sleepId) { finishResult in
                         DispatchQueue.main.async {
@@ -341,7 +441,7 @@ struct DashboardView: View {
                             case .success(let finalStatus):
                                 self.syncWithStatus(finalStatus)
                             case .failure(let error):
-                                self.loadTrackerStatus() // Откат
+                                self.loadTrackerStatus()
                                 self.errorMessage = "Ошибка завершения: \(error.localizedDescription)"
                                 self.showErrorAlert = true
                             }
@@ -356,30 +456,6 @@ struct DashboardView: View {
         }
     }
     
-    // Вынесенная логика завершения
-    private func performFinishSleep(id: Int) {
-        let oldRef = sleepStartTime
-        isSleeping = false
-        lastWakeUpTime = Date()
-        sleepStartTime = nil
-        recalculateTimer(referenceDate: lastWakeUpTime!)
-        
-        print("🛑 Завершаем сон ID: \(id)")
-        
-        authManager.finishSleep(sleepId: id) { result in
-            DispatchQueue.main.async {
-                switch result {
-                case .success(let status):
-                    syncWithStatus(status)
-                case .failure(let error):
-                    // При ошибке восстановления пытаемся вернуть состояние сна
-                    loadTrackerStatus()
-                    errorMessage = "Ошибка: \(error.localizedDescription)"
-                    showErrorAlert = true
-                }
-            }
-        }
-    }
     func performQuickFeed() {
         guard !isSyncing else { return }
         authManager.quickFeed { result in
@@ -424,18 +500,25 @@ struct DashboardView: View {
     
     private func forceStartLiveActivity(startTime: Date) {
         let attributes = SleepActivityAttributes(childName: "Малыш")
+        let statusText = isSleeping ? "Сон начался" : "Бодрствование"
+        
         let contentState = SleepActivityAttributes.ContentState(
-            isSleeping: true, startTime: startTime, elapsedSeconds: 0, statusText: "Сон начался"
+            isSleeping: isSleeping,
+            startTime: startTime,
+            statusText: statusText,
+            lastUpdated: Date() // <--- ИСПРАВЛЕНО: добавлены скобки
         )
         let content = ActivityContent(state: contentState, staleDate: nil)
         
         do {
             let activity = try Activity.request(attributes: attributes, content: content, pushType: nil)
             self.currentActivity = activity
-        } catch { print("❌ Ошибка Live Activity: \(error)") }
+            print("✅ Live Activity создана")
+        } catch { print("❌ Ошибка создания Live Activity: \(error)") }
     }
     
-    func updateLiveActivity(elapsed: Int) {
+    @MainActor
+    func updateLiveActivity() {
         let activityToUpdate = currentActivity ?? Activity<SleepActivityAttributes>.activities.first
         guard let activity = activityToUpdate else { return }
         
@@ -443,23 +526,35 @@ struct DashboardView: View {
         let iconStartTime = isSleeping ? (sleepStartTime ?? Date()) : (lastWakeUpTime ?? Date())
         
         let contentState = SleepActivityAttributes.ContentState(
-            isSleeping: isSleeping, startTime: iconStartTime, elapsedSeconds: elapsed, statusText: statusText
+            isSleeping: isSleeping,
+            startTime: iconStartTime,
+            statusText: statusText,
+            lastUpdated: Date() // <--- ИСПРАВЛЕНО: добавлены скобки
         )
         let content = ActivityContent(state: contentState, staleDate: nil)
         
-        Task { await activity.update(content) }
+        // Лог можно оставить для отладки
+        // print("📡 [WIDGET UPDATE] Отправка обновления...")
+        
+        Task {
+            do {
+                try await activity.update(content)
+            } catch {
+                print("❌ Ошибка обновления виджета: \(error)")
+            }
+        }
     }
     
-    // --- ТРАНЗАКЦИИ И СОБЫТИЯ (без изменений) ---
+    // --- ТРАНЗАКЦИИ И СОБЫТИЯ ---
     func loadCategories() {
-        guard let token = authManager.token else { errorMessage = "Нет авторизации"; showErrorAlert = true; return }
+        guard let token = authManager.token else { handleNetworkError("Нет авторизации"); return }
         isLoadingCategories = true
         var req = URLRequest(url: URL(string: "\(authManager.baseURL)/budget/categories")!)
         req.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
         URLSession.shared.dataTask(with: req) { data, response, error in
             DispatchQueue.main.async {
                 isLoadingCategories = false
-                if let error = error { errorMessage = error.localizedDescription; showErrorAlert = true; return }
+                if let error = error { handleNetworkError(error.localizedDescription); return }
                 guard let httpResponse = response as? HTTPURLResponse, (200...299).contains(httpResponse.statusCode) else { return }
                 guard let data = data, let list = try? JSONDecoder().decode([BudgetView.Category].self, from: data) else { return }
                 self.transactionCategories = list
@@ -469,7 +564,7 @@ struct DashboardView: View {
     }
     
     func saveTransaction(amount: Double, type: String, categoryId: Int, description: String, date: Date) {
-        guard let token = authManager.token else { errorMessage = "Нет авторизации"; showErrorAlert = true; return }
+        guard let token = authManager.token else { handleNetworkError("Нет авторизации"); return }
         var req = URLRequest(url: URL(string: "\(authManager.baseURL)/budget/transactions")!)
         req.httpMethod = "POST"
         req.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
@@ -479,7 +574,7 @@ struct DashboardView: View {
         req.httpBody = try? JSONSerialization.data(withJSONObject: body)
         URLSession.shared.dataTask(with: req) { data, response, error in
             DispatchQueue.main.async {
-                if let error = error { errorMessage = error.localizedDescription; showErrorAlert = true; return }
+                if let error = error { handleNetworkError(error.localizedDescription); return }
                 guard let httpResponse = response as? HTTPURLResponse, (200...299).contains(httpResponse.statusCode) else { return }
                 showingTransactionSheet = false
             }
@@ -487,7 +582,7 @@ struct DashboardView: View {
     }
     
     func createEvent(title: String, desc: String, date: Date, type: String) {
-        guard let token = authManager.token else { errorMessage = "Нет авторизации"; showErrorAlert = true; return }
+        guard let token = authManager.token else { handleNetworkError("Нет авторизации"); return }
         let urlStr = authManager.baseURL.hasSuffix("/") ? "\(authManager.baseURL)calendar/events" : "\(authManager.baseURL)/calendar/events"
         var req = URLRequest(url: URL(string: urlStr)!)
         req.httpMethod = "POST"
@@ -498,18 +593,33 @@ struct DashboardView: View {
         req.httpBody = try? JSONSerialization.data(withJSONObject: body)
         URLSession.shared.dataTask(with: req) { data, response, error in
             DispatchQueue.main.async {
-                if let error = error { errorMessage = error.localizedDescription; showErrorAlert = true; return }
+                if let error = error { handleNetworkError(error.localizedDescription); return }
                 guard let httpResponse = response as? HTTPURLResponse, (200...299).contains(httpResponse.statusCode) else { return }
                 showingEventSheet = false
             }
         }.resume()
     }
+    
+    func handleNetworkError(_ msg: String) {
+        print("❌ [NETWORK] Ошибка операции: \(msg)")
+        if !msg.contains("авторизации") {
+             errorMessage = "Нет связи с сервером."
+             if !showErrorAlert { showErrorAlert = true }
+        } else {
+             errorMessage = msg
+             showErrorAlert = true
+        }
+    }
 }
 
 // --- ВИДЖЕТЫ ---
 struct TrackerStatusWidget: View {
-    let isSleeping: Bool; let elapsedSeconds: Int
-    let onStartSleep: () -> Void; let onFinishSleep: () -> Void; let onQuickFeed: () -> Void
+    let isSleeping: Bool
+    let referenceDate: Date // Передаем дату старта вместо счетчика
+    let onStartSleep: () -> Void
+    let onFinishSleep: () -> Void
+    let onQuickFeed: () -> Void
+    
     var body: some View {
         VStack(spacing: 16) {
             HStack {
@@ -518,10 +628,18 @@ struct TrackerStatusWidget: View {
                 Text(isSleeping ? "Ребенок спит" : "Ребенок бодрствует").font(.headline)
                 Spacer()
             }
-            Text(formattedElapsedTime())
-                .font(.system(size: 36, weight: .bold, design: .rounded))
-                .foregroundColor(isSleeping ? .purple : .orange)
-                .monospacedDigit()
+            
+            // ✅ TIMELINEVIEW ГАРАНТИРУЕТ ОБНОВЛЕНИЕ КАЖДУЮ СЕКУНДУ
+            TimelineView(.periodic(from: referenceDate, by: 1.0)) { context in
+                let elapsed = Int(referenceDate.distance(to: Date()))
+                let formatted = formatTime(max(0, elapsed))
+                
+                Text(formatted)
+                    .font(.system(size: 36, weight: .bold, design: .rounded))
+                    .foregroundColor(isSleeping ? .purple : .orange)
+                    .monospacedDigit()
+            }
+            
             HStack(spacing: 12) {
                 if isSleeping {
                     Button(action: onFinishSleep) {
@@ -531,8 +649,10 @@ struct TrackerStatusWidget: View {
                     Button(action: onStartSleep) {
                         Label("Начать сон", systemImage: "moon.fill").frame(maxWidth: .infinity)
                     }.buttonStyle(.borderedProminent).tint(.purple)
+                    
                     Button(action: onQuickFeed) {
-                        Image(systemName: "drop.fill").font(.title2).frame(width: 50, height: 50)     .accessibilityIdentifier("QuickFeedButton")
+                        Image(systemName: "drop.fill").font(.title2).frame(width: 50, height: 50)
+                            .accessibilityIdentifier("QuickFeedButton")
                     }.buttonStyle(.bordered).tint(.orange)
                 }
             }
@@ -542,22 +662,39 @@ struct TrackerStatusWidget: View {
         .cornerRadius(20)
         .shadow(color: Color.black.opacity(0.1), radius: 10, x: 0, y: 5)
     }
-    func formattedElapsedTime() -> String {
-        let h = elapsedSeconds / 3600; let m = (elapsedSeconds % 3600) / 60; let s = elapsedSeconds % 60
+    
+    func formatTime(_ seconds: Int) -> String {
+        let h = seconds / 3600
+        let m = (seconds % 3600) / 60
+        let s = seconds % 60
         return String(format: "%02d:%02d:%02d", h, m, s)
     }
 }
+
 struct ActionCard: View {
-    let title: String; let icon: String; let color: Color; let action: () -> Void
+    let title: String
+    let icon: String
+    let color: Color
+    let action: () -> Void
+    
     var body: some View {
         Button(action: action) {
             VStack(spacing: 12) {
-                ZStack { Circle().fill(color.opacity(0.15)).frame(width: 60, height: 60); Image(systemName: icon).font(.title).foregroundColor(color) }
+                ZStack {
+                    Circle().fill(color.opacity(0.15)).frame(width: 60, height: 60)
+                    Image(systemName: icon).font(.title).foregroundColor(color)
+                }
                 Text(title).font(.subheadline).fontWeight(.medium).foregroundColor(.primary)
-            }.frame(maxWidth: .infinity).frame(height: 120).background(Color(.systemBackground)).cornerRadius(20).shadow(color: Color.black.opacity(0.05), radius: 8, x: 0, y: 4)
+            }
+            .frame(maxWidth: .infinity)
+            .frame(height: 120)
+            .background(Color(.systemBackground))
+            .cornerRadius(20)
+            .shadow(color: Color.black.opacity(0.05), radius: 8, x: 0, y: 4)
         }
     }
 }
+
 extension Notification.Name {
     static let trackerDataUpdated = Notification.Name("trackerDataUpdated")
     static let deepLinkReceived = Notification.Name("deepLinkReceived")

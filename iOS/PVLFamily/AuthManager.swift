@@ -58,15 +58,29 @@ class AuthManager: ObservableObject {
     }()
     
     init() {
-        // 2. Восстанавливаем сервер из памяти при старте
-          let savedMode = UserDefaults.standard.string(forKey: "savedServerMode")
-          if savedMode == "cloud" {
-              self.selectedServer = .cloud
-          } else {
-              // Если ничего не сохранено (первый запуск после удаления), ставим Cloud по умолчанию
-              // Или оставь .local, если хочешь, но тогда придется переключать вручную каждый раз
-              self.selectedServer = .cloud
-          }
+        // 1. Проверяем, есть ли сохраненный выбор пользователя
+        let savedMode = UserDefaults.standard.string(forKey: "savedServerMode")
+        
+        if savedMode == "cloud" {
+            self.selectedServer = .cloud
+            print("🌐 [CONFIG] Восстановлен режим: Cloud (из настроек)")
+        } else if savedMode == "local" {
+            self.selectedServer = .local
+            print("🏠 [CONFIG] Восстановлен режим: Local (из настроек)")
+        } else {
+            // 2. Если настройки нет (первый запуск), определяем автоматически
+            #if targetEnvironment(simulator)
+                self.selectedServer = .local
+                print("📱 [CONFIG] Запуск на СИМУЛЯТОРЕ. По умолчанию выбран LOCAL.")
+            #else
+                self.selectedServer = .cloud
+                print("📲 [CONFIG] Запуск на УСТРОЙСТВЕ. По умолчанию выбран CLOUD.")
+            #endif
+            
+            // Сохраняем этот выбор, чтобы не определять каждый раз
+            let rawValue = selectedServer == .cloud ? "cloud" : "local"
+            UserDefaults.standard.set(rawValue, forKey: "savedServerMode")
+        }
         
         updateBaseURL()
         loadStoredUser()
@@ -96,14 +110,30 @@ class AuthManager: ObservableObject {
     }
     
     func loadStoredUser() {
-        if let savedToken = UserDefaults.standard.string(forKey: "userToken"),
-           let savedName = UserDefaults.standard.string(forKey: "userName") {
-            let hasIdKey = UserDefaults.standard.object(forKey: "userId") != nil
-            let savedId = UserDefaults.standard.integer(forKey: "userId")
+        print("🔑 [AUTH] Попытка восстановления сессии...")
+    
+        let savedToken = UserDefaults.standard.string(forKey: "userToken")
+        let savedName = UserDefaults.standard.string(forKey: "userName")
+        let savedId = UserDefaults.standard.integer(forKey: "userId")
+        let hasIdKey = UserDefaults.standard.object(forKey: "userId") != nil
+        
+        print("🔑 [AUTH] Token: \(savedToken != nil ? "Есть" : "Нет")")
+        print("🔑 [AUTH] Name: \(savedName ?? "Нет")")
+        print("🔑 [AUTH] ID: \(hasIdKey ? String(savedId) : "Не задан")")
+        
+        if let token = savedToken, let name = savedName {
             if hasIdKey && savedId != 0 {
-                self.token = savedToken; self.userName = savedName; self.userId = savedId; self.isLoggedIn = true
-                print("🔄 Восстановлен: \(savedName)")
-            } else { logout() }
+                self.token = token
+                self.userName = name
+                self.userId = savedId
+                self.isLoggedIn = true
+                print("✅ [AUTH] Сессия восстановлена успешно: \(name)")
+            } else {
+                print("⚠️ [AUTH] Сессия неполная (нет ID или ID=0). Выполняем выход.")
+                logout() // Здесь и происходит сброс, если ID потерян
+            }
+        } else {
+            print("ℹ️ [AUTH] Данные не найдены. Пользователь гость.")
         }
     }
     

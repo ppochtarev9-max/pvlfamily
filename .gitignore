@@ -3,6 +3,7 @@
 *.db
 *.sqlite3
 COMMANDS_full.md
+*TestResults*
 
 # Logs and temp files
 *.log

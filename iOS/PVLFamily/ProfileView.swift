@@ -65,13 +65,14 @@ struct ProfileView: View {
                         
                         // Настройки
                         Section("Настройки") {
+                            // Управление категориями
                             Button(action: {
                                 loadCategories()
                                 showingCategoriesManager = true
                             }) {
                                 HStack {
                                     Image(systemName: "tag.fill")
-                                        .foregroundColor(.blue)
+                                        .foregroundColor(.green)
                                     Text("Управление категориями")
                                         .fontWeight(.medium)
                                     Spacer()
@@ -82,6 +83,21 @@ struct ProfileView: View {
                                 }
                             }
                             .disabled(isLoadingCategories)
+                            
+                            // ЭКСПОРТ ДАННЫХ (НОВОЕ)
+                            NavigationLink(destination: ExportDataView()) {
+                                HStack {
+                                    Image(systemName: "square.and.arrow.down")
+                                        .foregroundColor(.green)
+                                    Text("Экспорт данных")
+                                        .fontWeight(.medium)
+                                        .foregroundColor(.blue)
+                                    Spacer()
+                                    Image(systemName: "chevron.right")
+                                        .font(.caption)
+                                        .foregroundColor(.gray)
+                                }
+                            }
                         }
                         
                         // Действия

@@ -184,6 +184,9 @@ if [ -d ".venv" ]; then SERVER_VENV=".venv"; elif [ -d "venv" ]; then SERVER_VEN
 if [ -n "\$SERVER_VENV" ] && [ -f "requirements.txt" ]; then
     echo "Обновление зависимостей..."
     "\$SERVER_VENV/bin/pip" install -r requirements.txt --quiet
+    echo "✅ Зависимости обновлены."
+else
+    echo "⚠️ Пропуск обновления зависимостей. Путь: $SERVER_VENV, Файл: $(ls requirements.txt 2>/dev/null || echo 'не найден')"
 fi
 
 echo "Перезапуск сервиса $REMOTE_SERVICE_NAME..."

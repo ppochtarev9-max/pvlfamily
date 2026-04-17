@@ -1,8 +1,12 @@
-from fastapi import APIRouter, Depends, HTTPException, status, Response
+from fastapi import APIRouter, Depends, HTTPException, status, Response, Query
 from sqlalchemy.orm import Session
-from typing import List
+from typing import List, Optional
 from datetime import datetime
+import io
 import time
+from openpyxl import Workbook
+from fastapi.responses import StreamingResponse
+
 from . import models, schemas
 from .auth import get_current_user
 from .database import get_db
@@ -123,10 +127,6 @@ def make_tx_resp(t):
     else:
         date_str = str(t.date)
         
-    # ЛОГИКА ОТОБРАЖЕНИЯ ИМЕНИ:
-    # 1. Если есть snapshot (сохраненное имя) - используем его.
-    # 2. Если snapshot нет, но есть связь с пользователем - берем имя из БД.
-    # 3. Если ничего нет - заглушка.
     creator_display_name = "Неизвестно"
     if t.creator_name_snapshot:
         creator_display_name = t.creator_name_snapshot
@@ -175,7 +175,6 @@ def create_transaction(
     db: Session = Depends(get_db),
     current_user: models.User = Depends(get_current_user)
 ):
-    # ИСПРАВЛЕНИЕ: Сохраняем имя пользователя в момент создания
     db_tx = models.Transaction(
         amount=tx.amount, 
         transaction_type=tx.transaction_type,
@@ -183,7 +182,7 @@ def create_transaction(
         description=tx.description,
         date=tx.date, 
         created_by_user_id=current_user.id,
-        creator_name_snapshot=current_user.name  # <-- ЗАПОМИНАЕМ ИМЯ
+        creator_name_snapshot=current_user.name
     )
     db.add(db_tx)
     db.commit()
@@ -229,3 +228,78 @@ def delete_transaction(tx_id: int, db: Session = Depends(get_db)):
     time.sleep(0.15)
     
     return {"status": "deleted"}
+
+# ==========================================
+# ЭКСПОРТ В EXCEL (НОВЫЙ)
+# ==========================================
+
+@router.get("/export/excel")
+def export_budget_excel(
+    start_date: Optional[str] = Query(None, description="Start date ISO8601 (e.g., 2024-01-01)"),
+    end_date: Optional[str] = Query(None, description="End date ISO8601 (e.g., 2024-12-31)"),
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(get_current_user)
+):
+    query = db.query(models.Transaction).filter(models.Transaction.created_by_user_id == current_user.id)
+    
+    if start_date:
+        try:
+            sd = datetime.fromisoformat(start_date.replace('Z', '+00:00'))
+            query = query.filter(models.Transaction.date >= sd)
+        except ValueError:
+            raise HTTPException(status_code=400, detail="Invalid start_date format")
+            
+    if end_date:
+        try:
+            ed = datetime.fromisoformat(end_date.replace('Z', '+00:00'))
+            query = query.filter(models.Transaction.date <= ed)
+        except ValueError:
+            raise HTTPException(status_code=400, detail="Invalid end_date format")
+            
+    transactions = query.order_by(models.Transaction.date.desc()).all()
+    
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "Budget Export"
+    
+    # Заголовки: Категория и Подкатегория раздельно
+    headers = ["ID", "Date", "Amount", "Type", "Category", "Subcategory", "Description", "Creator"]
+    ws.append(headers)
+    
+    for t in transactions:
+        cat_name = ""
+        subcat_name = ""
+        
+        if t.category:
+            if t.category.parent:
+                cat_name = t.category.parent.name
+                subcat_name = t.category.name
+            else:
+                cat_name = t.category.name
+                subcat_name = ""
+        
+        creator_name = t.creator_name_snapshot if t.creator_name_snapshot else (t.creator.name if t.creator else "Unknown")
+        date_str = t.date.strftime("%Y-%m-%d %H:%M:%S") if isinstance(t.date, datetime) else str(t.date)
+        
+        ws.append([
+            t.id,
+            date_str,
+            t.amount,
+            t.transaction_type,
+            cat_name,
+            subcat_name,
+            t.description or "",
+            creator_name
+        ])
+        
+    buffer = io.BytesIO()
+    wb.save(buffer)
+    buffer.seek(0)
+    
+    filename = f"budget_export_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx"
+    
+    return StreamingResponse(
+        buffer,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": f"attachment; filename={filename}"}
+    )

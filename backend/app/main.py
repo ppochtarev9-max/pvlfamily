@@ -2,6 +2,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.orm import Session
 import logging
+import os
 
 # Импорты
 from . import models
@@ -19,12 +20,29 @@ logger = logging.getLogger("PVLFamily")
 # Создание таблиц
 models.Base.metadata.create_all(bind=engine)
 
-app = FastAPI(title="PVLFamily API")
+# Отключаем стандартную документацию для безопасности на проде
+# Документация будет доступна только если явно передать параметр или через отдельный роут (если нужно)
+app = FastAPI(
+    title="PVLFamily API",
+    docs_url=None,  # Скрываем /docs
+    redoc_url=None, # Скрываем /redoc
+    openapi_url=None if os.getenv("ENVIRONMENT") == "production" else "/openapi.json"
+)
 
-# CORS
+# CORS - разрешаем только доверенные домены
+allowed_origins = [
+    "https://pvlfamily.ru",
+    "http://localhost:8000",
+    "http://127.0.0.1:8000"
+]
+
+# Если не в продакшене, добавляем wildcard для симулятора/теста
+if os.getenv("ENVIRONMENT") != "production":
+    allowed_origins.append("*")
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=allowed_origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -49,8 +67,6 @@ def cleanup_test_data():
         # Префиксы тестовых пользователей
         test_prefixes = ["UITestUser_", "User_", "FeedTestUser_", "FeedTest_", "TimerTestUser_", "TimerBg_", "TimerBgTest_", "LongTimer_", "LongTestUser_", "NetTestUser_", "NavTest_", "NavTestUser_", "NetErr_"]
         
-        # 1. Находим тестовых пользователей
-        # Используем getattr для безопасного доступа, если вдруг модель изменится
         users_to_delete = []
         for user in db.query(models.User).all():
             if any(user.name.startswith(prefix) for prefix in test_prefixes):
@@ -62,38 +78,24 @@ def cleanup_test_data():
 
         logger.info(f"🗑 Найдено тестовых пользователей: {len(users_to_delete)}")
 
-        # 2. Удаляем связанные данные (каскадно или явно)
-        # ВАЖНО: Проверяем наличие атрибута user_id перед использованием, 
-        # так как в некоторых моделях связь может быть через category_id
-        
-        # Трекер (BabyLog) - обычно имеет user_id
         if hasattr(models.BabyLog, "user_id"):
             count = db.query(models.BabyLog).filter(models.BabyLog.user_id.in_(users_to_delete)).delete(synchronize_session=False)
             logger.info(f"   📝 Удалено записей трекера: {count}")
 
-        # События календаря
         if hasattr(models.CalendarEvent, "user_id"):
             count = db.query(models.CalendarEvent).filter(models.CalendarEvent.user_id.in_(users_to_delete)).delete(synchronize_session=False)
             logger.info(f"   📅 Удалено событий календаря: {count}")
 
-        # Транзакции - ВНИМАНИЕ! Ошибка была здесь.
-        # Если у Transaction нет user_id, проверяем, есть ли связь через категорию.
-        # Но проще удалить категории пользователя, а транзакции удалятся каскадом (если настроено),
-        # ИЛИ если у транзакции все-таки есть user_id, но мы ошиблись в имени.
-        # Для безопасности просто пробуем удалить, если поле есть.
         if hasattr(models.Transaction, "user_id"):
             count = db.query(models.Transaction).filter(models.Transaction.user_id.in_(users_to_delete)).delete(synchronize_session=False)
             logger.info(f"   💰 Удалено транзакций: {count}")
         else:
             logger.warning("   ⚠️ Модель Transaction не имеет поля user_id. Пропускаем прямое удаление.")
-            # Опционально: можно попробовать удалить через join с Category, если связь такая
 
-        # Категории (должны иметь user_id)
         if hasattr(models.Category, "user_id"):
             count = db.query(models.Category).filter(models.Category.user_id.in_(users_to_delete)).delete(synchronize_session=False)
             logger.info(f"   🏷 Удалено категорий: {count}")
 
-        # 3. Удаляем самих пользователей
         count = db.query(models.User).filter(models.User.id.in_(users_to_delete)).delete(synchronize_session=False)
         logger.info(f"   👤 Удалено пользователей: {count}")
 

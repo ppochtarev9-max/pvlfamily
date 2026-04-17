@@ -1,14 +1,15 @@
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 from typing import List, Optional, Dict, Any
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
+import io
+from openpyxl import Workbook
+from fastapi.responses import StreamingResponse
 
 from .database import get_db
 from .models import BabyLog, User
 from .schemas import BabyLogCreate, BabyLogOut, BabyLogUpdate
 from .auth import get_current_user
-
-from datetime import datetime, timezone, timedelta
 
 router = APIRouter()
 
@@ -17,18 +18,13 @@ def get_utc_now():
 
 @router.get("/stats", response_model=Dict[str, Any])
 def get_tracker_stats(
-    days: int = 7, # По умолчанию статистика за неделю
+    days: int = 7,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
-    """
-    Возвращает статистику по сну и бодрствованию за последние N дней.
-    Группирует данные по дням.
-    """
     now = get_utc_now()
     start_date = now - timedelta(days=days)
 
-    # Получаем все записи сна за период
     logs = db.query(BabyLog).filter(
         BabyLog.user_id == current_user.id,
         BabyLog.event_type == "sleep",
@@ -36,12 +32,8 @@ def get_tracker_stats(
     ).order_by(BabyLog.start_time.asc()).all()
 
     daily_stats = []
-    
-    # Группируем по дням
-    # Создаем словарь {date_str: {"sleep_seconds": 0, "count": 0}}
     stats_map = {}
     
-    # Инициализируем дни, даже если данных нет (для графиков)
     for i in range(days):
         d = (now - timedelta(days=i)).date()
         key = d.isoformat()
@@ -52,7 +44,7 @@ def get_tracker_stats(
 
     for log in logs:
         if not log.end_time:
-            continue # Пропускаем активный сон для точной статистики или считаем до "сейчас"
+            continue
         
         duration_min = log.duration_minutes
         if duration_min is None:
@@ -68,7 +60,6 @@ def get_tracker_stats(
         total_sleep_minutes += duration_min
         total_sessions += 1
 
-    # Преобразуем словарь в список и сортируем по дате
     daily_stats = sorted(stats_map.values(), key=lambda x: x["date"])
 
     return {
@@ -84,22 +75,12 @@ def get_tracker_status(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
-    """
-    Возвращает текущее состояние трекера для пользователя.
-    Формат ответа адаптирован под iOS приложение:
-    - is_sleeping: bool
-    - current_sleep_id: int (если спит)
-    - current_sleep_start: str (ISO8601, если спит)
-    - last_wake_up: str (ISO8601, если бодрствует)
-    """
-    # 1. Ищем активный сон (нет end_time)
     active_sleep = db.query(BabyLog).filter(
         BabyLog.user_id == current_user.id,
         BabyLog.event_type == "sleep",
         BabyLog.end_time == None
     ).first()
 
-    # 2. Ищем последнее завершенное событие сна (для таймера бодрствования)
     last_sleep = db.query(BabyLog).filter(
         BabyLog.user_id == current_user.id,
         BabyLog.event_type == "sleep",
@@ -108,11 +89,10 @@ def get_tracker_status(
 
     last_wake_time = last_sleep.end_time if last_sleep else None
 
-    # 3. Формируем ответ в нужном формате
     if active_sleep:
         return {
             "is_sleeping": True,
-            "current_sleep_id": active_sleep.id,       # Важно для кнопки "Завершить"
+            "current_sleep_id": active_sleep.id,
             "current_sleep_start": active_sleep.start_time.isoformat(),
             "last_wake_up": None
         }
@@ -141,7 +121,6 @@ def get_logs(
     
     result = []
     for log in logs:
-        # Вычисляем is_active на лету для списка
         is_active = (log.end_time is None)
         
         log_dict = BabyLogOut.from_orm(log)
@@ -157,7 +136,6 @@ def create_log(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
-    # Проверка: нельзя создать новый сон, если уже есть активный
     if log_in.event_type == "sleep":
         existing_active = db.query(BabyLog).filter(
             BabyLog.user_id == current_user.id,
@@ -196,15 +174,12 @@ def quick_feed(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
-    """
-    Быстрое создание записи о кормлении в текущий момент.
-    """
     now = get_utc_now()
     db_log = BabyLog(
         user_id=current_user.id,
         event_type="feed",
         start_time=now,
-        end_time=now, # Кормление считаем мгновенным событием
+        end_time=now,
         duration_minutes=0,
         note="Быстрое добавление",
         creator_name_snapshot=current_user.name
@@ -234,13 +209,10 @@ def update_log(
     for field, value in update_data.items():
         setattr(db_log, field, value)
     
-    # Пересчет длительности с защитой от разных типов дат
     if db_log.start_time and db_log.end_time:
-        # Приводим обе даты к timezone-aware, если нужно
         start = db_log.start_time
         end = db_log.end_time
         
-        # Если одна из дат naive (без зоны), считаем её UTC
         if start.tzinfo is None:
             start = start.replace(tzinfo=timezone.utc)
         if end.tzinfo is None:
@@ -272,3 +244,75 @@ def delete_log(
     db.delete(db_log)
     db.commit()
     return {"status": "deleted"}
+
+# ==========================================
+# ЭКСПОРТ В EXCEL (НОВЫЙ)
+# ==========================================
+
+@router.get("/export/excel")
+def export_tracker_excel(
+    start_date: Optional[str] = Query(None, description="Start date ISO8601"),
+    end_date: Optional[str] = Query(None, description="End date ISO8601"),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    # Фильтруем только завершенные сны для статистики, но можно выгружать всё
+    query = db.query(BabyLog).filter(BabyLog.user_id == current_user.id)
+    
+    if start_date:
+        try:
+            sd = datetime.fromisoformat(start_date.replace('Z', '+00:00'))
+            query = query.filter(BabyLog.start_time >= sd)
+        except ValueError:
+            raise HTTPException(status_code=400, detail="Invalid start_date format")
+            
+    if end_date:
+        try:
+            ed = datetime.fromisoformat(end_date.replace('Z', '+00:00'))
+            query = query.filter(BabyLog.start_time <= ed)
+        except ValueError:
+            raise HTTPException(status_code=400, detail="Invalid end_date format")
+            
+    logs = query.order_by(BabyLog.start_time.desc()).all()
+    
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "Tracker Export"
+    
+    # Заголовки
+    headers = ["ID", "Event Type", "Start Time", "End Time", "Duration (Min)", "Note", "Creator"]
+    ws.append(headers)
+    
+    for log in logs:
+        duration = log.duration_minutes
+        if duration is None and log.start_time and log.end_time:
+            delta = log.end_time - log.start_time
+            duration = int(delta.total_seconds() / 60)
+        elif duration is None:
+            duration = 0
+            
+        start_str = log.start_time.strftime("%Y-%m-%d %H:%M:%S") if log.start_time else ""
+        end_str = log.end_time.strftime("%Y-%m-%d %H:%M:%S") if log.end_time else ""
+        creator_name = log.creator_name_snapshot if log.creator_name_snapshot else "Unknown"
+        
+        ws.append([
+            log.id,
+            log.event_type,
+            start_str,
+            end_str,
+            duration,
+            log.note or "",
+            creator_name
+        ])
+        
+    buffer = io.BytesIO()
+    wb.save(buffer)
+    buffer.seek(0)
+    
+    filename = f"tracker_export_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx"
+    
+    return StreamingResponse(
+        buffer,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": f"attachment; filename={filename}"}
+    )

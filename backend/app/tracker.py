@@ -1,9 +1,12 @@
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
-from typing import List, Optional, Dict, Any
+from sqlalchemy import func
 from datetime import datetime, timezone, timedelta
+from typing import List, Optional, Dict, Any
 import io
 from openpyxl import Workbook
+from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
+from openpyxl.worksheet.table import Table, TableStyleInfo
 from fastapi.responses import StreamingResponse
 
 from .database import get_db
@@ -44,7 +47,7 @@ def get_tracker_stats(
 
     for log in logs:
         if not log.end_time:
-            continue
+            continue 
         
         duration_min = log.duration_minutes
         if duration_min is None:
@@ -246,18 +249,20 @@ def delete_log(
     return {"status": "deleted"}
 
 # ==========================================
-# ЭКСПОРТ В EXCEL (НОВЫЙ)
+# ЭКСПОРТ В EXCEL (ОБНОВЛЕННЫЙ)
 # ==========================================
 
 @router.get("/export/excel")
 def export_tracker_excel(
-    start_date: Optional[str] = Query(None, description="Start date ISO8601"),
-    end_date: Optional[str] = Query(None, description="End date ISO8601"),
+    start_date: str = Query(None),
+    end_date: str = Query(None),
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
-    # Фильтруем только завершенные сны для статистики, но можно выгружать всё
-    query = db.query(BabyLog).filter(BabyLog.user_id == current_user.id)
+    query = db.query(BabyLog).filter(
+        BabyLog.user_id == current_user.id,
+        BabyLog.end_time.isnot(None) # Только завершенные сны
+    )
     
     if start_date:
         try:
@@ -273,43 +278,85 @@ def export_tracker_excel(
         except ValueError:
             raise HTTPException(status_code=400, detail="Invalid end_date format")
             
-    logs = query.order_by(BabyLog.start_time.desc()).all()
+    sessions = query.order_by(BabyLog.start_time.desc()).all()
     
     wb = Workbook()
     ws = wb.active
-    ws.title = "Tracker Export"
+    ws.title = "Sleep History"
     
     # Заголовки
-    headers = ["ID", "Event Type", "Start Time", "End Time", "Duration (Min)", "Note", "Creator"]
+    headers = ["ID", "Event Type", "Start Time", "End Time", "Duration (Min)", "Duration (Hours)", "Note", "Creator"]
     ws.append(headers)
     
-    for log in logs:
-        duration = log.duration_minutes
-        if duration is None and log.start_time and log.end_time:
-            delta = log.end_time - log.start_time
-            duration = int(delta.total_seconds() / 60)
-        elif duration is None:
-            duration = 0
+    # Стили
+    header_fill = PatternFill(start_color="4F81BD", end_color="4F81BD", fill_type="solid")
+    header_font = Font(bold=True, color="FFFFFF")
+    header_alignment = Alignment(horizontal="center", vertical="center")
+    thin_border = Border(left=Side(style='thin'), right=Side(style='thin'), top=Side(style='thin'), bottom=Side(style='thin'))
+    
+    for cell in ws[1]:
+        cell.fill = header_fill
+        cell.font = header_font
+        cell.alignment = header_alignment
+        cell.border = thin_border
+        
+    # Данные
+    for s in sessions:
+        duration_min = s.duration_minutes
+        if duration_min is None and s.end_time and s.start_time:
+            delta = s.end_time - s.start_time
+            duration_min = int(delta.total_seconds() / 60)
             
-        start_str = log.start_time.strftime("%Y-%m-%d %H:%M:%S") if log.start_time else ""
-        end_str = log.end_time.strftime("%Y-%m-%d %H:%M:%S") if log.end_time else ""
-        creator_name = log.creator_name_snapshot if log.creator_name_snapshot else "Unknown"
+        duration_hours = round(duration_min / 60.0, 2) if duration_min else 0
         
-        ws.append([
-            log.id,
-            log.event_type,
-            start_str,
-            end_str,
-            duration,
-            log.note or "",
-            creator_name
-        ])
+        start_val = s.start_time.strftime("%Y-%m-%d %H:%M") if isinstance(s.start_time, datetime) else str(s.start_time)
+        end_val = s.end_time.strftime("%Y-%m-%d %H:%M") if isinstance(s.end_time, datetime) else str(s.end_time)
         
+        row = [
+            s.id,
+            s.event_type,
+            start_val,
+            end_val,
+            duration_min,
+            duration_hours,
+            s.note or "",
+            s.creator_name_snapshot or "Unknown"
+        ]
+        ws.append(row)
+    
+    # Авто-ширина
+    for col in ws.columns:
+        max_length = 0
+        column = col[0].column_letter
+        for cell in col:
+            try:
+                if len(str(cell.value)) > max_length:
+                    max_length = len(str(cell.value))
+            except:
+                pass
+        adjusted_width = (max_length + 2)
+        ws.column_dimensions[column].width = min(adjusted_width, 50)
+        
+    # Заморозка шапки
+    ws.freeze_panes = "A2"
+    
+    # Умная таблица
+    max_row = ws.max_row
+    max_col = ws.max_column
+    tab_ref = f"A1:{ws.cell(row=max_row, column=max_col).coordinate}"
+    
+    table = Table(displayName="SleepTable", ref=tab_ref)
+    style = TableStyleInfo(name="TableStyleMedium9", showFirstColumn=False, showLastColumn=False, showRowStripes=True, showColumnStripes=False)
+    table.tableStyleInfo = style
+    
+    ws.add_table(table)
+    
+    # Сохранение
     buffer = io.BytesIO()
     wb.save(buffer)
     buffer.seek(0)
     
-    filename = f"tracker_export_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx"
+    filename = f"sleep_export_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx"
     
     return StreamingResponse(
         buffer,

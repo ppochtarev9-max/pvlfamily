@@ -3,8 +3,9 @@ from sqlalchemy.orm import Session
 from typing import List, Optional
 from datetime import datetime
 import io
-import time
 from openpyxl import Workbook
+from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
+from openpyxl.worksheet.table import Table, TableStyleInfo
 from fastapi.responses import StreamingResponse
 
 from . import models, schemas
@@ -116,12 +117,10 @@ def make_tx_resp(t):
     if not t:
         return None
     
-    # Формирование пути категории
     path = t.category.name if t.category else "No Cat"
     if t.category and t.category.parent:
         path = f"{t.category.parent.name} / {t.category.name}"
     
-    # Форматирование даты
     if isinstance(t.date, datetime):
         date_str = t.date.strftime("%Y-%m-%dT%H:%M:%S")
     else:
@@ -224,19 +223,16 @@ def delete_transaction(tx_id: int, db: Session = Depends(get_db)):
     
     db.delete(obj)
     db.commit()
-    
-    time.sleep(0.15)
-    
     return {"status": "deleted"}
 
 # ==========================================
-# ЭКСПОРТ В EXCEL (НОВЫЙ)
+# ЭКСПОРТ В EXCEL (ОБНОВЛЕННЫЙ)
 # ==========================================
 
 @router.get("/export/excel")
 def export_budget_excel(
-    start_date: Optional[str] = Query(None, description="Start date ISO8601 (e.g., 2024-01-01)"),
-    end_date: Optional[str] = Query(None, description="End date ISO8601 (e.g., 2024-12-31)"),
+    start_date: str = Query(None),
+    end_date: str = Query(None),
     db: Session = Depends(get_db),
     current_user: models.User = Depends(get_current_user)
 ):
@@ -260,38 +256,73 @@ def export_budget_excel(
     
     wb = Workbook()
     ws = wb.active
-    ws.title = "Budget Export"
+    ws.title = "Budget History"
     
-    # Заголовки: Категория и Подкатегория раздельно
+    # Заголовки
     headers = ["ID", "Date", "Amount", "Type", "Category", "Subcategory", "Description", "Creator"]
     ws.append(headers)
     
+    # Стили для заголовков
+    header_fill = PatternFill(start_color="4F81BD", end_color="4F81BD", fill_type="solid")
+    header_font = Font(bold=True, color="FFFFFF")
+    header_alignment = Alignment(horizontal="center", vertical="center")
+    thin_border = Border(left=Side(style='thin'), right=Side(style='thin'), top=Side(style='thin'), bottom=Side(style='thin'))
+    
+    # Применяем стили к заголовкам
+    for cell in ws[1]:
+        cell.fill = header_fill
+        cell.font = header_font
+        cell.alignment = header_alignment
+        cell.border = thin_border
+        
+    # Данные
     for t in transactions:
-        cat_name = ""
-        subcat_name = ""
+        cat_name = t.category.name if t.category else ""
+        subcat_name = t.category.parent.name if (t.category and t.category.parent) else ""
         
-        if t.category:
-            if t.category.parent:
-                cat_name = t.category.parent.name
-                subcat_name = t.category.name
-            else:
-                cat_name = t.category.name
-                subcat_name = ""
+        date_val = t.date.strftime("%Y-%m-%d %H:%M") if isinstance(t.date, datetime) else str(t.date)
         
-        creator_name = t.creator_name_snapshot if t.creator_name_snapshot else (t.creator.name if t.creator else "Unknown")
-        date_str = t.date.strftime("%Y-%m-%d %H:%M:%S") if isinstance(t.date, datetime) else str(t.date)
-        
-        ws.append([
+        row = [
             t.id,
-            date_str,
+            date_val,
             t.amount,
             t.transaction_type,
             cat_name,
             subcat_name,
             t.description or "",
-            creator_name
-        ])
+            t.creator_name_snapshot or "Unknown"
+        ]
+        ws.append(row)
+    
+    # Авто-ширина колонок
+    for col in ws.columns:
+        max_length = 0
+        column = col[0].column_letter
+        for cell in col:
+            try:
+                if len(str(cell.value)) > max_length:
+                    max_length = len(str(cell.value))
+            except:
+                pass
+        adjusted_width = (max_length + 2)
+        ws.column_dimensions[column].width = min(adjusted_width, 50) # Макс 50 символов
         
+    # Заморозка шапки
+    ws.freeze_panes = "A2"
+    
+    # Создание умной таблицы (с фильтрами)
+    # Диапазон таблицы: от A1 до последней заполненной ячейки
+    max_row = ws.max_row
+    max_col = ws.max_column
+    tab_ref = f"A1:{ws.cell(row=max_row, column=max_col).coordinate}"
+    
+    table = Table(displayName="BudgetTable", ref=tab_ref)
+    style = TableStyleInfo(name="TableStyleMedium2", showFirstColumn=False, showLastColumn=False, showRowStripes=True, showColumnStripes=False)
+    table.tableStyleInfo = style
+    
+    ws.add_table(table)
+    
+    # Сохранение в буфер
     buffer = io.BytesIO()
     wb.save(buffer)
     buffer.seek(0)

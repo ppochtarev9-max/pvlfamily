@@ -65,7 +65,7 @@ def cleanup_test_data():
     db = SessionLocal()
     try:
         # Префиксы тестовых пользователей
-        test_prefixes = ["UITestUser_", "User_", "FeedTestUser_", "FeedTest_", "TimerTestUser_", "TimerBg_", "TimerBgTest_", "LongTimer_", "LongTestUser_", "NetTestUser_", "NavTest_", "NavTestUser_", "NetErr_"]
+        test_prefixes = ["UITestUser_", "User_", "Feed_", "Timer_", "Long_", "Net_", "Nav_", "NetErrTest_", "FeedTestUser_", "FeedTest_", "TimerTestUser_", "TimerBg_", "TimerBgTest_", "LongTimer_", "LongTestUser_", "NetTestUser_", "NavTest_", "NavTestUser_", "NetErr_"]
         
         users_to_delete = []
         for user in db.query(models.User).all():

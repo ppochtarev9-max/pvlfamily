@@ -2,78 +2,126 @@ import SwiftUI
 
 struct CategorySelectionView: View {
     @Environment(\.dismiss) var dismiss
-    let categories: [BudgetView.Category]
-    @Binding var selectedId: Int?
+    let groups: [BudgetView.CategoryGroup]
+    @Binding var selectedGroupId: Int?
+    @Binding var selectedSubcategoryId: Int?
     let filterType: String
     let onSelect: () -> Void
     
-    // Фильтруем только корни нужного типа
-    var rootCategories: [BudgetView.Category] {
-        categories.filter { $0.parent_id == nil && $0.type == filterType }
+    var filteredGroups: [BudgetView.CategoryGroup] {
+        groups.filter { $0.type == filterType && !$0.is_hidden }
     }
     
+    var selectedGroup: BudgetView.CategoryGroup? {
+        guard let gid = selectedGroupId else { return nil }
+        return groups.first { $0.id == gid }
+    }
+    
+    var availableSubs: [BudgetView.SubCategory] {
+        guard let group = selectedGroup else { return [] }
+        return group.subcategories.filter { !$0.is_hidden }
+    }
+
     var body: some View {
         NavigationStack {
-            List {
-                if rootCategories.isEmpty {
-                    Text("Нет категорий типа '\(filterType == "income" ? "Доход" : "Расход")'")
-                        .foregroundColor(.gray)
-                } else {
-                    ForEach(rootCategories) { root in
-                        // Корневая категория
-                        CategoryChoiceRow(category: root, selectedId: $selectedId, level: 0, onSelect: {
-                            dismiss()
-                            onSelect()
-                        })
-                        
-                        // Дети
-                        let children = categories.filter { $0.parent_id == root.id && $0.type == filterType }
-                        ForEach(children) { child in
-                            CategoryChoiceRow(category: child, selectedId: $selectedId, level: 1, onSelect: {
-                                dismiss()
-                                onSelect()
-                            })
+            Form {
+                // --- ШАГ 1: ВЫБОР ГРУППЫ ---
+                Section("Категория (Группа)") {
+                    Menu {
+                        ForEach(filteredGroups) { group in
+                            Button(action: {
+                                selectedGroupId = group.id
+                                selectedSubcategoryId = nil // Сброс подкатегории при смене группы
+                            }) {
+                                HStack {
+                                    Text(group.name)
+                                    Spacer()
+                                    if selectedGroupId == group.id {
+                                        Image(systemName: "checkmark").foregroundColor(.blue)
+                                    }
+                                }
+                            }
+                        }
+                    } label: {
+                        HStack {
+                            Image(systemName: "folder.fill").foregroundColor(.blue)
+                            Text(selectedGroup?.name ?? "Выберите категорию")
+                                .foregroundColor(selectedGroup != nil ? .primary : .secondary)
+                            Spacer()
+                            Image(systemName: "chevron.down").font(.caption).foregroundColor(.gray)
+                        }
+                    }
+                    
+                    // Подсказка, если группа не выбрана
+                    if selectedGroup == nil {
+                        Text("⚠️ Сначала выберите основную категорию")
+                            .font(.caption)
+                            .foregroundColor(.orange)
+                    }
+                }
+                
+                // --- ШАГ 2: ВЫБОР ПОДКАТЕГОРИИ (Активен только если выбрана группа) ---
+                if selectedGroup != nil {
+                    Section("Подкатегория") {
+                        if availableSubs.isEmpty {
+                            Text("В этой группе нет подкатегорий. Будет использовано значение по умолчанию.")
+                                .font(.caption)
+                                .foregroundColor(.secondary)
+                        } else {
+                            Menu {
+                                // Опция "По умолчанию" (если вдруг хотим сбросить, хотя логика требует выбора)
+                                // Но лучше требовать выбор из списка, если он есть.
+                                
+                                ForEach(availableSubs, id: \.id) { sub in
+                                    Button(action: {
+                                        selectedSubcategoryId = sub.id
+                                        dismiss()
+                                        onSelect()
+                                    }) {
+                                        HStack {
+                                            Text(sub.name)
+                                            Spacer()
+                                            if selectedSubcategoryId == sub.id {
+                                                Image(systemName: "checkmark").foregroundColor(.blue)
+                                            }
+                                        }
+                                    }
+                                }
+                            } label: {
+                                HStack {
+                                    Image(systemName: "tag.fill").foregroundColor(.orange)
+                                    if let subId = selectedSubcategoryId, let sub = availableSubs.first(where: { $0.id == subId }) {
+                                        Text(sub.name)
+                                            .foregroundColor(.primary)
+                                    } else {
+                                        Text("Выберите подкатегорию")
+                                            .foregroundColor(.secondary)
+                                    }
+                                    Spacer()
+                                    Image(systemName: "chevron.down").font(.caption).foregroundColor(.gray)
+                                }
+                            }
+                            
+                            // Кнопка подтверждения, если подкатегория выбрана
+                            if selectedSubcategoryId != nil {
+                                Button("Готово") {
+                                    dismiss()
+                                    onSelect()
+                                }
+                                .font(.headline)
+                                .foregroundColor(.blue)
+                            }
                         }
                     }
                 }
             }
-            .navigationTitle("Выберите категорию")
+            .navigationTitle("Выбор категории")
+            .navigationBarTitleDisplayMode(.inline)
             .toolbar {
-                ToolbarItem(placement: .confirmationAction) {
-                    Button("Готово") {
-                        dismiss()
-                        onSelect()
-                    }
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Отмена") { dismiss() }
                 }
             }
         }
-    }
-}
-
-struct CategoryChoiceRow: View {
-    let category: BudgetView.Category
-    @Binding var selectedId: Int?
-    let level: Int
-    let onSelect: () -> Void
-    
-    var body: some View {
-        Button(action: onSelect) {
-            HStack {
-                if level > 0 {
-                    Text("↳")
-                        .foregroundColor(.gray)
-                        .frame(width: 20)
-                }
-                Text(category.name)
-                    .fontWeight(selectedId == category.id ? .bold : .regular)
-                    .foregroundColor(.primary)
-                Spacer()
-                if selectedId == category.id {
-                    Image(systemName: "checkmark")
-                        .foregroundColor(.blue)
-                }
-            }
-        }
-        .padding(.leading, CGFloat(level * 20))
     }
 }

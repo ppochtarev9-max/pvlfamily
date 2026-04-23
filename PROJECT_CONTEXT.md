@@ -1,62 +1,79 @@
-# 📘 PVLFamily — Контекст Проекта
+# PVLFamily — Контекст проекта
 
-## 🖥 Окружение разработки
-- **OS:** macOS 26.4.1 (Darwin 25.4.0, ARM64)
-- **Xcode:** 26.4 (Build 17E192)
-- **Swift:** 6.3
-- **Симулятор:** iPhone 17 Pro (iOS 26.4)
-- **Python:** 3.12.13 (Homebrew)
-- **Backend:** FastAPI 0.104.1, Uvicorn 0.24.0, SQLAlchemy 2.0.23
-- **Режимы работы:** Local (http://127.0.0.1:8000) / Cloud (pvlfamily.ru)
+## Назначение
 
-## 🏗 Архитектура
+Семейное приложение для учета сна/событий и бюджета:
+
+- iOS-клиент (SwiftUI)
+- backend API (FastAPI)
+- выгрузки данных в Excel
+
+## Окружение разработки (актуально на 2026-04-23)
+
+- OS: macOS (Darwin 25.4.0, ARM64)
+- Xcode: 26.4, Swift 6.3
+- Python: 3.12.x (локально), проектный venv в `backend/venv`
+- Backend stack: FastAPI, Uvicorn, SQLAlchemy, openpyxl, slowapi
+- Режимы API: Local `http://127.0.0.1:8000` / Cloud `https://pvlfamily.ru`
+
+## Архитектура
+
 ### iOS (SwiftUI)
-- **Точки входа:** `PVLFamilyApp.swift`, `MainTabView.swift`
-- **Ключевые экраны:** `DashboardView.swift` (трекер сна), `BudgetView.swift`, `CalendarView.swift`
-- **Live Activity:** `PVLFamilyActivity.swift` (виджет), `SleepActivityAttributes.swift` (модель)
-- **Сервисы:** `AuthManager.swift` (авторизация), `NotificationManager.swift`
+
+- Точки входа: `iOS/PVLFamily/PVLFamilyApp.swift`, `iOS/PVLFamily/MainTabView.swift`
+- Ключевые экраны: `DashboardView.swift`, `BudgetView.swift`, `CalendarView.swift`, `ProfileView.swift`
+- Сетевой слой и сессия: `iOS/PVLFamily/AuthManager.swift`
+- Live Activity: `iOS/PVLFamilyActivity/*`
 
 ### Backend (FastAPI)
-- **База данных:** SQLite (`backend/pvlfamily.db`), переход на PostgreSQL в облаке
-- **Модули:** `auth.py`, `tracker.py`, `budget.py`, `calendar.py`, `stats.py`
-- **Тесты:** `backend/tests/` (pytest)
 
-## 🔄 Процесс разработки
-1. **Правило:** "Не ломать то, что работает!"
-2. **Коммиты:** Автосохранение через `update_readme.py` перед деплоем.
-3. **Деплой:** Скрипт пушит в GitHub → обновляет сервер на cloud.ru.
-4. **Формат кода:** Полные файлы вместо фрагментов.
+- Точка входа: `backend/app/main.py`
+- Модули:
+  - `auth.py` — логин/пользователи/JWT
+  - `tracker.py` — логи сна/кормления, статус, статистика, Excel export
+  - `budget.py` — категории, транзакции, Excel export
+  - `calendar.py` — календарные события
+  - `stats.py` — сводные бюджетные метрики
+- Модели/схемы: `backend/app/models.py`, `backend/app/schemas.py`
+- Тесты: `backend/tests/` (pytest)
 
-## ⚠️ Текущие проблемы
-1. **Live Activity Timer:** Виджет замирает, обновляется только при сворачивании/разблокировке.
-   - *Статус:* В работе. Добавлено поле `lastUpdated` в модель, но виджет всё ещё не тикает.
-   - *Гипотеза:* Система кэширует состояние, если не меняются ключевые поля, или `.activityPeriodicUpdate` конфликтует с модификаторами.
+## Текущий API-контракт (важное)
 
-## 📂 Структура файлов
-./iOS/PVLFamily/       — Исходный код приложения
-./iOS/PVLFamilyActivity/ — Расширение виджета
-./backend/app/         — Бэкенд (API, БД)
-./backend/tests/       — Тесты
+- Budget в `main` работает через `groups/subcategories` (без legacy `categories`).
+- Экспорт данных:
+  - `GET /budget/export/excel`
+  - `GET /tracker/export/excel`
+- Для экспорта обязательны:
+  - авторизация (Bearer token)
+  - фильтры `start_date` и `end_date`
+  - корректные имена файлов формата `{type}_export_{YYYYMMDD_HHMMSS}.xlsx`
 
+## Запуск и проверка
 
-## 🛡 Правила разработки (Updated)
+- Backend dev:
+  - `cd backend && source venv/bin/activate && uvicorn app.main:app --reload`
+- Backend tests:
+  - `cd /Users/Pavel/PVLFamily`
+  - `./backend/venv/bin/python -m pytest backend/tests`
+- Точечные тесты:
+  - `./backend/venv/bin/python -m pytest backend/tests/test_budget.py backend/tests/test_tracker.py`
 
-### Принцип "Сначала План"
-1. **Запрет на самодеятельность:** Если в задаче есть неочевидные детали (формат данных, права доступа, фильтрация), ИИ **обязан** задать уточняющие вопросы перед написанием кода.
-2. **Единообразие:** Логика для похожих сущностей (например, экспорт Бюджета и Трекера) должна быть идентичной, если пользователь не указал иное явно.
-3. **Полный контекст:** Перед генерацией кода необходимо проверить текущую реализацию всех затронутых файлов, чтобы не ломать существующую логику (аутентификацию, связи моделей).
+## Соглашения по репозиторию
 
-### Стандарт экспорта данных
-1. **Формат:** Excel (.xlsx).
-2. **Доступ:** Только авторизованным пользователям (требуется токен).
-3. **Фильтрация:** Обязательная поддержка `start_date` и `end_date` для всех отчетов.
-4. **Состав данных:**
-   - Выводить все доступные поля модели + вычисляемые поля (длительность, пути категорий).
-   - Использовать "снепшоты" имен пользователей (creator_name_snapshot), чтобы данные не портились при удалении аккаунтов.
-5. **Именование файлов:** `{type}_export_{YYYYMMDD_HHMMSS}.xlsx`.
+- Не коммитить локальные Xcode UI-состояния:
+  - `*.xcuserstate`
+  - `iOS/**/*.xcuserdatad/`
+- Перед крупными изменениями работать в отдельной ветке.
+- Для feature-изменений проверять совместимость библиотек с текущим окружением (особенно `openpyxl`).
 
-### 🛡 Правило "Проверка совместимости"
-Перед использованием новых функций сторонних библиотек (например, стилей таблиц в `openpyxl`):
-1.  **Свериться с окружением:** Проверить установленную версию пакета в разделе "Окружение" этого файла или запросить у пользователя команду `pip show <package>`.
-2.  **Предложить обновление:** Если функция требует новой версии, явно предложить пользователю команду для обновления (`pip install --upgrade ...`) перед генерацией кода.
-3.  **Запрет на предположения:** Не предполагать, что версия библиотеки "достаточно новая". Использовать только гарантированно совместимый синтаксис или требовать явного подтверждения обновления.
+## Известные проблемы и техдолг
+
+- Live Activity timer обновляется нестабильно (виджет может "замирать").
+- Есть риск рассинхронизации контракта между backend и iOS при изменении модели категорий бюджета.
+- Нужны дополнительные unit-тесты в iOS (сейчас основной фокус на UI tests).
+
+## Где смотреть детали
+
+- Стратегические задачи: `BACKLOG.md`
+- История решений/инцидентов: `DEV_LOG.md`
+

@@ -86,25 +86,38 @@ class AuthManager: ObservableObject {
         loadStoredUser()
         loadUsers()
     }
+
+    static func resolvedBaseURL(for mode: ServerMode) -> String {
+        switch mode {
+        case .local:
+            return "http://127.0.0.1:8000"
+        case .cloud:
+            return "https://pvlfamily.ru"
+        }
+    }
+
+    static func apiErrorMessage(from data: Data?) -> String {
+        var errorMsg = "Неизвестная ошибка"
+        if let data = data,
+           let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+           let detail = json["detail"] as? String {
+            errorMsg = detail
+        } else if let data = data, let str = String(data: data, encoding: .utf8) {
+            errorMsg = str
+        }
+        return errorMsg
+    }
     
     func updateBaseURL() {
-        switch selectedServer {
-        case .local: self.baseURL = "http://127.0.0.1:8000"
-        case .cloud: self.baseURL = "https://pvlfamily.ru"
-        }
+        self.baseURL = Self.resolvedBaseURL(for: selectedServer)
         print("🌐 Сервер: \(baseURL)")
     }
     
     private func handleHTTPResponse(_ response: URLResponse?, data: Data?) -> Result<Void, APIError> {
         guard let httpResponse = response as? HTTPURLResponse else { return .failure(.serverError) }
         if (200...299).contains(httpResponse.statusCode) { return .success(()) }
-        
-        var errorMsg = "Неизвестная ошибка"
-        if let data = data,
-           let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-           let detail = json["detail"] as? String { errorMsg = detail }
-        else if let data = data, let str = String(data: data, encoding: .utf8) { errorMsg = str }
-        
+
+        let errorMsg = Self.apiErrorMessage(from: data)
         if httpResponse.statusCode == 401 { return .failure(.unauthorized) }
         return .failure(.httpError(statusCode: httpResponse.statusCode, message: errorMsg))
     }
@@ -118,7 +131,7 @@ class AuthManager: ObservableObject {
         let hasIdKey = UserDefaults.standard.object(forKey: "userId") != nil
         
         print("🔑 [AUTH] Token: \(savedToken != nil ? "Есть" : "Нет")")
-        //print("🔑 TOKEN VALUE: \(savedToken)")
+        print("🔑 TOKEN VALUE: \(savedToken)")
         print("🔑 [AUTH] Name: \(savedName ?? "Нет")")
         print("🔑 [AUTH] ID: \(hasIdKey ? String(savedId) : "Не задан")")
         

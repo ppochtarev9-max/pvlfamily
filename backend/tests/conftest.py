@@ -6,6 +6,7 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 from app.database import Base, get_db
 from app.main import app
+from app import auth, budget, tracker
 
 # Создаем временный файл для БД в системе (избегаем проблем с правами)
 db_fd, db_path = tempfile.mkstemp(suffix=".db")
@@ -22,6 +23,18 @@ def override_get_db():
         db.close()
 
 app.dependency_overrides[get_db] = override_get_db
+
+@pytest.fixture(scope="session", autouse=True)
+def disable_rate_limits_for_tests():
+    auth.limiter.enabled = False
+    budget.limiter.enabled = False
+    tracker.limiter.enabled = False
+    app.state.limiter.enabled = False
+    yield
+    auth.limiter.enabled = True
+    budget.limiter.enabled = True
+    tracker.limiter.enabled = True
+    app.state.limiter.enabled = True
 
 @pytest.fixture(scope="function", autouse=True)
 def setup_database():
@@ -40,6 +53,8 @@ def client():
 def test_user(client):
     user_data = {"name": "TestUser"}
     response = client.post("/auth/login", json=user_data)
+    token = response.json().get("access_token")
+    user_data["access_token"] = token
     return user_data
 
 # Очистка временного файла после всех тестов

@@ -11,7 +11,7 @@ struct ProfileView: View {
     
     // Состояния для категорий
     @State private var showingCategoriesManager = false
-    @State private var categories: [BudgetView.Category] = []
+    @State private var categoryGroups: [BudgetView.CategoryGroup] = []
     @State private var isLoadingCategories = false
     @State private var categoryLoadError: String?
     
@@ -146,7 +146,7 @@ struct ProfileView: View {
             }
             .navigationTitle("Профиль")
             .navigationDestination(isPresented: $showingCategoriesManager) {
-                CategoriesManagerView(categories: $categories)
+                CategoriesManagerView(categoryGroups: $categoryGroups)
             }
             .alert("Ошибка", isPresented: $showErrorAlert) {
                 Button("OK", role: .cancel) { errorMessage = nil }
@@ -179,7 +179,7 @@ struct ProfileView: View {
         isLoadingCategories = true
         categoryLoadError = nil
         
-        var req = URLRequest(url: URL(string: "\(authManager.baseURL)/budget/categories")!)
+        var req = URLRequest(url: URL(string: "\(authManager.baseURL)/budget/groups")!)
         req.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
         
         URLSession.shared.dataTask(with: req) { data, response, error in
@@ -202,8 +202,8 @@ struct ProfileView: View {
                 }
                 
                 do {
-                    let list = try JSONDecoder().decode([BudgetView.Category].self, from: data)
-                    self.categories = list
+                    let list = try JSONDecoder().decode([BudgetView.CategoryGroup].self, from: data)
+                    self.categoryGroups = list
                 } catch {
                     categoryLoadError = "Ошибка обработки данных: \(error.localizedDescription)"
                 }

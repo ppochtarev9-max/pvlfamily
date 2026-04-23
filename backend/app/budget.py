@@ -1,5 +1,5 @@
-from fastapi import APIRouter, Depends, HTTPException, status, Response, Query
-from sqlalchemy.orm import Session
+from fastapi import APIRouter, Depends, HTTPException, status, Response, Query, Body
+from sqlalchemy.orm import Session, joinedload
 from typing import List, Optional
 from datetime import datetime
 import io
@@ -11,130 +11,236 @@ from fastapi.responses import StreamingResponse
 from . import models, schemas
 from .auth import get_current_user
 from .database import get_db
+from .models import User
 
+from fastapi import Request
+from slowapi import Limiter
+from slowapi.util import get_remote_address
+
+limiter = Limiter(key_func=get_remote_address)
 router = APIRouter()
 
 # ==========================================
-# КАТЕГОРИИ
+# КАТЕГОРИИ (ГРУППЫ)
 # ==========================================
 
-@router.get("/categories", response_model=List[schemas.CategoryOut])
-def get_categories(db: Session = Depends(get_db)):
-    return db.query(models.Category).all()
-
-@router.post("/categories", response_model=schemas.CategoryOut, status_code=201)
-def create_category(cat: schemas.CategoryCreate, db: Session = Depends(get_db)):
-    if cat.parent_id:
-        parent = db.get(models.Category, cat.parent_id)
-        if parent:
-            cat.type = parent.type
+@router.get("/groups", response_model=List[schemas.CategoryGroupOut])
+def get_groups(db: Session = Depends(get_db)):
+    """Получить все категории (группы) вместе с подкатегориями."""
+    print("📡 [BACKEND] Запрос /groups получен")
     
-    db_cat = models.Category(name=cat.name, type=cat.type, parent_id=cat.parent_id)
-    db.add(db_cat)
+    groups = db.query(models.CategoryGroup).options(
+        joinedload(models.CategoryGroup.subcategories)
+    ).all()
+    
+    result = []
+    for g in groups:
+        # Логируем состояние группы
+        print(f"   📂 Группа: {g.name} (ID: {g.id}) | Скрыта: {g.is_hidden}")
+        
+        group_dict = schemas.CategoryGroupOut.from_orm(g)
+        
+        for sub in group_dict.subcategories:
+            # Находим оригинальный объект из БД для проверки флага
+            # (на случай если ORM кэширует что-то не то, хотя не должно)
+            db_sub = next((s for s in g.subcategories if s.id == sub.id), None)
+            real_is_hidden = db_sub.is_hidden if db_sub else sub.is_hidden
+            
+            # Логируем состояние подкатегории
+            print(f"      ↳ Подкат: {sub.name} (ID: {sub.id}) | Скрыта: {real_is_hidden}")
+            
+            sub.group_name = g.name
+        
+        result.append(group_dict)
+    
+    print(f"✅ [BACKEND] Отправлено {len(result)} групп")
+    return result
+    
+@router.post("/groups", response_model=schemas.CategoryGroupOut, status_code=201)
+def create_group(group_in: schemas.CategoryGroupCreate, db: Session = Depends(get_db)):
+    db_group = models.CategoryGroup(**group_in.dict())
+    db.add(db_group)
     db.commit()
-    db.refresh(db_cat)
-    return db_cat
+    db.refresh(db_group)
+    return db_group
 
-@router.put("/categories/{cat_id}", response_model=schemas.CategoryOut)
-def update_category(cat_id: int, cat_in: schemas.CategoryCreate, db: Session = Depends(get_db)):
-    obj = db.query(models.Category).filter(models.Category.id == cat_id).first()
+@router.put("/groups/{group_id}", response_model=schemas.CategoryGroupOut)
+def update_group(group_id: int, group_in: schemas.CategoryGroupCreate, db: Session = Depends(get_db)):
+    obj = db.query(models.CategoryGroup).filter(models.CategoryGroup.id == group_id).first()
     if not obj:
-        raise HTTPException(status_code=404, detail="Not found")
-    if cat_in.name:
-        obj.name = cat_in.name
-    if cat_in.type:
-        obj.type = cat_in.type
-    if cat_in.parent_id is not None:
-        obj.parent_id = cat_in.parent_id
+        raise HTTPException(status_code=404, detail="Категория не найдена")
+    
+    for field, value in group_in.dict().items():
+        setattr(obj, field, value)
+    
     db.commit()
     db.refresh(obj)
     return obj
 
-@router.delete("/categories/{cat_id}")
-def delete_category(cat_id: int, db: Session = Depends(get_db)):
-    ids = [cat_id]
-    def find_children(pid):
-        for c in db.query(models.Category).filter(models.Category.parent_id == pid).all():
-            ids.append(c.id)
-            find_children(c.id)
-    find_children(cat_id)
+@router.delete("/groups/{group_id}")
+def delete_group(
+    group_id: int, 
+    db: Session = Depends(get_db),
+    force: bool = Query(False, description="Если True, удаляет группу и все подкатегории. Иначе - скрывает.")
+):
+    obj = db.query(models.CategoryGroup).filter(models.CategoryGroup.id == group_id).first()
+    if not obj:
+        raise HTTPException(status_code=404, detail="Категория не найдена")
     
-    db.query(models.Transaction).filter(models.Transaction.category_id.in_(ids)).delete(synchronize_session=False)
-    db.query(models.Category).filter(models.Category.id.in_(ids)).delete(synchronize_session=False)
-    db.commit()
-    return {"status": "deleted"}
-
-# ==========================================
-# СКРЫТИЕ КАТЕГОРИЙ
-# ==========================================
-
-def get_all_descendants(db: Session, parent_id: int) -> List[int]:
-    ids = []
-    children = db.query(models.Category).filter(models.Category.parent_id == parent_id).all()
-    for child in children:
-        ids.append(child.id)
-        ids.extend(get_all_descendants(db, child.id))
-    return ids
-
-@router.post("/categories/{cat_id}/hide")
-def hide_category(cat_id: int, db: Session = Depends(get_db)):
-    obj = db.query(models.Category).filter(models.Category.id == cat_id).first()
-    if not obj: raise HTTPException(404, "Not found")
-    
-    obj.is_hidden = True
-    db.commit()
-    
-    descendant_ids = get_all_descendants(db, cat_id)
-    if descendant_ids:
-        db.query(models.Category).filter(models.Category.id.in_(descendant_ids)).update({"is_hidden": True}, synchronize_session=False)
+    if force:
+        # Жесткое удаление: удалит группу и все подкатегории (cascade).
+        # Транзакции останутся, но связь с подкатегориями будет разорвана (если настроено ON DELETE SET NULL) 
+        # или удалена (если CASCADE). В моделях у нас Cascade на подкатегории, а у подкатегорий связь с транзакциями.
+        # Внимание: Если подкатегории удалятся, транзакции могут потерять категорию.
+        # В нашей модели Transaction.category_id NOT NULL, поэтому нужно быть осторожным.
+        # Лучшая стратегия при force: сначала скрыть, либо запретить удаление если есть транзакции.
+        # Для простоты пока просто удаляем группу и подкатегории. Транзакции останутся с ID несуществующей категории? 
+        # Нет, FK защитит. 
+        # РЕШЕНИЕ: При force мы просто скрываем всё глубоко, или требуем ручного удаления транзакций пользователем.
+        # Пока реализуем мягкое удаление даже для force, но с флагом permanent_hidden? 
+        # Нет, давай сделаем так: Force удаляет только если нет транзакций в подкатегориях.
+        
+        has_tx = False
+        for sub in obj.subcategories:
+            count = db.query(models.Transaction).filter(models.Transaction.category_id == sub.id).count()
+            if count > 0:
+                has_tx = True
+                break
+        
+        if has_tx:
+            raise HTTPException(status_code=400, detail="Невозможно удалить: в этой категории или подкатегориях есть транзакции. Сначала удалите их.")
+            
+        db.delete(obj)
         db.commit()
-    return {"status": "hidden"}
+        return {"status": "deleted"}
+    else:
+        # Мягкое удаление (скрытие)
+        obj.is_hidden = True
+        # Скрываем все подкатегории тоже
+        for sub in obj.subcategories:
+            sub.is_hidden = True
+        db.commit()
+        return {"status": "hidden"}
 
-@router.post("/categories/{cat_id}/unhide")
-def unhide_category(cat_id: int, db: Session = Depends(get_db)):
-    obj = db.query(models.Category).filter(models.Category.id == cat_id).first()
-    if not obj: raise HTTPException(404, "Not found")
-    
-    if obj.parent_id:
-        parent = db.get(models.Category, obj.parent_id)
-        if parent and parent.is_hidden:
-            raise HTTPException(400, detail="Сначала восстановите родителя")
+@router.post("/groups/{group_id}/unhide")
+def unhide_group(group_id: int, db: Session = Depends(get_db)):
+    obj = db.query(models.CategoryGroup).filter(models.CategoryGroup.id == group_id).first()
+    if not obj:
+        raise HTTPException(status_code=404, detail="Группа не найдена")
     
     obj.is_hidden = False
     db.commit()
+    db.refresh(obj)
+    return {"status": "unhidden"}
+
+# ==========================================
+# ПОДКАТЕГОРИИ
+# ==========================================
+
+@router.post("/subcategories", response_model=schemas.CategoryOut, status_code=201)
+def create_subcategory(sub_in: schemas.CategoryCreate, db: Session = Depends(get_db)):
+    # Проверка существования группы
+    group = db.get(models.CategoryGroup, sub_in.group_id)
+    if not group:
+        raise HTTPException(status_code=400, detail="Родительская категория не найдена")
     
-    descendant_ids = get_all_descendants(db, cat_id)
-    if descendant_ids:
-        db.query(models.Category).filter(models.Category.id.in_(descendant_ids)).update({"is_hidden": False}, synchronize_session=False)
+    db_sub = models.Category(**sub_in.dict())
+    db.add(db_sub)
+    db.commit()
+    db.refresh(db_sub)
+    
+    res = schemas.CategoryOut.from_orm(db_sub)
+    res.group_name = group.name
+    return res
+
+@router.put("/subcategories/{sub_id}", response_model=schemas.CategoryOut)
+def update_subcategory(sub_id: int, sub_in: schemas.CategoryCreate, db: Session = Depends(get_db)):
+    obj = db.query(models.Category).filter(models.Category.id == sub_id).first()
+    if not obj:
+        raise HTTPException(status_code=404, detail="Подкатегория не найдена")
+    
+    # Если меняем группу, проверяем её
+    if sub_in.group_id != obj.group_id:
+        group = db.get(models.CategoryGroup, sub_in.group_id)
+        if not group:
+            raise HTTPException(status_code=400, detail="Новая родительская категория не найдена")
+    
+    for field, value in sub_in.dict().items():
+        setattr(obj, field, value)
+        
+    db.commit()
+    db.refresh(obj)
+    
+    res = schemas.CategoryOut.from_orm(obj)
+    if obj.group:
+        res.group_name = obj.group.name
+    return res
+
+@router.delete("/subcategories/{sub_id}")
+def delete_subcategory(
+    sub_id: int,
+    db: Session = Depends(get_db),
+    force: bool = Query(False, description="Если True, удаляет подкатегорию. Иначе - скрывает.")
+):
+    obj = db.query(models.Category).filter(models.Category.id == sub_id).first()
+    if not obj:
+        raise HTTPException(status_code=404, detail="Подкатегория не найдена")
+    
+    if force:
+        # Проверка на наличие транзакций
+        count = db.query(models.Transaction).filter(models.Transaction.category_id == sub_id).count()
+        if count > 0:
+            raise HTTPException(status_code=400, detail=f"Невозможно удалить: имеется {count} транзакций. Удалите их сначала.")
+        
+        db.delete(obj)
         db.commit()
-    return {"status": "visible"}
+        return {"status": "deleted"}
+    else:
+        # Скрытие
+        obj.is_hidden = False if obj.is_hidden else True # Toggle или просто True? Давайте просто True (скрыть)
+        obj.is_hidden = True
+        db.commit()
+        return {"status": "hidden"}
+
+@router.post("/subcategories/{sub_id}/unhide")
+def unhide_subcategory(sub_id: int, db: Session = Depends(get_db)):
+    obj = db.query(models.Category).filter(models.Category.id == sub_id).first()
+    if not obj:
+        raise HTTPException(status_code=404, detail="Подкатегория не найдена")
+    
+    # Проверка: скрыт ли родитель? (Опционально, по вашему ТЗ)
+    # if obj.group and obj.group.is_hidden:
+    #     raise HTTPException(status_code=400, detail="Сначала восстановите родительскую категорию")
+        
+    obj.is_hidden = False
+    db.commit()
+    db.refresh(obj)
+    return {"status": "unhidden"}
 
 # ==========================================
-# ТРАНЗАКЦИИ
+# ТРАНЗАКЦИИ (Обновлено для новых путей)
 # ==========================================
 
-def make_tx_resp(t):
+def make_tx_resp(t, current_balance=None):
     if not t:
         return None
     
-    path = t.category.name if t.category else "No Cat"
-    if t.category and t.category.parent:
-        path = f"{t.category.parent.name} / {t.category.name}"
+    # Формирование пути: "Категория / Подкатегория"
+    path = "Нет категории"
+    if t.category:
+        sub_name = t.category.name
+        group_name = t.category.group.name if t.category.group else "Без категории"
+        path = f"{group_name} / {sub_name}"
     
-    if isinstance(t.date, datetime):
-        date_str = t.date.strftime("%Y-%m-%dT%H:%M:%S")
-    else:
-        date_str = str(t.date)
-        
+    date_str = t.date.strftime("%Y-%m-%dT%H:%M:%S") if isinstance(t.date, datetime) else str(t.date)
+    
     creator_display_name = "Неизвестно"
     if t.creator_name_snapshot:
         creator_display_name = t.creator_name_snapshot
     elif t.creator:
         creator_display_name = t.creator.name
-    else:
-        creator_display_name = "Пользователь (удален)"
-        
-    return schemas.TransactionOut(
+    
+    resp = schemas.TransactionOut(
         id=t.id, 
         amount=t.amount, 
         transaction_type=t.transaction_type,
@@ -142,31 +248,30 @@ def make_tx_resp(t):
         description=t.description,
         date=date_str,
         creator_name=creator_display_name,
-        category_name=path
+        full_category_path=path
     )
+    if current_balance is not None:
+        resp.balance = current_balance
+    return resp
 
 @router.get("/transactions", response_model=List[schemas.TransactionOut])
 def get_transactions(response: Response, db: Session = Depends(get_db)):
     response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
-    response.headers["Pragma"] = "no-cache"
-    response.headers["Expires"] = "0"
     
-    all_txs = db.query(models.Transaction).order_by(models.Transaction.date.asc()).all()
+    # Загружаем сразу связи, чтобы не было N+1 запросов
+    all_txs = db.query(models.Transaction).options(
+        joinedload(models.Transaction.category).joinedload(models.Category.group)
+    ).order_by(models.Transaction.date.asc()).all()
     
     current_balance = 0.0
-    calculated_data = []
+    result = []
     
     for t in all_txs:
         current_balance += t.amount
-        calculated_data.append({'tx': t, 'balance': current_balance})
-    
-    result = []
-    for item in reversed(calculated_data):
-        resp = make_tx_resp(item['tx'])
-        resp.balance = item['balance']
+        resp = make_tx_resp(t, current_balance)
         result.append(resp)
         
-    return result
+    return list(reversed(result))
 
 @router.post("/transactions", response_model=schemas.TransactionOut, status_code=201)
 def create_transaction(
@@ -174,26 +279,59 @@ def create_transaction(
     db: Session = Depends(get_db),
     current_user: models.User = Depends(get_current_user)
 ):
+    # Если категория не передана, используем заглушку
+    category_id = tx.category_id
+    
+    if category_id is None:
+        if hasattr(app.state, 'default_category_id'):
+            category_id = app.state.default_category_id
+        else:
+            # Фолбэк: ищем вручную, если вдруг app.state не заполнен
+            default_group = db.query(models.CategoryGroup).filter(models.CategoryGroup.name == "Без категории").first()
+            if default_group:
+                default_sub = db.query(models.Category).filter(models.Category.group_id == default_group.id).first()
+                if default_sub:
+                    category_id = default_sub.id
+            
+            if category_id is None:
+                raise HTTPException(status_code=500, detail="Системная ошибка: не найдена категория по умолчанию")
+
+    # Проверка существования категории (на всякий случай)
+    cat = db.get(models.Category, category_id)
+    if not cat:
+        raise HTTPException(status_code=400, detail="Подкатегория не найдена")
+    
     db_tx = models.Transaction(
         amount=tx.amount, 
         transaction_type=tx.transaction_type,
-        category_id=tx.category_id, 
+        category_id=category_id, # Используем проверенный ID
         description=tx.description,
         date=tx.date, 
         created_by_user_id=current_user.id,
         creator_name_snapshot=current_user.name
     )
+    
     db.add(db_tx)
     db.commit()
     db.refresh(db_tx)
-    resp = make_tx_resp(db_tx)
-    if resp is None:
-        raise HTTPException(status_code=500, detail="Ошибка создания")
-    return resp
     
+    # Пересчитываем баланс для ответа (упрощенно, можно оптимизировать)
+    # Для точности лучше вернуть просто объект, а баланс считать на фронте или отдельным запросом
+    # Но оставим как было для совместимости
+    all_txs = db.query(models.Transaction).order_by(models.Transaction.date.asc()).all()
+    bal = 0.0
+    for t in all_txs:
+        bal += t.amount
+        if t.id == db_tx.id:
+            return make_tx_resp(db_tx, bal)
+            
+    return make_tx_resp(db_tx)
+
 @router.get("/transactions/{tx_id}", response_model=schemas.TransactionOut)
 def get_transaction(tx_id: int, db: Session = Depends(get_db)):
-    t = db.query(models.Transaction).filter(models.Transaction.id == tx_id).first()
+    t = db.query(models.Transaction).options(
+        joinedload(models.Transaction.category).joinedload(models.Category.group)
+    ).filter(models.Transaction.id == tx_id).first()
     if not t:
         raise HTTPException(status_code=404, detail="Not found")
     return make_tx_resp(t)
@@ -210,10 +348,7 @@ def update_transaction(tx_id: int, tx: schemas.TransactionUpdate, db: Session = 
     
     db.commit()
     db.refresh(obj)
-    resp = make_tx_resp(obj)
-    if resp is None:
-        raise HTTPException(status_code=500, detail="Ошибка сериализации")
-    return resp
+    return make_tx_resp(obj)
 
 @router.delete("/transactions/{tx_id}")
 def delete_transaction(tx_id: int, db: Session = Depends(get_db)):
@@ -226,15 +361,17 @@ def delete_transaction(tx_id: int, db: Session = Depends(get_db)):
     return {"status": "deleted"}
 
 # ==========================================
-# ЭКСПОРТ В EXCEL (ОБНОВЛЕННЫЙ)
+# ЭКСПОРТ (Обновлен под новые поля)
 # ==========================================
 
 @router.get("/export/excel")
+@limiter.limit("3/minute")
 def export_budget_excel(
-    start_date: str = Query(None),
-    end_date: str = Query(None),
+    request: Request,
+    start_date: str = None,
+    end_date: str = None,
     db: Session = Depends(get_db),
-    current_user: models.User = Depends(get_current_user)
+    current_user: User = Depends(get_current_user)
 ):
     query = db.query(models.Transaction).filter(models.Transaction.created_by_user_id == current_user.id)
     
@@ -258,27 +395,23 @@ def export_budget_excel(
     ws = wb.active
     ws.title = "Budget History"
     
-    # Заголовки
     headers = ["ID", "Date", "Amount", "Type", "Category", "Subcategory", "Description", "Creator"]
     ws.append(headers)
     
-    # Стили для заголовков
     header_fill = PatternFill(start_color="4F81BD", end_color="4F81BD", fill_type="solid")
     header_font = Font(bold=True, color="FFFFFF")
     header_alignment = Alignment(horizontal="center", vertical="center")
     thin_border = Border(left=Side(style='thin'), right=Side(style='thin'), top=Side(style='thin'), bottom=Side(style='thin'))
     
-    # Применяем стили к заголовкам
     for cell in ws[1]:
         cell.fill = header_fill
         cell.font = header_font
         cell.alignment = header_alignment
         cell.border = thin_border
         
-    # Данные
     for t in transactions:
-        cat_name = t.category.name if t.category else ""
-        subcat_name = t.category.parent.name if (t.category and t.category.parent) else ""
+        cat_name = t.category.group.name if (t.category and t.category.group) else ""
+        subcat_name = t.category.name if t.category else ""
         
         date_val = t.date.strftime("%Y-%m-%d %H:%M") if isinstance(t.date, datetime) else str(t.date)
         
@@ -294,7 +427,6 @@ def export_budget_excel(
         ]
         ws.append(row)
     
-    # Авто-ширина колонок
     for col in ws.columns:
         max_length = 0
         column = col[0].column_letter
@@ -305,13 +437,10 @@ def export_budget_excel(
             except:
                 pass
         adjusted_width = (max_length + 2)
-        ws.column_dimensions[column].width = min(adjusted_width, 50) # Макс 50 символов
+        ws.column_dimensions[column].width = min(adjusted_width, 50)
         
-    # Заморозка шапки
     ws.freeze_panes = "A2"
     
-    # Создание умной таблицы (с фильтрами)
-    # Диапазон таблицы: от A1 до последней заполненной ячейки
     max_row = ws.max_row
     max_col = ws.max_column
     tab_ref = f"A1:{ws.cell(row=max_row, column=max_col).coordinate}"
@@ -322,7 +451,6 @@ def export_budget_excel(
     
     ws.add_table(table)
     
-    # Сохранение в буфер
     buffer = io.BytesIO()
     wb.save(buffer)
     buffer.seek(0)

@@ -1,34 +1,34 @@
-def get_token(client, name):
-    resp = client.post("/auth/login", json={"name": name})
-    return resp.json()["access_token"]
-
-def test_create_category(client, test_user):
-    token = get_token(client, test_user["name"])
-    headers = {"Authorization": f"Bearer {token}"}
-    
-    response = client.post("/budget/categories", json={
-        "name": "Еда",
+def create_group_and_subcategory(client, headers, group_name="Еда", subcategory_name="Продукты"):
+    group_resp = client.post("/budget/groups", json={
+        "name": group_name,
         "type": "expense"
     }, headers=headers)
-    assert response.status_code in [200, 201]
-    assert response.json()["name"] == "Еда"
+    assert group_resp.status_code in [200, 201]
+    group_id = group_resp.json()["id"]
+
+    sub_resp = client.post("/budget/subcategories", json={
+        "name": subcategory_name,
+        "group_id": group_id
+    }, headers=headers)
+    assert sub_resp.status_code in [200, 201]
+    return group_resp.json(), sub_resp.json()
+
+
+def test_create_group_and_subcategory(client, test_user):
+    token = test_user["access_token"]
+    headers = {"Authorization": f"Bearer {token}"}
+
+    group, sub = create_group_and_subcategory(client, headers, group_name="Еда", subcategory_name="Продукты")
+    assert group["name"] == "Еда"
+    assert sub["name"] == "Продукты"
+    assert sub["group_id"] == group["id"]
 
 def test_create_transaction(client, test_user):
-    token = get_token(client, test_user["name"])
+    token = test_user["access_token"]
     headers = {"Authorization": f"Bearer {token}"}
-    
-    # Создаем категорию
-    cat_resp = client.post("/budget/categories", json={"name": "Тест", "type": "expense"}, headers=headers)
-    assert cat_resp.status_code in [200, 201]
-    cat_data = cat_resp.json()
-    cat_id = cat_data.get("id")
-    
-    # Если ID нет в ответе, берем из списка
-    if not cat_id:
-        cats = client.get("/budget/categories", headers=headers).json()
-        cat_id = cats[-1]["id"] if cats else None
-    
-    assert cat_id is not None
+
+    _, sub = create_group_and_subcategory(client, headers, group_name="Тест", subcategory_name="Подкатегория")
+    cat_id = sub["id"]
 
     # Исправленный запрос транзакции
     response = client.post("/budget/transactions", json={
@@ -46,7 +46,7 @@ def test_create_transaction(client, test_user):
     assert response.json()["amount"] == 100.50
 
 def test_get_transactions(client, test_user):
-    token = get_token(client, test_user["name"])
+    token = test_user["access_token"]
     headers = {"Authorization": f"Bearer {token}"}
     
     response = client.get("/budget/transactions", headers=headers)
@@ -54,15 +54,11 @@ def test_get_transactions(client, test_user):
     assert isinstance(response.json(), list)
 
 def test_delete_transaction(client, test_user):
-    token = get_token(client, test_user["name"])
+    token = test_user["access_token"]
     headers = {"Authorization": f"Bearer {token}"}
-    
-    # Создаем категорию
-    cat_resp = client.post("/budget/categories", json={"name": "DelCat", "type": "expense"}, headers=headers)
-    cat_id = cat_resp.json().get("id")
-    if not cat_id:
-        cats = client.get("/budget/categories", headers=headers).json()
-        cat_id = cats[-1]["id"]
+
+    _, sub = create_group_and_subcategory(client, headers, group_name="DelCat", subcategory_name="DelSub")
+    cat_id = sub["id"]
 
     # Создаем транзакцию
     tr_resp = client.post("/budget/transactions", json={
@@ -86,3 +82,27 @@ def test_delete_transaction(client, test_user):
     
     del_resp = client.delete(f"/budget/transactions/{tr_id}", headers=headers)
     assert del_resp.status_code == 200
+
+
+def test_budget_export_excel_with_date_filters(client, test_user):
+    token = test_user["access_token"]
+    headers = {"Authorization": f"Bearer {token}"}
+
+    _, sub = create_group_and_subcategory(client, headers, group_name="Экспорт", subcategory_name="Фильтр")
+
+    tx_resp = client.post("/budget/transactions", json={
+        "amount": 123.45,
+        "category_id": sub["id"],
+        "description": "Экспортная транзакция",
+        "date": "2026-04-10T12:00:00",
+        "transaction_type": "expense"
+    }, headers=headers)
+    assert tx_resp.status_code in [200, 201]
+
+    export_resp = client.get(
+        "/budget/export/excel?start_date=2026-04-01T00:00:00&end_date=2026-04-30T23:59:59",
+        headers=headers
+    )
+    assert export_resp.status_code == 200
+    assert "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" in export_resp.headers.get("content-type", "")
+    assert "attachment; filename=budget_export_" in export_resp.headers.get("content-disposition", "")

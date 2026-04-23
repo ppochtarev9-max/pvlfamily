@@ -1,33 +1,34 @@
 import SwiftUI
 
+// ⚠️ ВСТАВЬ СЮДА ID, КОТОРЫЙ ВЫДАСТ СКРИПТ ПОСЛЕ УСПЕШНОГО ЗАПУСКА
+let DEFAULT_SUBCATEGORY_ID = 110
+
 struct TransactionFormView: View {
     @EnvironmentObject var authManager: AuthManager
     @Binding var isPresented: Bool
-    let categories: [BudgetView.Category]
+    let categoryGroups: [BudgetView.CategoryGroup]
     let transactionToEdit: BudgetView.Transaction?
-    let onSave: (Int?, Double, String, Int, String, Date) -> Void
+    let onSave: (Int?, Double, String, Int?, String, Date) -> Void
     let onDelete: (Int) -> Void
     
-    // Состояния данных
     @State private var amount: String = ""
     @State private var type: String = "expense"
-    @State private var selectedCategoryId: Int? = nil
+    @State private var selectedGroupId: Int? = nil
     @State private var selectedSubcategoryId: Int? = nil
     @State private var note: String = ""
     @State private var date: Date = Date()
     
-    // Состояния UI и ошибок
     @State private var isLoading = false
     @State private var isSaving = false
     @State private var errorMessage: String?
     @State private var showErrorAlert = false
+    @State private var showingCategorySheet = false
     
-    // Управление фокусом
     @FocusState private var isAmountFocused: Bool
     
-    init(isPresented: Binding<Bool>, categories: [BudgetView.Category], transactionToEdit: BudgetView.Transaction?, onSave: @escaping (Int?, Double, String, Int, String, Date) -> Void, onDelete: @escaping (Int) -> Void) {
+    init(isPresented: Binding<Bool>, categoryGroups: [BudgetView.CategoryGroup], transactionToEdit: BudgetView.Transaction?, onSave: @escaping (Int?, Double, String, Int?, String, Date) -> Void, onDelete: @escaping (Int) -> Void) {
         self._isPresented = isPresented
-        self.categories = categories
+        self.categoryGroups = categoryGroups
         self.transactionToEdit = transactionToEdit
         self.onSave = onSave
         self.onDelete = onDelete
@@ -36,29 +37,33 @@ struct TransactionFormView: View {
             _amount = State(initialValue: String(format: "%.2f", abs(t.amount)))
             _type = State(initialValue: t.transaction_type)
             _note = State(initialValue: t.description ?? "")
-            _date = State(initialValue: Date()) // Будет перезаписано в loadDetails
+            _date = State(initialValue: Date())
             
-            if let cat = categories.first(where: { $0.id == t.category_id }) {
-                if let pid = cat.parent_id {
-                    _selectedCategoryId = State(initialValue: pid)
-                    _selectedSubcategoryId = State(initialValue: t.category_id)
-                } else {
-                    _selectedCategoryId = State(initialValue: t.category_id)
-                    _selectedSubcategoryId = State(initialValue: nil)
-                }
-            } else {
-                _selectedCategoryId = State(initialValue: t.category_id)
+            if let gid = findGroupId(forSubcategoryId: t.category_id, in: categoryGroups) {
+                _selectedGroupId = State(initialValue: gid)
+                _selectedSubcategoryId = State(initialValue: t.category_id)
             }
         }
     }
     
-    var subCategories: [BudgetView.Category] {
-        guard let catId = selectedCategoryId else { return [] }
-        return categories.filter { $0.parent_id == catId && $0.type == type }
+    func findGroupId(forSubcategoryId subId: Int, in groups: [BudgetView.CategoryGroup]) -> Int? {
+        for g in groups {
+            if g.subcategories.contains(where: { $0.id == subId }) {
+                return g.id
+            }
+        }
+        return nil
     }
     
+    var availableSubcategories: [BudgetView.SubCategory] {
+        guard let gid = selectedGroupId,
+              let group = categoryGroups.first(where: { $0.id == gid }) else { return [] }
+        return group.subcategories.filter { !$0.is_hidden }
+    }
+    
+    // Если ничего не выбрано, возвращаем nil (логика заглушки будет в submit)
     var finalCategoryId: Int? {
-        selectedSubcategoryId ?? selectedCategoryId
+        return selectedSubcategoryId
     }
     
     var body: some View {
@@ -66,15 +71,12 @@ struct TransactionFormView: View {
             ScrollView {
                 VStack(spacing: 20) {
                     if isLoading {
-                        ProgressView("Загрузка данных транзакции...")
-                            .frame(maxWidth: .infinity, minHeight: 200)
+                        ProgressView("Загрузка...").frame(maxWidth: .infinity, minHeight: 200)
                     } else {
-                        // --- БЛОК 1: СУММА И ТИП ---
+                        // СУММА И ТИП
                         VStack(spacing: 16) {
                             TextField("0.00", text: $amount)
                                 .keyboardType(.decimalPad)
-                                .textInputAutocapitalization(.never)
-                                .autocorrectionDisabled(true)
                                 .focused($isAmountFocused)
                                 .font(.system(size: 48, weight: .bold, design: .rounded))
                                 .foregroundColor(type == "income" ? .green : .red)
@@ -82,23 +84,10 @@ struct TransactionFormView: View {
                                 .padding()
                                 .background(Color(.systemBackground))
                                 .cornerRadius(20)
-                                .shadow(color: Color.black.opacity(0.05), radius: 5, x: 0, y: 2)
-                                .overlay(
-                                    RoundedRectangle(cornerRadius: 20)
-                                        .strokeBorder(type == "income" ? Color.green.opacity(0.3) : Color.red.opacity(0.3), lineWidth: 2)
-                                )
+                                .overlay(RoundedRectangle(cornerRadius: 20).strokeBorder(type == "income" ? Color.green.opacity(0.3) : Color.red.opacity(0.3), lineWidth: 2))
                                 .disabled(isSaving)
-                                .onAppear {
-                                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
-                                        isAmountFocused = true
-                                    }
-                                }
-                                .onChange(of: amount) { oldValue, newValue in
-                                    let allowed = CharacterSet(charactersIn: "0123456789.,")
-                                    if newValue.rangeOfCharacter(from: allowed.inverted) != nil {
-                                        amount = newValue.filter { allowed.contains($0.unicodeScalars.first!) }
-                                    }
-                                }
+                                .onAppear { DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { isAmountFocused = true } }
+                            
                             Picker("Тип операции", selection: $type) {
                                 Text("Расход").tag("expense")
                                 Text("Доход").tag("income")
@@ -107,50 +96,30 @@ struct TransactionFormView: View {
                             .tint(type == "income" ? .green : .red)
                             .disabled(isSaving)
                             .onChange(of: type) { _, _ in
-                                selectedCategoryId = nil
+                                selectedGroupId = nil
                                 selectedSubcategoryId = nil
                             }
-                            .overlay(
-                                HStack {
-                                    Spacer()
-                                    Image(systemName: type == "income" ? "arrow.up.circle.fill" : "arrow.down.circle.fill")
-                                        .foregroundColor(type == "income" ? .green : .red)
-                                        .font(.title3)
-                                        .padding(.trailing, 12)
-                                        .allowsHitTesting(false)
-                                    Spacer()
-                                }
-                                .opacity(0.6)
-                              )
                         }
                         .padding(.horizontal)
                         
-                        // --- БЛОК 2: КАТЕГОРИЯ ---
+                        // КАТЕГОРИЯ
                         VStack(alignment: .leading, spacing: 12) {
                             Text("Категория").font(.headline).foregroundColor(.secondary).padding(.horizontal, 4)
                             
-                            Menu {
-                                ForEach(categories.filter { $0.parent_id == nil && $0.type == type }) { cat in
-                                    Button(action: {
-                                        selectedCategoryId = cat.id
-                                        selectedSubcategoryId = nil
-                                    }) {
-                                        HStack {
-                                            Text(cat.name)
-                                            Spacer()
-                                            if selectedCategoryId == cat.id && selectedSubcategoryId == nil {
-                                                Image(systemName: "checkmark").foregroundColor(.blue)
-                                            }
-                                        }
-                                    }
-                                }
-                            } label: {
+                            Button(action: { showingCategorySheet = true }) {
                                 HStack {
                                     Image(systemName: "tag.fill").foregroundColor(.blue)
-                                    Text(selectedCategoryId != nil ? (categories.first(where: { $0.id == selectedCategoryId })?.name ?? "Выберите категорию") : "Выберите категорию")
-                                        .foregroundColor(selectedCategoryId != nil ? .primary : .secondary)
+                                    if let gid = selectedGroupId, let group = categoryGroups.first(where: { $0.id == gid }) {
+                                        if let sid = selectedSubcategoryId, let sub = group.subcategories.first(where: { $0.id == sid }) {
+                                            Text("\(group.name) / \(sub.name)").foregroundColor(.primary)
+                                        } else {
+                                            Text("\(group.name) (выберите подкатегорию)").foregroundColor(.orange)
+                                        }
+                                    } else {
+                                        Text("Выберите категорию").foregroundColor(.secondary)
+                                    }
                                     Spacer()
-                                    Image(systemName: "chevron.down").font(.caption).foregroundColor(.gray)
+                                    Image(systemName: "chevron.right").font(.caption).foregroundColor(.gray)
                                 }
                                 .padding()
                                 .background(Color(.systemBackground))
@@ -158,98 +127,45 @@ struct TransactionFormView: View {
                                 .shadow(color: Color.black.opacity(0.05), radius: 5, x: 0, y: 2)
                             }
                             .disabled(isSaving)
-                            
-                            if let _ = selectedCategoryId, !subCategories.isEmpty {
-                                Menu {
-                                    ForEach(subCategories) { sub in
-                                        Button(action: {
-                                            selectedSubcategoryId = sub.id
-                                        }) {
-                                            HStack {
-                                                Text("↳ " + sub.name)
-                                                Spacer()
-                                                if selectedSubcategoryId == sub.id {
-                                                    Image(systemName: "checkmark").foregroundColor(.blue)
-                                                }
-                                            }
-                                        }
-                                    }
-                                } label: {
-                                    HStack {
-                                        Image(systemName: "tag.fill").foregroundColor(.orange)
-                                        Text(selectedSubcategoryId != nil ? (subCategories.first(where: { $0.id == selectedSubcategoryId })?.name ?? "Подкатегория") : "Все подкатегории")
-                                            .foregroundColor(selectedSubcategoryId != nil ? .primary : .secondary)
-                                        Spacer()
-                                        Image(systemName: "chevron.down").font(.caption).foregroundColor(.gray)
-                                    }
-                                    .padding()
-                                    .background(Color(.systemBackground))
-                                    .cornerRadius(16)
-                                    .shadow(color: Color.black.opacity(0.05), radius: 5, x: 0, y: 2)
-                                }
-                                .disabled(isSaving)
-                            } else if selectedCategoryId != nil {
-                                Text("Нет подкатегорий").font(.caption).foregroundColor(.secondary).padding(.horizontal, 4)
-                            }
                         }
                         .padding(.horizontal)
                         
-                        // --- БЛОК 3: ДАТА И ЗАМЕТКА ---
+                        // ДАТА И ЗАМЕТКА
                         VStack(alignment: .leading, spacing: 12) {
                             Text("Детали").font(.headline).foregroundColor(.secondary).padding(.horizontal, 4)
-                            
                             DatePicker("Дата операции", selection: $date, displayedComponents: .date)
                                 .datePickerStyle(.compact)
                                 .padding()
                                 .background(Color(.systemBackground))
                                 .cornerRadius(16)
-                                .shadow(color: Color.black.opacity(0.05), radius: 5, x: 0, y: 2)
                                 .disabled(isSaving)
-                            
-                            TextField("Заметка (необязательно)", text: $note)
+                            TextField("Заметка", text: $note)
                                 .padding()
                                 .background(Color(.systemBackground))
                                 .cornerRadius(16)
-                                .shadow(color: Color.black.opacity(0.05), radius: 5, x: 0, y: 2)
                                 .disabled(isSaving)
                         }
                         .padding(.horizontal)
                                                                         
-                        // --- КНОПКИ ДЕЙСТВИЙ ---
+                        // КНОПКИ
                         VStack(spacing: 12) {
                             Button(action: submit) {
                                 HStack {
-                                    if isSaving {
-                                        ProgressView()
-                                            .progressViewStyle(CircularProgressViewStyle(tint: .white))
-                                            .scaleEffect(0.8)
-                                    } else {
-                                        Image(systemName: transactionToEdit == nil ? "plus.circle.fill" : "checkmark.circle.fill")
-                                    }
-                                    Text(isSaving ? "Сохранение..." : (transactionToEdit == nil ? "Создать операцию" : "Сохранить изменения"))
-                                        .fontWeight(.bold)
+                                    if isSaving { ProgressView().scaleEffect(0.8) }
+                                    else { Image(systemName: transactionToEdit == nil ? "plus.circle.fill" : "checkmark.circle.fill") }
+                                    Text(isSaving ? "Сохранение..." : (transactionToEdit == nil ? "Создать" : "Сохранить")).fontWeight(.bold)
                                 }
                                 .frame(maxWidth: .infinity)
                                 .padding()
-                                .background(amount.isEmpty || finalCategoryId == nil ? Color.gray : (type == "income" ? Color.green : Color.red))
+                                .background((type == "income" ? Color.green : Color.red))
                                 .foregroundColor(.white)
                                 .cornerRadius(20)
-                                .shadow(color: (type == "income" ? Color.green : Color.red).opacity(0.4), radius: 10, x: 0, y: 5)
                             }
-                            .disabled(amount.isEmpty || finalCategoryId == nil || isSaving)
-                            .animation(.easeInOut, value: amount.isEmpty)
+                            .disabled(isSaving) // Убрали проверку finalCategoryId == nil, так как теперь есть заглушка
                             
                             if transactionToEdit != nil {
-                                Button(role: .destructive, action: {
-                                    if let t = transactionToEdit {
-                                        onDelete(t.id)
-                                        // Не закрываем форму сразу, ждем ответа от сервера в onDelete
-                                    }
-                                }) {
-                                    HStack {
-                                        Image(systemName: "trash.fill")
-                                        Text("Удалить транзакцию")
-                                    }
+                                Button(role: .destructive, action: { if let t = transactionToEdit { onDelete(t.id) } }) {
+                                    HStack { Image(systemName: "trash.fill"); Text("Удалить") }
                                     .frame(maxWidth: .infinity)
                                     .padding()
                                     .background(Color.red.opacity(0.1))
@@ -260,8 +176,6 @@ struct TransactionFormView: View {
                             }
                         }
                         .padding(.horizontal)
-                        .padding(.top, 10)
-                        
                         Spacer(minLength: 40)
                     }
                 }
@@ -271,32 +185,25 @@ struct TransactionFormView: View {
             .navigationTitle(transactionToEdit == nil ? "Новая операция" : "Редактирование")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
-                ToolbarItem(placement: .cancellationAction) {
-                    Button("Отмена") { isPresented = false }
-                        .disabled(isSaving)
-                }
+                ToolbarItem(placement: .cancellationAction) { Button("Отмена") { isPresented = false }.disabled(isSaving) }
             }
-            .alert("Ошибка", isPresented: $showErrorAlert) {
-                Button("OK", role: .cancel) { errorMessage = nil }
-            } message: {
-                Text(errorMessage ?? "Неизвестная ошибка")
+            .alert("Ошибка", isPresented: $showErrorAlert) { Button("OK") { errorMessage = nil } } message: { Text(errorMessage ?? "") }
+            .sheet(isPresented: $showingCategorySheet) {
+                CategorySelectionView(
+                    groups: categoryGroups,
+                    selectedGroupId: $selectedGroupId,
+                    selectedSubcategoryId: $selectedSubcategoryId,
+                    filterType: type,
+                    onSelect: {}
+                )
             }
-            .task {
-                if let t = transactionToEdit {
-                    await loadDetails(id: t.id)
-                }
-            }
+            .task { if let t = transactionToEdit { await loadDetails(id: t.id) } }
         }
     }
     
     func loadDetails(id: Int) async {
         isLoading = true
-        guard let token = authManager.token else {
-            errorMessage = "Пользователь не авторизован"
-            showErrorAlert = true
-            isLoading = false
-            return
-        }
+        guard let token = authManager.token else { errorMessage = "Нет токена"; showErrorAlert = true; isLoading = false; return }
         
         let url = "\(authManager.baseURL)/budget/transactions/\(id)"
         var req = URLRequest(url: URL(string: url)!)
@@ -304,10 +211,7 @@ struct TransactionFormView: View {
         
         do {
             let (data, response) = try await URLSession.shared.data(for: req)
-            
-            guard let httpResponse = response as? HTTPURLResponse, (200...299).contains(httpResponse.statusCode) else {
-                throw NSError(domain: "Server", code: -1, userInfo: [NSLocalizedDescriptionKey: "Ошибка сервера"])
-            }
+            guard let httpResponse = response as? HTTPURLResponse, (200...299).contains(httpResponse.statusCode) else { throw NSError(domain: "Server", code: -1) }
             
             let tx = try JSONDecoder().decode(BudgetView.Transaction.self, from: data)
             
@@ -318,31 +222,14 @@ struct TransactionFormView: View {
                 
                 let iso = ISO8601DateFormatter()
                 iso.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
-                if let d = iso.date(from: tx.date) {
-                    self.date = d
-                } else {
-                    let df = DateFormatter()
-                    df.dateFormat = "yyyy-MM-dd'T'HH:mm:ss"
-                    df.locale = Locale(identifier: "en_US_POSIX")
-                    if let d = df.date(from: tx.date) { self.date = d }
-                }
+                if let d = iso.date(from: tx.date) { self.date = d }
                 
-                if let cat = categories.first(where: { $0.id == tx.category_id }) {
-                    if let pid = cat.parent_id {
-                        self.selectedCategoryId = pid
-                        self.selectedSubcategoryId = tx.category_id
-                    } else {
-                        self.selectedCategoryId = tx.category_id
-                        self.selectedSubcategoryId = nil
-                    }
-                } else {
-                    self.selectedCategoryId = tx.category_id
+                if let gid = findGroupId(forSubcategoryId: tx.category_id, in: categoryGroups) {
+                    self.selectedGroupId = gid
+                    self.selectedSubcategoryId = tx.category_id
                 }
-                
                 self.isLoading = false
-                DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
-                    self.isAmountFocused = true
-                }
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { self.isAmountFocused = true }
             }
         } catch {
             DispatchQueue.main.async {
@@ -354,24 +241,25 @@ struct TransactionFormView: View {
     }
     
     func submit() {
-        guard let val = Double(amount.replacingOccurrences(of: ",", with: ".")) else {
-            errorMessage = "Неверный формат суммы"
-            showErrorAlert = true
-            return
-        }
+        guard let val = Double(amount.replacingOccurrences(of: ",", with: ".")) else { errorMessage = "Неверная сумма"; showErrorAlert = true; return }
         let finalAmt = type == "expense" ? -abs(val) : abs(val)
-        guard let catId = finalCategoryId else {
-            errorMessage = "Выберите категорию"
-            showErrorAlert = true
-            return
+        
+        // ЛОГИКА ЗАГЛУШКИ:
+        // Если пользователь ничего не выбрал (selectedSubcategoryId == nil), подставляем ID заглушки.
+        // Но только если заглушка существует (ID != 999).
+        var finalCatId: Int? = selectedSubcategoryId
+        
+        if finalCatId == nil {
+            if DEFAULT_SUBCATEGORY_ID != 999 {
+                finalCatId = DEFAULT_SUBCATEGORY_ID
+            } else {
+                errorMessage = "Ошибка конфигурации: не настроена категория-заглушка. Обратитесь к администратору."
+                showErrorAlert = true
+                return
+            }
         }
         
         isSaving = true
-        onSave(transactionToEdit?.id, finalAmt, type, catId, note, date)
-    }
-    
-    // Вспомогательный метод для вызова из onSave родителем, если нужно разблокировать форму
-    func setSaving(_ saving: Bool) {
-        self.isSaving = saving
+        onSave(transactionToEdit?.id, finalAmt, type, finalCatId, note, date)
     }
 }

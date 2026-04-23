@@ -14,6 +14,13 @@ from .models import BabyLog, User
 from .schemas import BabyLogCreate, BabyLogOut, BabyLogUpdate
 from .auth import get_current_user
 
+from fastapi import Request
+from slowapi import Limiter
+from slowapi.util import get_remote_address
+from .auth import get_current_user
+from .models import User
+
+limiter = Limiter(key_func=get_remote_address)
 router = APIRouter()
 
 def get_utc_now():
@@ -253,9 +260,11 @@ def delete_log(
 # ==========================================
 
 @router.get("/export/excel")
+@limiter.limit("3/minute")
 def export_tracker_excel(
-    start_date: str = Query(None),
-    end_date: str = Query(None),
+    request: Request,
+    start_date: str = None,
+    end_date: str = None,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):

@@ -14,19 +14,37 @@ class UserOut(UserBase):
     created_at: datetime
     model_config = ConfigDict(from_attributes=True)
 
-# --- Category Schemas ---
+# --- Category Group Schemas (КАТЕГОРИИ) ---
+class CategoryGroupBase(BaseModel):
+    name: str
+    type: str # "income" или "expense"
+
+class CategoryGroupCreate(CategoryGroupBase):
+    pass
+
+class CategoryGroupOut(CategoryGroupBase):
+    id: int
+    is_hidden: bool = False
+    # Вложенный список подкатегорий для удобства
+    subcategories: List["CategoryOut"] = []
+    model_config = ConfigDict(from_attributes=True)
+
+# --- Category Schemas (ПОДКАТЕГОРИИ) ---
 class CategoryBase(BaseModel):
     name: str
-    type: str
+    group_id: int
 
 class CategoryCreate(CategoryBase):
-    parent_id: Optional[int] = None
+    pass
 
 class CategoryOut(CategoryBase):
-    is_hidden: bool = False
     id: int
-    parent_id: Optional[int] = None
+    is_hidden: bool = False
+    group_name: Optional[str] = None # Имя родительской категории для отображения
     model_config = ConfigDict(from_attributes=True)
+
+# Обновляем ForwardRef для циклической зависимости
+CategoryGroupOut.model_rebuild()
 
 # --- Transaction Schemas ---
 class TransactionBase(BaseModel):
@@ -50,13 +68,12 @@ class TransactionOut(TransactionBase):
     id: int
     created_by_user_id: Optional[int] = None
     balance: Optional[float] = None
-    category_name: Optional[str] = None
-    full_category_path: str = ""
-    # Это поле будет содержать либо реальное имя, либо "Имя (удален)"
+    # Путь: "Категория / Подкатегория"
+    full_category_path: str = "" 
     creator_name: Optional[str] = None
     model_config = ConfigDict(from_attributes=True)
 
-# --- Calendar Event Schemas ---
+# --- Остальные схемы без изменений ---
 class EventBase(BaseModel):
     title: str
     description: Optional[str] = None
@@ -69,11 +86,9 @@ class EventCreate(EventBase):
 class EventResponse(EventBase):
     id: int
     user_id: Optional[int] = None
-    # Добавлено поле для имени создателя
     creator_name: Optional[str] = None
     model_config = ConfigDict(from_attributes=True)
 
-# --- Baby Tracker Schemas ---
 class BabyLogBase(BaseModel):
     event_type: str
     start_time: datetime
@@ -93,8 +108,6 @@ class BabyLogOut(BabyLogBase):
     user_id: Optional[int] = None
     duration_minutes: int = 0
     created_at: datetime
-    # Добавлено поле для имени создателя
     creator_name: Optional[str] = None
-    # Новое поле: активно ли событие (нет end_time)
     is_active: bool = False    
     model_config = ConfigDict(from_attributes=True)

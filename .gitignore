@@ -18,6 +18,8 @@ COMMANDS_full.md
 # Editors
 .vscode/
 .idea/
+*.xcuserstate
+iOS/**/*.xcuserdatad/
 
 # Dependencies
 node_modules/

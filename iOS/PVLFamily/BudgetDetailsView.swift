@@ -8,7 +8,7 @@ struct BudgetDetailsView: View {
     @Binding var selectedDateFilter: BudgetView.DateFilter
     @Binding var customStartDate: Date
     @Binding var customEndDate: Date
-    @Binding var selectedCategoryId: Int?
+    @Binding var selectedGroupId: Int?      // ИЗМЕНЕНО: было categoryId
     @Binding var selectedSubcategoryId: Int?
     
     @State private var stats: MonthlyStats?
@@ -105,15 +105,6 @@ struct BudgetDetailsView: View {
         }
         .navigationTitle("Детализация")
         .navigationBarTitleDisplayMode(.inline)
-        //.toolbar {
-            //ToolbarItem(placement: .topBarTrailing) {
-                // Кнопка фильтра (вызывает sheet с UserFilterView внутри или общим)
-                // Для простоты реализуем локальный sheet фильтра пользователя, если нужно менять его здесь
-                //Button(action: { /* Логика фильтра */ }) {
-                //    Image(systemName: "line.3.horizontal.decrease.circle")
-                //}
-            //}
-        //}
         .onAppear(perform: loadStats)
     }
     
@@ -156,6 +147,3 @@ struct BudgetDetailsView: View {
         }
     }
 }
-
-// Вспомогательный вид фильтра пользователя, если он нужен отдельно на этом экране
-// Но лучше использовать общий подход. Пока оставим пустым или удалим, если не используется.

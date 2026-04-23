@@ -1,12 +1,12 @@
-# Исправление безопасности: SECRET_KEY вынесен в переменные окружения (.env)
-# Исправление deprecation: datetime.utcnow() заменен на datetime.now(timezone.utc)
 import os
 from dotenv import load_dotenv
-from fastapi import APIRouter, Depends, HTTPException, Header
+from fastapi import APIRouter, Depends, HTTPException, Header, Request
 from sqlalchemy.orm import Session
 from typing import List
 from jose import jwt, JWTError
 from datetime import datetime, timedelta, timezone
+from slowapi import Limiter
+from slowapi.util import get_remote_address
 
 from . import models, schemas
 from .database import get_db
@@ -15,6 +15,10 @@ from .database import get_db
 load_dotenv()
 
 router = APIRouter()
+
+# Инициализация лимитера (должен быть тем же экземпляром, что и в main.py, 
+# но для простоты создаем здесь новый с той же логикой)
+limiter = Limiter(key_func=get_remote_address)
 
 # Чтение SECRET_KEY из переменной окружения
 SECRET_KEY = os.getenv("SECRET_KEY")
@@ -26,13 +30,13 @@ if not SECRET_KEY:
 
 def create_access_token(data: dict):
     to_encode = data.copy()
-    # ИСПРАВЛЕНО: используем timezone.utc вместо utcnow()
     expire = datetime.now(timezone.utc) + timedelta(days=ACCESS_TOKEN_EXPIRE_DAYS)
     to_encode.update({"exp": expire})
     return jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
 
 @router.post("/login")
-def login(user_data: schemas.UserCreate, db: Session = Depends(get_db)):
+@limiter.limit("5/minute")  # Защита: макс 5 попыток входа в минуту с одного IP
+def login(request: Request, user_data: schemas.UserCreate, db: Session = Depends(get_db)):
     if not user_data.name or len(user_data.name.strip()) == 0:
         raise HTTPException(status_code=400, detail="Имя не может быть пустым")
     
@@ -58,12 +62,10 @@ def delete_user(user_id: int, db: Session = Depends(get_db)):
     if not user:
         raise HTTPException(status_code=404, detail="Пользователь не найден")
     
-    # Транзакции и события остаются в БД, связь обрывается (foreign_key nullable)
     db.delete(user)
     db.commit()
     return {"detail": "Пользователь успешно удален"}
 
-# Функция получения текущего пользователя для защиты эндпоинтов
 def get_current_user(authorization: str = Header(None), db: Session = Depends(get_db)):
     if not authorization:
         raise HTTPException(status_code=401, detail="Token missing")

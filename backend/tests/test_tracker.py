@@ -1,14 +1,8 @@
-import time
 from datetime import datetime, timedelta, timezone
-from app.models import BabyLog
-
-def get_token(client, name):
-    resp = client.post("/auth/login", json={"name": name})
-    return resp.json()["access_token"]
 
 def test_tracker_initial_status(client, test_user):
     """Проверка начального статуса: пользователь не спит"""
-    token = get_token(client, test_user["name"])
+    token = test_user["access_token"]
     headers = {"Authorization": f"Bearer {token}"}
     
     response = client.get("/tracker/status", headers=headers)
@@ -22,7 +16,7 @@ def test_tracker_initial_status(client, test_user):
 
 def test_start_sleep(client, test_user):
     """Тест начала сна: создание записи и обновление статуса"""
-    token = get_token(client, test_user["name"])
+    token = test_user["access_token"]
     headers = {"Authorization": f"Bearer {token}"}
     
     # 1. Запускаем сон
@@ -47,7 +41,7 @@ def test_start_sleep(client, test_user):
 
 def test_finish_sleep(client, test_user):
     """Тест завершения сна: расчет длительности и смена статуса"""
-    token = get_token(client, test_user["name"])
+    token = test_user["access_token"]
     headers = {"Authorization": f"Bearer {token}"}
     
     start_time = datetime.now(timezone.utc)
@@ -82,7 +76,7 @@ def test_finish_sleep(client, test_user):
 
 def test_quick_feed(client, test_user):
     """Тест быстрого кормления: мгновенное событие"""
-    token = get_token(client, test_user["name"])
+    token = test_user["access_token"]
     headers = {"Authorization": f"Bearer {token}"}
     
     # Эндпоинт может отличаться, проверяем стандартный POST logs
@@ -101,7 +95,7 @@ def test_quick_feed(client, test_user):
 
 def test_get_logs_history(client, test_user):
     """Тест получения истории событий"""
-    token = get_token(client, test_user["name"])
+    token = test_user["access_token"]
     headers = {"Authorization": f"Bearer {token}"}
     
     # Создаем тестовое событие
@@ -122,7 +116,7 @@ def test_get_logs_history(client, test_user):
 
 def test_finish_non_existent_sleep(client, test_user):
     """Тест ошибки при попытке завершить несуществующий сон"""
-    token = get_token(client, test_user["name"])
+    token = test_user["access_token"]
     headers = {"Authorization": f"Bearer {token}"}
     
     # Пытаемся завершить сон с ID 99999
@@ -135,7 +129,7 @@ def test_finish_non_existent_sleep(client, test_user):
 
 def test_delete_log(client, test_user):
     """Тест удаления записи"""
-    token = get_token(client, test_user["name"])
+    token = test_user["access_token"]
     headers = {"Authorization": f"Bearer {token}"}
     
     # Создаем запись
@@ -156,3 +150,27 @@ def test_delete_log(client, test_user):
     logs = logs_resp.json()
     ids = [log["id"] for log in logs]
     assert log_id not in ids
+
+
+def test_tracker_export_excel_with_date_filters(client, test_user):
+    token = test_user["access_token"]
+    headers = {"Authorization": f"Bearer {token}"}
+
+    start_time = datetime(2026, 4, 15, 20, 0, 0, tzinfo=timezone.utc)
+    end_time = start_time + timedelta(hours=2)
+
+    create_resp = client.post("/tracker/logs", json={
+        "event_type": "sleep",
+        "start_time": start_time.isoformat(),
+        "end_time": end_time.isoformat(),
+        "note": "Экспортный сон"
+    }, headers=headers)
+    assert create_resp.status_code in [200, 201]
+
+    export_resp = client.get(
+        "/tracker/export/excel?start_date=2026-04-01T00:00:00&end_date=2026-04-30T23:59:59",
+        headers=headers
+    )
+    assert export_resp.status_code == 200
+    assert "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" in export_resp.headers.get("content-type", "")
+    assert "attachment; filename=sleep_export_" in export_resp.headers.get("content-disposition", "")

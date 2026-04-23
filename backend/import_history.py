@@ -6,7 +6,10 @@ CSV_FILE = "history.csv"
 
 def parse_amount(s):
     if not s: return 0.0
-    return float(re.sub(r'[^\d,.+-]', '', str(s)).replace(',', '.'))
+    # Удаляем все кроме цифр, запятых, точек и знаков
+    clean_s = re.sub(r'[^\d,.+-]', '', str(s))
+    # Заменяем запятую на точку для float
+    return float(clean_s.replace(',', '.'))
 
 def detect_encoding(path):
     with open(path, 'rb') as f:
@@ -24,31 +27,37 @@ def main():
     from app.database import SessionLocal, engine, Base
     from app import models
     
-    # ГАРАНТИЯ: Создаем таблицы по актуальным моделям перед работой
-    # Это добавит отсутствующие колонки (например, creator_name_snapshot), если их нет
+    # Создаем таблицы по актуальным моделям
     Base.metadata.create_all(bind=engine)
     
     db = SessionLocal()
     try:
         user = db.query(models.User).filter(models.User.name == USER_NAME).first()
         if not user:
-            print(f"❌ Пользователь '{USER_NAME}' не найден!")
+            print(f"❌ Пользователь '{USER_NAME}' не найден! Создайте его через приложение сначала.")
             return
         
-        print("🧹 Полная очистка данных...")
+        print("🧹 Полная очистка данных перед импортом...")
+        # Порядок важен из-за внешних ключей (CASCADE обычно справляется, но лучше явно)
         db.query(models.Transaction).filter(models.Transaction.created_by_user_id == user.id).delete()
-        db.query(models.Category).filter().delete()
+        db.query(models.Category).delete()
+        db.query(models.CategoryGroup).delete()
         db.commit()
+        print("✅ База очищена.")
         
         if not os.path.exists(CSV_FILE):
-            print(f"❌ Файл {CSV_FILE} не найден")
+            print(f"❌ Файл {CSV_FILE} не найден в папке backend/")
             return
 
         enc = detect_encoding(CSV_FILE)
         print(f"📂 Чтение файла (кодировка: {enc})...")
         
-        cat_cache = {}
-        cnt_cat = 0
+        # Кэш структур: 
+        # { "ГруппаName": { "id": 1, "type": "expense", "subs": { "SubName": 10 } } }
+        group_cache = {} 
+        
+        cnt_groups = 0
+        cnt_subs = 0
         cnt_tx = 0
 
         with open(CSV_FILE, 'r', encoding=enc) as f:
@@ -71,55 +80,119 @@ def main():
                 
                 tx_type = "income" if is_income else "expense"
 
-                # 1. Создаем/ищем Родителя
-                cat_id = None
+                # --- 1. РАБОТА С ГРУППой (бывшая "Категория") ---
+                group_id = None
                 if c_name:
-                    key = (c_name, None)
-                    if key not in cat_cache:
-                        existing = db.query(models.Category).filter(models.Category.name==c_name, models.Category.parent_id.is_(None)).first()
-                        if not existing:
-                            existing = models.Category(name=c_name, type=tx_type, parent_id=None)
-                            db.add(existing)
-                            db.flush()
-                            cnt_cat += 1
-                            print(f"   + Категория: {c_name}")
-                        cat_cache[key] = existing.id
-                    cat_id = cat_cache[key]
+                    if c_name not in group_cache:
+                        # Ищем в БД
+                        existing_group = db.query(models.CategoryGroup).filter(
+                            models.CategoryGroup.name == c_name
+                        ).first()
+                        
+                        if not existing_group:
+                            # Создаем новую группу
+                            # Важно: тип группы определяем по первой транзакции. 
+                            # В идеале все транзакции группы должны быть одного типа.
+                            existing_group = models.CategoryGroup(
+                                name=c_name,
+                                type=tx_type, 
+                                is_hidden=False
+                            )
+                            db.add(existing_group)
+                            db.flush() # Чтобы получить ID
+                            cnt_groups += 1
+                            print(f"   + Группа: {c_name} ({tx_type})")
+                        
+                        group_cache[c_name] = {
+                            "id": existing_group.id,
+                            "type": existing_group.type,
+                            "subs": {}
+                        }
+                    
+                    group_id = group_cache[c_name]["id"]
 
-                # 2. Создаем/ищем Подкатегорию
-                final_id = cat_id
-                if s_name and cat_id:
+                # --- 2. РАБОТА С ПОДКАТЕГОРИЕЙ (бывшая "Подкатегория") ---
+                final_category_id = None
+                
+                if s_name and group_id:
                     clean_sub = s_name.strip()
                     if clean_sub:
-                        key_s = (clean_sub, cat_id)
-                        if key_s not in cat_cache:
-                            existing_s = db.query(models.Category).filter(models.Category.name==clean_sub, models.Category.parent_id==cat_id).first()
-                            if not existing_s:
-                                parent = db.get(models.Category, cat_id)
-                                p_type = parent.type if parent else tx_type
-                                existing_s = models.Category(name=clean_sub, type=p_type, parent_id=cat_id)
-                                db.add(existing_s)
+                        # Проверяем кэш внутри группы
+                        cache_ref = group_cache[c_name]
+                        if clean_sub not in cache_ref["subs"]:
+                            # Ищем в БД
+                            existing_sub = db.query(models.Category).filter(
+                                models.Category.name == clean_sub,
+                                models.Category.group_id == group_id
+                            ).first()
+                            
+                            if not existing_sub:
+                                # Создаем подкатегорию
+                                # Поле type у Category больше нет! Только group_id
+                                existing_sub = models.Category(
+                                    name=clean_sub,
+                                    group_id=group_id,
+                                    is_hidden=False
+                                )
+                                db.add(existing_sub)
                                 db.flush()
-                                cnt_cat += 1
+                                cnt_subs += 1
                                 print(f"      + Подкатегория: {clean_sub}")
-                            cat_cache[key_s] = existing_s.id
-                        final_id = cat_cache[key_s]
+                            
+                            cache_ref["subs"][clean_sub] = existing_sub.id
+                        
+                        final_category_id = cache_ref["subs"][clean_sub]
+                elif group_id and not s_name:
+                    # Если подкатегории нет в CSV, но есть группа.
+                    # Создаем техническую подкатегию "Общее" внутри этой группы, 
+                    # чтобы транзакция не висела в воздухе (так как FK обязателен).
+                    # Или используем глобальную заглушку, если она есть.
+                    # Для простоты импорта создадим "Общее" внутри группы, если нет в кэше.
+                    
+                    cache_ref = group_cache[c_name]
+                    sub_name_default = "Общее"
+                    
+                    if sub_name_default not in cache_ref["subs"]:
+                         existing_sub = db.query(models.Category).filter(
+                            models.Category.name == sub_name_default,
+                            models.Category.group_id == group_id
+                        ).first()
+                         
+                         if not existing_sub:
+                             existing_sub = models.Category(
+                                 name=sub_name_default,
+                                 group_id=group_id,
+                                 is_hidden=False
+                             )
+                             db.add(existing_sub)
+                             db.flush()
+                             cnt_subs += 1
+                             print(f"      + Подкатегория (авто): {sub_name_default}")
+                         
+                         cache_ref["subs"][sub_name_default] = existing_sub.id
+                    
+                    final_category_id = cache_ref["subs"][sub_name_default]
 
-                if final_id:
-                    # СОЗДАНИЕ ТРАНЗАКЦИИ С НОВЫМ ПОЛЕМ
+                # --- 3. СОЗДАНИЕ ТРАНЗАКЦИИ ---
+                if final_category_id:
                     tx = models.Transaction(
                         amount=amt, 
                         date=dt, 
-                        category_id=final_id,
+                        category_id=final_category_id, # Ссылка на SubCategory
                         transaction_type=tx_type, 
                         created_by_user_id=user.id,
-                        creator_name_snapshot=user.name  # Явно передаем имя
+                        creator_name_snapshot=user.name
                     )
                     db.add(tx)
                     cnt_tx += 1
+                else:
+                    print(f"⚠️ Пропущена строка {i}: нет категории")
 
         db.commit()
-        print(f"\n✅ ГОТОВО! Категорий: {cnt_cat}, Транзакций: {cnt_tx}")
+        print(f"\n✅ ГОТОВО!")
+        print(f"   Создано групп: {cnt_groups}")
+        print(f"   Создано подкатегорий: {cnt_subs}")
+        print(f"   Импортировано транзакций: {cnt_tx}")
 
     except Exception as e:
         db.rollback()

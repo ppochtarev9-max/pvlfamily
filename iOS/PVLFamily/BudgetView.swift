@@ -6,72 +6,77 @@ struct BudgetView: View {
     
     // Данные
     @State private var allTransactions: [Transaction] = []
-    @State private var categories: [Category] = []
+    @State private var categoryGroups: [CategoryGroup] = [] // НОВОЕ: Группы вместо плоского списка
     
-    // Состояния фильтров (ОБЩИЕ для баланса и списка)
+    // Состояния фильтров
     @State private var showingFilterSheet = false
     @State private var selectedDateFilter: DateFilter = .all
     @State private var customStartDate: Date = Date()
     @State private var customEndDate: Date = Date()
     
-    @State private var selectedCategoryId: Int? = nil
-    @State private var selectedSubcategoryId: Int? = nil
+    @State private var selectedGroupId: Int? = nil       // НОВОЕ
+    @State private var selectedSubcategoryId: Int? = nil // НОВОЕ
     
     // Для баланса
     @State private var summary: DashboardSummary?
     @State private var isLoadingBalance = false
     
-    // Фильтр по пользователю (теперь общий)
+    // Фильтр по пользователю
     @State private var selectedUserId: Int? = nil
     
     // Навигация
     @State private var navigateToDetails = false
-    
-    // Для выбора даты баланса
     @State private var balanceDate = Date()
     @State private var showBalanceCalendar = false
     
-    // Состояния для обработки ошибок и загрузки
+    // Ошибки
     @State private var errorMessage: String?
     @State private var showErrorAlert = false
     @State private var isSaving = false
 
-    // Вычисляемые свойства для доступных опций
-    var availableCategories: [Category] {
-        categories.filter { $0.parent_id == nil }.sorted { $0.name < $1.name }
+    // Вычисляемые свойства для фильтров
+    var availableGroups: [CategoryGroup] {
+        categoryGroups.filter { !$0.is_hidden }.sorted { $0.name < $1.name }
     }
     
-    var availableSubcategories: [Category] {
-        guard let catId = selectedCategoryId else { return [] }
-        return categories.filter { $0.parent_id == catId }.sorted { $0.name < $1.name }
+    var availableSubcategories: [SubCategory] {
+        guard let groupId = selectedGroupId,
+              let group = categoryGroups.first(where: { $0.id == groupId }) else { return [] }
+        return group.subcategories.filter { !$0.is_hidden }.sorted { $0.name < $1.name }
     }
     
-    // Итоговый отфильтрованный список
+    // Плоский список всех подкатегорий для быстрого поиска (если нужно)
+    var allAvailableSubcategories: [SubCategory] {
+        categoryGroups.flatMap { $0.subcategories }.filter { !$0.is_hidden }
+    }
+
+    // Итоговый отфильтрованный список транзакций
     var filteredTransactions: [Transaction] {
         var result = allTransactions
+        let calendar = Calendar.current
+        let now = Date()
         
         // 1. Фильтр по дате
-        let now = Date()
-        let calendar = Calendar.current
-        
         switch selectedDateFilter {
         case .all: break
-        case .today:
-            result = result.filter { isSameDay(dateString: $0.date, to: now) }
+        case .today: result = result.filter { isSameDay(dateString: $0.date, to: now) }
         case .yesterday:
-            guard let yesterday = calendar.date(byAdding: .day, value: -1, to: now) else { return [] }
-            result = result.filter { isSameDay(dateString: $0.date, to: yesterday) }
+            if let yesterday = calendar.date(byAdding: .day, value: -1, to: now) {
+                result = result.filter { isSameDay(dateString: $0.date, to: yesterday) }
+            }
         case .week:
-            guard let startOfWeek = calendar.date(from: calendar.dateComponents([.yearForWeekOfYear, .weekOfYear], from: now)) else { return [] }
-            result = result.filter {
-                guard let d = parseDate($0.date) else { return false }
-                return d >= startOfWeek && d <= now
+            if let startOfWeek = calendar.date(from: calendar.dateComponents([.yearForWeekOfYear, .weekOfYear], from: now)) {
+                result = result.filter {
+                    guard let d = parseDate($0.date) else { return false }
+                    return d >= startOfWeek && d <= now
+                }
             }
         case .month:
-            guard let startOfMonth = calendar.date(from: calendar.dateComponents([.year, .month], from: now)) else { return [] }
-            result = result.filter {
-                guard let d = parseDate($0.date) else { return false }
-                return d >= startOfMonth && d <= now
+            if let startOfMonth = calendar.date(from: calendar.dateComponents([.year, .month], from: now)) {
+                result = result.filter {
+                    guard let d = parseDate($0.date) else { return false }
+                    return d >= startOfMonth && d <= now
+                }
             }
         case .custom:
             result = result.filter {
@@ -80,16 +85,16 @@ struct BudgetView: View {
             }
         }
         
-        // 2. Фильтр по категории
-        if let catId = selectedCategoryId {
-            var targetIds: Set<Int> = [catId]
-            if let subId = selectedSubcategoryId {
-                targetIds = [subId]
-            } else {
-                let children = categories.filter { $0.parent_id == catId }.map { $0.id }
-                targetIds.formUnion(children)
-            }
-            result = result.filter { targetIds.contains($0.category_id) }
+        // 2. Фильтр по категории (Группа + Подкатегория)
+        if let subId = selectedSubcategoryId {
+            // Если выбрана конкретная подкатегория
+            result = result.filter { $0.category_id == subId }
+        } else if let groupId = selectedGroupId {
+            // Если выбрана только группа, берем все её подкатегории
+            let subIds = categoryGroups
+                .first(where: { $0.id == groupId })?
+                .subcategories.map { $0.id } ?? []
+            result = result.filter { subIds.contains($0.category_id) }
         }
         
         return result
@@ -104,6 +109,7 @@ struct BudgetView: View {
         case custom = "Выбрать период..."
     }
     
+    // --- МОДЕЛИ ДАННЫХ (Обновленные) ---
     struct Transaction: Identifiable, Codable {
         let id: Int
         let amount: Double
@@ -112,36 +118,59 @@ struct BudgetView: View {
         let description: String?
         let date: String
         let creator_name: String?
-        let category_name: String?
+        let full_category_path: String? // "Группа / Подкатегория"
         let balance: Double?
     }
     
-    struct Category: Identifiable, Codable {
+    // --- МОДЕЛИ ДАННЫХ (Обновленные с Hashable и Equatable) ---
+    
+    struct SubCategory: Identifiable, Codable, Hashable, Equatable {
         let id: Int
-        let name: String
-        let type: String
-        let parent_id: Int?
-        let is_hidden: Bool?
-        var children: [Category]? = []
+        var name: String          // Изменил на var для возможности редактирования
+        let group_id: Int
+        var is_hidden: Bool       // Изменил на var
+        let group_name: String?
+        
+        // Реализация Equatable для структур с var
+        static func == (lhs: SubCategory, rhs: SubCategory) -> Bool {
+            return lhs.id == rhs.id
+        }
     }
     
+    struct CategoryGroup: Identifiable, Codable, Hashable, Equatable {
+        let id: Int
+        var name: String          // Изменил на var
+        let type: String
+        var is_hidden: Bool       // Изменил на var
+        var subcategories: [SubCategory] // Изменил на var
+        
+        // Реализация Hashable
+        func hash(into hasher: inout Hasher) {
+            hasher.combine(id)
+        }
+        
+        // Реализация Equatable
+        static func == (lhs: CategoryGroup, rhs: CategoryGroup) -> Bool {
+            return lhs.id == rhs.id
+        }
+    }
+//    struct DashboardSummary: Codable {
+//        let balance: Double
+//        let total_income: Double
+//        let total_expense: Double
+//    }
+
     var body: some View {
         NavigationStack {
             VStack(spacing: 0) {
-                
-                // ================================================================
-                // 🔹 БЛОК 1: ВЕРХНЯЯ ЧАСТЬ (БАЛАНС + КНОПКА ДЕТАЛИЗАЦИИ)
-                // ================================================================
+                // БЛОК 1: БАЛАНС
                 ScrollView {
                     VStack(spacing: 16) {
-                                                
-                        // --- 1.2 Карточка баланса ---
                         VStack(spacing: 16) {
                             if let s = summary {
                                 Text(formatCurrency(s.balance))
                                     .font(.system(size: 48, weight: .bold))
                                     .foregroundColor(s.balance >= 0 ? .blue : .red)
-                                
                                 HStack(spacing: 30) {
                                     VStack {
                                         Text("Доходы").font(.caption).foregroundColor(.secondary)
@@ -166,7 +195,6 @@ struct BudgetView: View {
                         .shadow(color: .black.opacity(0.1), radius: 10, x: 0, y: 5)
                         .padding(.horizontal)
                         
-                        // --- 1.3 Кнопка Детализация ---
                         Button(action: { navigateToDetails = true }) {
                             Text("Детализация")
                                 .font(.headline)
@@ -183,20 +211,17 @@ struct BudgetView: View {
                                 selectedDateFilter: $selectedDateFilter,
                                 customStartDate: $customStartDate,
                                 customEndDate: $customEndDate,
-                                selectedCategoryId: $selectedCategoryId,
-                                selectedSubcategoryId: $selectedSubcategoryId
+                                selectedGroupId: $selectedGroupId,       // Обновлено
+                                selectedSubcategoryId: $selectedSubcategoryId // Обновлено
                             )
                         }
-                        
                         Divider().padding(.vertical, 10)
                     }
                     .background(Color(.systemGroupedBackground))
                 }
-                .frame(height: 280) // Фиксированная высота шапки
+                .frame(height: 280)
                 
-                // ================================================================
-                // 🔹 БЛОК 2: СПИСОК ТРАНЗАКЦИЙ
-                // ================================================================
+                // БЛОК 2: СПИСОК
                 Group {
                     if filteredTransactions.isEmpty {
                         ContentUnavailableView("Нет записей", systemImage: "list.bullet.rectangle", description: Text("Измените фильтры или добавьте операцию"))
@@ -216,15 +241,13 @@ struct BudgetView: View {
                     }
                 }
             }
-            .navigationTitle("") // Скрыли стандартный заголовок
+            .navigationTitle("")
             .toolbar {
-                // --- ЛЕВАЯ ЧАСТЬ: ЗАГОЛОВОК С КАЛЕНДАРЕМ ---
-                ToolbarItem(placement: .principal) { // Используем .principal для центрального заголовка
+                ToolbarItem(placement: .principal) {
                     HStack(spacing: 4) {
                         Text("Бюджет на ")
                             .font(.system(size: 18, weight: .semibold))
-                            .foregroundColor(.primary) // Явно задаем цвет
-                        
+                            .foregroundColor(.primary)
                         Button(action: { showBalanceCalendar = true }) {
                             HStack(spacing: 2) {
                                 Text(formatDateShort(balanceDate))
@@ -236,8 +259,6 @@ struct BudgetView: View {
                         }
                     }
                 }
-                
-                // --- ПРАВАЯ ЧАСТЬ: ФИЛЬТР И ПЛЮС ---
                 ToolbarItem(placement: .topBarTrailing) {
                     HStack(spacing: 15) {
                         Button(action: { showingFilterSheet = true }) {
@@ -250,46 +271,44 @@ struct BudgetView: View {
                     }
                 }
             }
-            // --- ШТОРКА КАЛЕНДАРЯ (ВНЕ toolbar, но внутри NavigationStack) ---
             .sheet(isPresented: $showBalanceCalendar) {
                 VStack(spacing: 20) {
                     DatePicker("", selection: $balanceDate, displayedComponents: .date)
                         .datePickerStyle(.graphical)
                         .labelsHidden()
-                        .onChange(of: balanceDate) { oldValue, newValue in
+                        .onChange(of: balanceDate) { _, _ in
                             showBalanceCalendar = false
                             loadBalance()
                         }
-                    
-                    Button("Закрыть") {
-                        showBalanceCalendar = false
-                    }
-                    .buttonStyle(.borderedProminent)
-                    .padding(.bottom, 20)
+                    Button("Закрыть") { showBalanceCalendar = false }
+                        .buttonStyle(.borderedProminent)
+                        .padding(.bottom, 20)
                 }
                 .presentationDetents([.medium])
-            }            .sheet(isPresented: $showingFilterSheet) {
-                 FilterSheet(
-                     selectedDateFilter: $selectedDateFilter,
-                     startDate: $customStartDate,
-                     endDate: $customEndDate,
-                     selectedCategoryId: $selectedCategoryId,
-                     selectedSubcategoryId: $selectedSubcategoryId,
-                     selectedUserId: $selectedUserId,
-                     users: authManager.users,
-                     categories: availableCategories,
-                     subcategories: availableSubcategories,
-                     isPresented: $showingFilterSheet,
-                     onUpdate: loadData
-                 )
-             }
+            }
+            .sheet(isPresented: $showingFilterSheet) {
+                FilterSheet(
+                    selectedDateFilter: $selectedDateFilter,
+                    startDate: $customStartDate,
+                    endDate: $customEndDate,
+                    selectedGroupId: $selectedGroupId,       // Обновлено
+                    selectedSubcategoryId: $selectedSubcategoryId, // Обновлено
+                    selectedUserId: $selectedUserId,
+                    users: authManager.users,
+                    groups: availableGroups,                 // Обновлено
+                    subcategories: availableSubcategories,   // Обновлено
+                    isPresented: $showingFilterSheet,
+                    onUpdate: loadData
+                )
+            }
             .sheet(isPresented: $showingAddSheet) {
                 TransactionFormView(
                     isPresented: $showingAddSheet,
-                    categories: categories,
+                    categoryGroups: categoryGroups,          // Обновлено
                     transactionToEdit: editingTransactionId != nil ? allTransactions.first { $0.id == editingTransactionId } : nil,
                     onSave: { id, amount, type, catId, desc, date in
-                        saveTransaction(id: id, amount: amount, type: type, categoryId: catId, description: desc, date: date)
+                        let finalCategoryId = catId ?? 17
+                        saveTransaction(id: id, amount: amount, type: type, categoryId: finalCategoryId, description: desc, date: date)
                     },
                     onDelete: deleteTransaction
                 )
@@ -303,20 +322,14 @@ struct BudgetView: View {
             .refreshable {
                 await withCheckedContinuation { continuation in
                     loadData()
-                    DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
-                        continuation.resume()
-                    }
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) { continuation.resume() }
                 }
             }
         }
     }
     
-    // ================================================================
-    // 🔹 ВСПОМОГАТЕЛЬНЫЕ ПЕРЕМЕННЫЕ И ФУНКЦИИ
-    // ================================================================
-    
     var hasActiveFilters: Bool {
-        selectedDateFilter != .all || selectedCategoryId != nil || selectedUserId != nil
+        selectedDateFilter != .all || selectedGroupId != nil || selectedUserId != nil
     }
     
     @State private var showingAddSheet = false
@@ -381,9 +394,9 @@ struct BudgetView: View {
     }
     
     func loadData() {
-        print("🔄 [Budget] Загрузка данных (User: \(selectedUserId == nil ? "All" : "\(selectedUserId!)"))")
+        print("🔄 [Budget] Загрузка данных...")
         loadBalance()
-        loadCategories()
+        loadCategories() // Теперь грузит группы
         loadTransactions()
     }
     
@@ -391,17 +404,13 @@ struct BudgetView: View {
         isLoadingBalance = true
         let formatter = DateFormatter()
         formatter.dateFormat = "yyyy-MM-dd HH:mm:ss"
-        let dateStr = formatter.string(from: balanceDate) // Используем выбранную дату
+        let dateStr = formatter.string(from: balanceDate)
         
         authManager.getDashboardSummary(asOfDate: dateStr, userId: selectedUserId) { result in
             DispatchQueue.main.async {
                 switch result {
                 case .success(let data): self.summary = data
-                case .failure(let error):
-                    print("❌ Ошибка баланса: \(error)")
-                    // Можно показать ошибку, если это критично
-                    // errorMessage = "Не удалось загрузить баланс: \(error.localizedDescription)"
-                    // showErrorAlert = true
+                case .failure(let error): print("❌ Ошибка баланса: \(error)")
                 }
                 self.isLoadingBalance = false
             }
@@ -422,30 +431,21 @@ struct BudgetView: View {
         URLSession.shared.dataTask(with: req) { data, response, error in
             DispatchQueue.main.async {
                 if let error = error {
-                    print("❌ Ошибка сети (транзакции): \(error)")
                     errorMessage = "Нет соединения с сервером"
                     showErrorAlert = true
                     return
                 }
-                
                 guard let httpResponse = response as? HTTPURLResponse, (200...299).contains(httpResponse.statusCode) else {
-                    print("❌ Ошибка HTTP (транзакции): \(response?.description ?? "nil")")
-                    errorMessage = "Ошибка сервера при загрузке транзакций"
+                    errorMessage = "Ошибка сервера"
                     showErrorAlert = true
                     return
                 }
-                
-                guard let data = data else {
-                    errorMessage = "Пустой ответ от сервера"
-                    showErrorAlert = true
-                    return
-                }
+                guard let data = data else { return }
                 
                 do {
                     let list = try JSONDecoder().decode([Transaction].self, from: data)
                     self.allTransactions = list
                 } catch {
-                    print("❌ Ошибка парсинга JSON (транзакции): \(error)")
                     errorMessage = "Неверный формат данных"
                     showErrorAlert = true
                 }
@@ -455,7 +455,8 @@ struct BudgetView: View {
     
     func loadCategories() {
         guard let token = authManager.token else { return }
-        var req = URLRequest(url: URL(string: "\(authManager.baseURL)/budget/categories")!)
+        // НОВЫЙ ЭНДПОИНТ: /budget/groups
+        var req = URLRequest(url: URL(string: "\(authManager.baseURL)/budget/groups")!)
         req.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
         
         URLSession.shared.dataTask(with: req) { data, response, error in
@@ -464,17 +465,25 @@ struct BudgetView: View {
                     print("❌ Ошибка сети (категории): \(error)")
                     return
                 }
-                guard let data = data, let list = try? JSONDecoder().decode([Category].self, from: data) else {
-                    print("❌ Ошибка парсинга категорий")
+                guard let data = data else {
+                    print("❌ Пустой ответ категорий")
                     return
                 }
-                categories = list
+                do {
+                    let list = try JSONDecoder().decode([CategoryGroup].self, from: data)
+                    self.categoryGroups = list
+                    print("✅ Загружено групп: \(list.count)")
+                } catch {
+                    print("❌ Ошибка парсинга категорий: \(error)")
+                    // Попробуем вывести сырой JSON для отладки если нужно
+                    // print(String(data: data, encoding: .utf8) ?? "No data")
+                }
             }
         }.resume()
     }
     
-    func startNewTransaction() { editingTransactionId = nil; loadCategories(); showingAddSheet = true }
-    func editTransaction(_ t: Transaction) { editingTransactionId = t.id; loadCategories(); showingAddSheet = true }
+    func startNewTransaction() { editingTransactionId = nil; showingAddSheet = true }
+    func editTransaction(_ t: Transaction) { editingTransactionId = t.id; showingAddSheet = true }
     
     func saveTransaction(id: Int?, amount: Double, type: String, categoryId: Int, description: String, date: Date) {
         guard let token = authManager.token else {
@@ -484,34 +493,45 @@ struct BudgetView: View {
         }
         
         isSaving = true
-        var req = URLRequest(url: URL(string: "\(authManager.baseURL)/budget/transactions")!)
+        
+        // Формируем базовый URL
+        let baseURLString = "\(authManager.baseURL)/budget/transactions"
+        var requestURLString = baseURLString
+        
+        // Если это редактирование (id есть), добавляем его к пути
+        if let transactionId = id {
+            requestURLString = "\(baseURLString)/\(transactionId)"
+        }
+        
+        var req = URLRequest(url: URL(string: requestURLString)!)
         req.httpMethod = (id != nil) ? "PUT" : "POST"
-        if let tid = id { req.url = URL(string: "\(authManager.baseURL)/budget/transactions/\(tid)") }
+        
         req.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
         req.setValue("application/json", forHTTPHeaderField: "Content-Type")
         
         let isoFormatter = ISO8601DateFormatter()
-        let body: [String: Any] = ["amount": amount, "transaction_type": type, "category_id": categoryId, "description": description, "date": isoFormatter.string(from: date)]
+        let body: [String: Any] = [
+            "amount": amount,
+            "transaction_type": type,
+            "category_id": categoryId,
+            "description": description,
+            "date": isoFormatter.string(from: date)
+        ]
         req.httpBody = try? JSONSerialization.data(withJSONObject: body)
         
         URLSession.shared.dataTask(with: req) { data, response, error in
             DispatchQueue.main.async {
                 isSaving = false
-                
                 if let error = error {
-                    print("❌ Ошибка сохранения: \(error)")
                     errorMessage = "Не удалось сохранить: \(error.localizedDescription)"
                     showErrorAlert = true
                     return
                 }
-                
                 guard let httpResponse = response as? HTTPURLResponse, (200...299).contains(httpResponse.statusCode) else {
-                    errorMessage = "Ошибка сервера при сохранении"
+                    errorMessage = "Ошибка сервера"
                     showErrorAlert = true
                     return
                 }
-                
-                // Успех
                 showingAddSheet = false
                 editingTransactionId = nil
                 loadTransactions()
@@ -526,8 +546,6 @@ struct BudgetView: View {
             showErrorAlert = true
             return
         }
-        
-        // Оптимистичное обновление UI
         let originalTransactions = allTransactions
         allTransactions.removeAll { $0.id == id }
         
@@ -538,32 +556,22 @@ struct BudgetView: View {
         URLSession.shared.dataTask(with: req) { data, response, error in
             DispatchQueue.main.async {
                 if let error = error {
-                    print("❌ Ошибка удаления: \(error)")
-                    // Откат изменений при ошибке
                     self.allTransactions = originalTransactions
-                    self.errorMessage = "Не удалось удалить: \(error.localizedDescription)"
-                    self.showErrorAlert = true
+                    errorMessage = "Не удалось удалить: \(error.localizedDescription)"
+                    showErrorAlert = true
                     return
                 }
-                
                 guard let httpResponse = response as? HTTPURLResponse, (200...299).contains(httpResponse.statusCode) else {
-                    // Откат изменений при ошибке
                     self.allTransactions = originalTransactions
-                    self.errorMessage = "Ошибка сервера при удалении"
-                    self.showErrorAlert = true
+                    errorMessage = "Ошибка сервера"
+                    showErrorAlert = true
                     return
                 }
-                
-                // Успех, баланс нужно обновить
                 loadBalance()
             }
         }.resume()
     }
 }
-
-// ================================================================
-// 🔹 ПОДВИДЫ (SUBVIEWS)
-// ================================================================
 
 // --- КАРТОЧКА ТРАНЗАКЦИИ ---
 struct TransactionCard: View {
@@ -572,18 +580,19 @@ struct TransactionCard: View {
         VStack(alignment: .leading, spacing: 10) {
             HStack(alignment: .top, spacing: 12) {
                 VStack(alignment: .leading, spacing: 4) {
-                    Text(t.category_name ?? "Без категории").font(.headline).fontWeight(.semibold).lineLimit(1)
+                    Text(t.full_category_path ?? "Без категории").font(.headline).fontWeight(.semibold).lineLimit(1)
                     if let desc = t.description, !desc.isEmpty {
                         Text(desc).font(.caption).foregroundColor(.secondary).lineLimit(2)
                     }
                 }
                 Spacer()
-                Text(formatAmount(t.amount, type: t.transaction_type))
+                Text(TransactionCard.formatAmountStatic(t.amount, type: t.transaction_type))
                     .font(.title2).fontWeight(.bold)
                     .foregroundColor(t.transaction_type == "income" ? .green : .red)
             }
+            
             Divider().background(Color.gray.opacity(0.2))
-            HStack(alignment: .center) {
+            HStack {
                 if let bal = t.balance {
                     VStack(alignment: .leading, spacing: 2) {
                         Text("Остаток").font(.caption2).foregroundColor(.secondary).textCase(.uppercase)
@@ -593,7 +602,7 @@ struct TransactionCard: View {
                 }
                 Spacer()
                 VStack(alignment: .trailing, spacing: 1) {
-                    Text(formatDate(t.date)).font(.title3).foregroundColor(.gray)
+                    Text(TransactionCard.formatDateStatic(t.date)).font(.title3).foregroundColor(.gray)
                     Text(t.creator_name ?? "Неизвестно").font(.title3).foregroundColor(.gray)
                 }
             }
@@ -604,11 +613,13 @@ struct TransactionCard: View {
         .shadow(color: Color.black.opacity(0.06), radius: 6, x: 0, y: 3)
         .overlay(RoundedRectangle(cornerRadius: 14).strokeBorder((t.transaction_type == "income" ? Color.green : Color.red).opacity(0.15), lineWidth: 1))
     }
-    func formatAmount(_ amount: Double, type: String) -> String {
+    
+    static func formatAmountStatic(_ amount: Double, type: String) -> String {
         let sign = ""
         return "\(sign)\(String(format: "%.2f", amount)) ₽"
     }
-    func formatDate(_ string: String) -> String {
+    
+    static func formatDateStatic(_ string: String) -> String {
         let iso = ISO8601DateFormatter()
         iso.formatOptions = [.withInternetDateTime]
         if let d = iso.date(from: string) {
@@ -628,50 +639,36 @@ struct TransactionCard: View {
     }
 }
 
-// --- ЛИСТ ФИЛЬТРОВ ---
+// --- ЛИСТ ФИЛЬТРОВ (Обновлен под группы) ---
 struct FilterSheet: View {
     @Binding var selectedDateFilter: BudgetView.DateFilter
     @Binding var startDate: Date
     @Binding var endDate: Date
     
-    @Binding var selectedCategoryId: Int?
-    @Binding var selectedSubcategoryId: Int?
+    @Binding var selectedGroupId: Int?       // НОВОЕ
+    @Binding var selectedSubcategoryId: Int? // НОВОЕ
     
     @Binding var selectedUserId: Int?
     let users: [[String: Any]]
     
-    let categories: [BudgetView.Category]
-    let subcategories: [BudgetView.Category]
-    @Binding var isPresented: Bool
+    let groups: [BudgetView.CategoryGroup]       // НОВОЕ
+    let subcategories: [BudgetView.SubCategory]  // НОВОЕ
     
+    @Binding var isPresented: Bool
     var onUpdate: () -> Void
     
     var body: some View {
         NavigationStack {
             Form {
                 Section("Пользователь") {
-                    Button(action: {
-                        selectedUserId = nil
-                        onUpdate()
-                    }) {
-                        HStack {
-                            Text("Все пользователи")
-                            Spacer()
-                            if selectedUserId == nil { Image(systemName: "checkmark").foregroundColor(.blue) }
-                        }
+                    Button(action: { selectedUserId = nil; onUpdate() }) {
+                        HStack { Text("Все пользователи"); Spacer(); if selectedUserId == nil { Image(systemName: "checkmark").foregroundColor(.blue) } }
                     }
                     ForEach(0..<users.count, id: \.self) { index in
                         let user = users[index]
                         if let id = user["id"] as? Int, let name = user["name"] as? String {
-                            Button(action: {
-                                selectedUserId = id
-                                onUpdate()
-                            }) {
-                                HStack {
-                                    Text(name)
-                                    Spacer()
-                                    if selectedUserId == id { Image(systemName: "checkmark").foregroundColor(.blue) }
-                                }
+                            Button(action: { selectedUserId = id; onUpdate() }) {
+                                HStack { Text(name); Spacer(); if selectedUserId == id { Image(systemName: "checkmark").foregroundColor(.blue) } }
                             }
                         }
                     }
@@ -683,11 +680,7 @@ struct FilterSheet: View {
                             selectedDateFilter = filter
                             if filter != .custom { onUpdate(); isPresented = false }
                         }) {
-                            HStack {
-                                Text(filter.rawValue)
-                                Spacer()
-                                if selectedDateFilter == filter { Image(systemName: "checkmark").foregroundColor(.blue) }
-                            }
+                            HStack { Text(filter.rawValue); Spacer(); if selectedDateFilter == filter { Image(systemName: "checkmark").foregroundColor(.blue) } }
                         }
                     }
                     if selectedDateFilter == .custom {
@@ -699,60 +692,58 @@ struct FilterSheet: View {
                 
                 Section("Категория") {
                     Button(action: {
-                        selectedCategoryId = nil
+                        selectedGroupId = nil
                         selectedSubcategoryId = nil
                         onUpdate()
                     }) {
-                        HStack {
-                            Text("Все категории")
-                            Spacer()
-                            if selectedCategoryId == nil { Image(systemName: "checkmark").foregroundColor(.blue) }
-                        }
+                        HStack { Text("Все категории"); Spacer(); if selectedGroupId == nil { Image(systemName: "checkmark").foregroundColor(.blue) } }
                     }
-                    if !categories.isEmpty {
+                    
+                    // Выбор Группы
+                    if !groups.isEmpty {
                         Menu {
-                            ForEach(categories) { cat in
+                            ForEach(groups) { group in
                                 Button(action: {
-                                    selectedCategoryId = cat.id
-                                    selectedSubcategoryId = nil
+                                    selectedGroupId = group.id
+                                    selectedSubcategoryId = nil // Сброс подкатегории при смене группы
                                 }) {
                                     HStack {
-                                        Text(cat.name)
+                                        Text(group.name)
                                         Spacer()
-                                        if selectedCategoryId == cat.id && selectedSubcategoryId == nil { Image(systemName: "checkmark").foregroundColor(.blue) }
+                                        if selectedGroupId == group.id && selectedSubcategoryId == nil { Image(systemName: "checkmark").foregroundColor(.blue) }
                                     }
                                 }
                             }
                         } label: {
                             HStack {
-                                Text(selectedCategoryId != nil ? (categories.first(where: { $0.id == selectedCategoryId })?.name ?? "...") : "Выберите категорию")
+                                Text(selectedGroupId != nil ? (groups.first(where: { $0.id == selectedGroupId })?.name ?? "...") : "Выберите категорию")
                                 Spacer()
                                 Image(systemName: "chevron.down").font(.caption)
                             }
                         }
-                        if selectedCategoryId != nil {
-                            if !subcategories.isEmpty {
-                                Menu {
-                                    Button(action: { selectedSubcategoryId = nil; onUpdate() }) { Text("Все подкатегории") }
-                                    ForEach(subcategories) { sub in
-                                        Button(action: {
-                                            selectedSubcategoryId = sub.id
-                                            onUpdate()
-                                        }) {
-                                            HStack {
-                                                Text("↳ " + sub.name)
-                                                Spacer()
-                                                if selectedSubcategoryId == sub.id { Image(systemName: "checkmark").foregroundColor(.blue) }
-                                            }
-                                        }
-                                    }
-                                } label: {
+                    }
+                    
+                    // Выбор Подкатегории (если выбрана группа)
+                    if selectedGroupId != nil && !subcategories.isEmpty {
+                        Menu {
+                            Button(action: { selectedSubcategoryId = nil; onUpdate() }) { Text("Все подкатегории") }
+                            ForEach(subcategories) { sub in
+                                Button(action: {
+                                    selectedSubcategoryId = sub.id
+                                    onUpdate()
+                                }) {
                                     HStack {
-                                        Text(selectedSubcategoryId != nil ? (subcategories.first(where: { $0.id == selectedSubcategoryId })?.name ?? "...") : "Все подкатегории")
+                                        Text("↳ " + sub.name)
                                         Spacer()
-                                        Image(systemName: "chevron.down").font(.caption)
+                                        if selectedSubcategoryId == sub.id { Image(systemName: "checkmark").foregroundColor(.blue) }
                                     }
                                 }
+                            }
+                        } label: {
+                            HStack {
+                                Text(selectedSubcategoryId != nil ? (subcategories.first(where: { $0.id == selectedSubcategoryId })?.name ?? "...") : "Все подкатегории")
+                                Spacer()
+                                Image(systemName: "chevron.down").font(.caption)
                             }
                         }
                     }
@@ -761,7 +752,7 @@ struct FilterSheet: View {
                 Section {
                     Button("Сбросить все") {
                         selectedDateFilter = .all
-                        selectedCategoryId = nil
+                        selectedGroupId = nil
                         selectedSubcategoryId = nil
                         selectedUserId = nil
                         onUpdate()
@@ -774,9 +765,4 @@ struct FilterSheet: View {
             }
         }
     }
-}
-
-#Preview {
-    BudgetView()
-        .environmentObject(AuthManager())
 }

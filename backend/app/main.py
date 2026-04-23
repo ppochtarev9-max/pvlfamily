@@ -1,10 +1,12 @@
-from fastapi import FastAPI
+from fastapi import FastAPI, Request, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from sqlalchemy.orm import Session
+from slowapi import Limiter, _rate_limit_exceeded_handler
+from slowapi.util import get_remote_address
+from slowapi.errors import RateLimitExceeded
+from starlette.middleware.base import BaseHTTPMiddleware
 import logging
-import os
 
-# Импорты
+# Импорты роутеров
 from . import models
 from .database import engine, SessionLocal
 from .auth import router as auth_router
@@ -20,32 +22,45 @@ logger = logging.getLogger("PVLFamily")
 # Создание таблиц
 models.Base.metadata.create_all(bind=engine)
 
-# Отключаем стандартную документацию для безопасности на проде
-# Документация будет доступна только если явно передать параметр или через отдельный роут (если нужно)
-app = FastAPI(
-    title="PVLFamily API",
-    docs_url=None,  # Скрываем /docs
-    redoc_url=None, # Скрываем /redoc
-    openapi_url=None if os.getenv("ENVIRONMENT") == "production" else "/openapi.json"
-)
+app = FastAPI(title="PVLFamily API")
 
-# CORS - разрешаем только доверенные домены
+# --- БЕЗОПАСНОСТЬ: Rate Limiting ---
+limiter = Limiter(key_func=get_remote_address)
+app.state.limiter = limiter
+app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
+
+# --- БЕЗОПАСНОСТЬ: Заголовки (Security Headers) ---
+class SecurityHeadersMiddleware(BaseHTTPMiddleware):
+    async def dispatch(self, request: Request, call_next):
+        response = await call_next(request)
+        # Защита от кликтджекинга
+        response.headers["X-Frame-Options"] = "DENY"
+        # Защита от MIME-sniffing
+        response.headers["X-Content-Type-Options"] = "nosniff"
+        # Защита от XSS
+        response.headers["X-XSS-Protection"] = "1; mode=block"
+        # HSTS (только для HTTPS, но добавим для строгости)
+        response.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
+        # Политика контента (базовая)
+        response.headers["Content-Security-Policy"] = "default-src 'self'"
+        return response
+
+app.add_middleware(SecurityHeadersMiddleware)
+
+# --- БЕЗОПАСНОСТЬ: Ужесточенный CORS ---
+# Разрешаем только конкретный домен и локалхост для разработки
 allowed_origins = [
-    "https://pvlfamily.ru",
+    "https://pvlfamily.ru", 
     "http://localhost:8000",
     "http://127.0.0.1:8000"
 ]
-
-# Если не в продакшене, добавляем wildcard для симулятора/теста
-if os.getenv("ENVIRONMENT") != "production":
-    allowed_origins.append("*")
 
 app.add_middleware(
     CORSMiddleware,
     allow_origins=allowed_origins,
     allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_methods=["GET", "POST", "PUT", "DELETE"], # Явно указываем методы, никаких "*"
+    allow_headers=["Authorization", "Content-Type"], # Разрешаем только нужные заголовки
 )
 
 # Роутеры
@@ -64,8 +79,7 @@ def cleanup_test_data():
     logger.info("🧹 Начало очистки тестовых данных...")
     db = SessionLocal()
     try:
-        # Префиксы тестовых пользователей
-        test_prefixes = ["UITestUser_", "User_", "Feed_", "Timer_", "Long_", "Net_", "Nav_", "NetErrTest_", "FeedTestUser_", "FeedTest_", "TimerTestUser_", "TimerBg_", "TimerBgTest_", "LongTimer_", "LongTestUser_", "NetTestUser_", "NavTest_", "NavTestUser_", "NetErr_"]
+        test_prefixes = ["UITestUser_", "User_", "FeedTestUser_", "FeedTest_", "TimerTestUser_", "TimerBg_", "TimerBgTest_", "LongTimer_", "LongTestUser_", "NetTestUser_", "NavTest_", "NavTestUser_", "NetErr_", "TestUser"]
         
         users_to_delete = []
         for user in db.query(models.User).all():
@@ -73,40 +87,28 @@ def cleanup_test_data():
                 users_to_delete.append(user.id)
         
         if not users_to_delete:
-            logger.info("✅ Тестовые пользователи не найдены. Очистка завершена.")
+            logger.info("✅ Тестовые пользователи не найдены.")
             return
 
         logger.info(f"🗑 Найдено тестовых пользователей: {len(users_to_delete)}")
 
         if hasattr(models.BabyLog, "user_id"):
-            count = db.query(models.BabyLog).filter(models.BabyLog.user_id.in_(users_to_delete)).delete(synchronize_session=False)
-            logger.info(f"   📝 Удалено записей трекера: {count}")
-
+            db.query(models.BabyLog).filter(models.BabyLog.user_id.in_(users_to_delete)).delete(synchronize_session=False)
         if hasattr(models.CalendarEvent, "user_id"):
-            count = db.query(models.CalendarEvent).filter(models.CalendarEvent.user_id.in_(users_to_delete)).delete(synchronize_session=False)
-            logger.info(f"   📅 Удалено событий календаря: {count}")
-
+            db.query(models.CalendarEvent).filter(models.CalendarEvent.user_id.in_(users_to_delete)).delete(synchronize_session=False)
         if hasattr(models.Transaction, "user_id"):
-            count = db.query(models.Transaction).filter(models.Transaction.user_id.in_(users_to_delete)).delete(synchronize_session=False)
-            logger.info(f"   💰 Удалено транзакций: {count}")
-        else:
-            logger.warning("   ⚠️ Модель Transaction не имеет поля user_id. Пропускаем прямое удаление.")
-
+            db.query(models.Transaction).filter(models.Transaction.user_id.in_(users_to_delete)).delete(synchronize_session=False)
         if hasattr(models.Category, "user_id"):
-            count = db.query(models.Category).filter(models.Category.user_id.in_(users_to_delete)).delete(synchronize_session=False)
-            logger.info(f"   🏷 Удалено категорий: {count}")
+            db.query(models.Category).filter(models.Category.user_id.in_(users_to_delete)).delete(synchronize_session=False)
 
-        count = db.query(models.User).filter(models.User.id.in_(users_to_delete)).delete(synchronize_session=False)
-        logger.info(f"   👤 Удалено пользователей: {count}")
-
+        db.query(models.User).filter(models.User.id.in_(users_to_delete)).delete(synchronize_session=False)
         db.commit()
-        logger.info("✅ Очистка тестовых данных успешно завершена.")
+        logger.info("✅ Очистка завершена.")
 
     except Exception as e:
         db.rollback()
-        logger.error(f"❌ Ошибка при очистке тестовых данных: {e}")
+        logger.error(f"❌ Ошибка при очистке: {e}")
     finally:
         db.close()
 
-# Запуск очистки при старте
 cleanup_test_data()

@@ -17,8 +17,8 @@ from .database import get_db
 # 1) приоритетно backend/.env
 # 2) затем системные env (если заданы снаружи)
 backend_env_path = Path(__file__).resolve().parents[1] / ".env"
+# Только backend/.env; второй load_dotenv() без пути в некоторых окружениях (stdin/heredoc) ломает python-dotenv
 load_dotenv(dotenv_path=backend_env_path)
-load_dotenv()
 
 router = APIRouter()
 

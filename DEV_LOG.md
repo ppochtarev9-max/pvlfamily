@@ -208,32 +208,29 @@
 ### Что реализовано
 
 1. **Backend auth:**
-   - `User` расширен полями: `password_hash`, `is_active`, `is_admin`, `must_reset_password`.
-   - `/auth/login` теперь принимает `name + password`, не создает пользователя автоматически.
-   - Единая ошибка при неверных данных: `"Неверные учетные данные"`.
-   - Добавлены endpoints:
-     - `POST /auth/admin/users` (создание пользователя только по `X-Admin-Token`),
-     - `POST /auth/change-password` (сброс временного пароля после первого входа).
-   - `/auth/users` и `/auth/users/{id}` закрыты авторизацией (delete — только для admin).
-
+  - `User` расширен полями: `password_hash`, `is_active`, `is_admin`, `must_reset_password`.
+  - `/auth/login` теперь принимает `name + password`, не создает пользователя автоматически.
+  - Единая ошибка при неверных данных: `"Неверные учетные данные"`.
+  - Добавлены endpoints:
+    - `POST /auth/admin/users` (создание пользователя только по `X-Admin-Token`),
+    - `POST /auth/change-password` (сброс временного пароля после первого входа).
+  - `/auth/users` и `/auth/users/{id}` закрыты авторизацией (delete — только для admin).
 2. **Bootstrap admin через `.env`:**
-   - Добавлены env-параметры `ADMIN_NAME`, `ADMIN_INITIAL_PASSWORD`, `ADMIN_TOKEN`.
-   - На старте приложения выполняется bootstrap админа (`Паша`):
-     - `is_admin=True`,
-     - `must_reset_password=True`.
-   - Добавлена легкая sqlite-миграция auth-колонок в `users` на старте.
-
+  - Добавлены env-параметры `ADMIN_NAME`, `ADMIN_INITIAL_PASSWORD`, `ADMIN_TOKEN`.
+  - На старте приложения выполняется bootstrap админа (`Паша`):
+    - `is_admin=True`,
+    - `must_reset_password=True`.
+  - Добавлена легкая sqlite-миграция auth-колонок в `users` на старте.
 3. **iOS:**
-   - `LoginView` обновлен на форму `имя + пароль`.
-   - Добавлен экранный сценарий forced reset пароля при первом входе.
-   - `AuthManager` обновлен:
-     - login с паролем,
-     - состояние `requiresPasswordReset`,
-     - метод `changePassword(newPassword:)`.
-
+  - `LoginView` обновлен на форму `имя + пароль`.
+  - Добавлен экранный сценарий forced reset пароля при первом входе.
+  - `AuthManager` обновлен:
+    - login с паролем,
+    - состояние `requiresPasswordReset`,
+    - метод `changePassword(newPassword:)`.
 4. **Тесты:**
-   - Обновлены `backend/tests/conftest.py` и `backend/tests/test_auth.py` под новую auth-модель.
-   - Прогон: `18 passed` (`test_auth`, `test_budget`, `test_tracker`).
+  - Обновлены `backend/tests/conftest.py` и `backend/tests/test_auth.py` под новую auth-модель.
+  - Прогон: `18 passed` (`test_auth`, `test_budget`, `test_tracker`).
 
 ### Локальная операционная заметка
 

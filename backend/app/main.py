@@ -24,6 +24,29 @@ logger = logging.getLogger("PVLFamily")
 # Создание таблиц
 models.Base.metadata.create_all(bind=engine)
 
+def ensure_budget_schema():
+    """
+    Миграция SQLite: ранее `categories` могла быть в legacy-схеме без `group_id`.
+    `create_all` не добавляет колонки в существующие таблицы — пересоздаём бюджетные таблицы.
+    """
+    with engine.begin() as conn:
+        r = conn.execute(
+            text("SELECT 1 FROM sqlite_master WHERE type='table' AND name='categories'")
+        )
+        if r.fetchone() is None:
+            return
+        cols = {row[1] for row in conn.execute(text("PRAGMA table_info(categories)"))}
+        if "group_id" in cols:
+            return
+        logger.info(
+            "🔄 Схема budget устарела (нет categories.group_id). "
+            "Пересоздаём transactions, categories, category_groups."
+        )
+        conn.execute(text("DROP TABLE IF EXISTS transactions"))
+        conn.execute(text("DROP TABLE IF EXISTS categories"))
+        conn.execute(text("DROP TABLE IF EXISTS category_groups"))
+    models.Base.metadata.create_all(bind=engine)
+
 def ensure_user_auth_columns():
     """
     Легкая миграция для SQLite: добавляем auth-колонки в users, если их еще нет.
@@ -39,6 +62,7 @@ def ensure_user_auth_columns():
         if "must_reset_password" not in existing:
             conn.execute(text("ALTER TABLE users ADD COLUMN must_reset_password BOOLEAN DEFAULT 0"))
 
+ensure_budget_schema()
 ensure_user_auth_columns()
 
 app = FastAPI(title="PVLFamily API")

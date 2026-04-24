@@ -251,3 +251,5 @@
 **Контекст:** после успешного логина и смены пароля на сервере — полная очистка таблиц бюджета (группы, подкатегории, транзакции) и повторный импорт из `history.csv` скриптом `backend/import_history.py`.
 
 **Порядок операций (на сервере):** остановить `pvlfamily` → `DELETE` из `transactions`, `categories`, `category_groups` (в таком порядке) → положить CSV в `backend/` → `cd backend && ./venv/bin/python import_history.py --user "Паша" --csv history.csv` → `systemctl start pvlfamily`. Пользователи (`users`), календарь, трекер сна в этом сценарии **не** трогаем.
+
+**Миграция `categories.group_id` (2026-04-24):** если на сервере осталась старая таблица `categories` без `group_id`, `import_history` падает с `no such column: categories.group_id`. В `main.py` добавлен `ensure_budget_schema()`: при старте API обнаруживает отсутствие `group_id`, дропает `transactions`, `categories`, `category_groups` и пересоздаёт их через `create_all`.

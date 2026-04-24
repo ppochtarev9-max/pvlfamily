@@ -5,11 +5,13 @@ from slowapi.util import get_remote_address
 from slowapi.errors import RateLimitExceeded
 from starlette.middleware.base import BaseHTTPMiddleware
 import logging
+from sqlalchemy import text
 
 # Импорты роутеров
 from . import models
 from .database import engine, SessionLocal
 from .auth import router as auth_router
+from .auth import ensure_admin_user
 from .budget import router as budget_router
 from .calendar import router as calendar_router
 from .stats import router as stats_router
@@ -21,6 +23,23 @@ logger = logging.getLogger("PVLFamily")
 
 # Создание таблиц
 models.Base.metadata.create_all(bind=engine)
+
+def ensure_user_auth_columns():
+    """
+    Легкая миграция для SQLite: добавляем auth-колонки в users, если их еще нет.
+    """
+    with engine.begin() as conn:
+        existing = {row[1] for row in conn.execute(text("PRAGMA table_info(users)"))}
+        if "password_hash" not in existing:
+            conn.execute(text("ALTER TABLE users ADD COLUMN password_hash VARCHAR"))
+        if "is_active" not in existing:
+            conn.execute(text("ALTER TABLE users ADD COLUMN is_active BOOLEAN DEFAULT 1"))
+        if "is_admin" not in existing:
+            conn.execute(text("ALTER TABLE users ADD COLUMN is_admin BOOLEAN DEFAULT 0"))
+        if "must_reset_password" not in existing:
+            conn.execute(text("ALTER TABLE users ADD COLUMN must_reset_password BOOLEAN DEFAULT 0"))
+
+ensure_user_auth_columns()
 
 app = FastAPI(title="PVLFamily API")
 
@@ -112,3 +131,15 @@ def cleanup_test_data():
         db.close()
 
 cleanup_test_data()
+
+def bootstrap_admin():
+    db = SessionLocal()
+    try:
+        ensure_admin_user(db)
+        logger.info("✅ Админ-пользователь синхронизирован из .env")
+    except Exception as e:
+        logger.error(f"❌ Ошибка bootstrap admin: {e}")
+    finally:
+        db.close()
+
+bootstrap_admin()

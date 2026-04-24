@@ -10,6 +10,10 @@ class User(Base):
     __tablename__ = "users"
     id = Column(Integer, primary_key=True, index=True)
     name = Column(String, unique=True, index=True, nullable=False)
+    password_hash = Column(String, nullable=True)
+    is_active = Column(Boolean, default=True)
+    is_admin = Column(Boolean, default=False)
+    must_reset_password = Column(Boolean, default=False)
     created_at = Column(DateTime, default=get_utc_now)
     
     created_transactions = relationship("Transaction", back_populates="creator", foreign_keys="Transaction.created_by_user_id", passive_deletes=True)

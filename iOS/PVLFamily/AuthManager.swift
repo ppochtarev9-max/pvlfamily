@@ -38,6 +38,7 @@ class AuthManager: ObservableObject {
     @Published var userId: Int?
     @Published var errorMessage: String?
     @Published var users: [[String: Any]] = []
+    @Published var requiresPasswordReset: Bool = false
     
     @Published var selectedServer: ServerMode {
          didSet {
@@ -49,6 +50,7 @@ class AuthManager: ObservableObject {
      }
 
     var baseURL: String = "http://127.0.0.1:8000"
+    private var pendingResetToken: String?
     
     private let session: URLSession = {
         let config = URLSessionConfiguration.default
@@ -152,8 +154,13 @@ class AuthManager: ObservableObject {
     }
     
     func loadUsers() {
+        guard let token = token else {
+            self.users = []
+            return
+        }
         guard let url = URL(string: "\(baseURL)/auth/users") else { return }
         var req = URLRequest(url: url); req.timeoutInterval = 10
+        req.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
         session.dataTask(with: req) { data, response, error in
             DispatchQueue.main.async {
                 if let error = error { self.errorMessage = APIError.networkError(error).errorDescription; return }
@@ -168,15 +175,16 @@ class AuthManager: ObservableObject {
         }.resume()
     }
     
-    func login(name: String) {
+    func login(name: String, password: String) {
         guard !name.trimmingCharacters(in: .whitespaces).isEmpty else { errorMessage = "Введите имя"; return }
+        guard !password.isEmpty else { errorMessage = "Введите пароль"; return }
         guard let url = URL(string: "\(baseURL)/auth/login") else { errorMessage = APIError.invalidURL.errorDescription; return }
         
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.timeoutInterval = 10
-        do { request.httpBody = try JSONSerialization.data(withJSONObject: ["name": name]) }
+        do { request.httpBody = try JSONSerialization.data(withJSONObject: ["name": name, "password": password]) }
         catch { errorMessage = "Ошибка формирования запроса"; return }
         
         session.dataTask(with: request) { data, response, error in
@@ -192,21 +200,74 @@ class AuthManager: ObservableObject {
                               let userId = json["user_id"] as? Int else {
                             throw APIError.decodingError(NSError(domain: "JSON", code: -1, userInfo: [:]))
                         }
-                        self.token = accessToken; self.userName = nameResp; self.userId = userId; self.isLoggedIn = true; self.errorMessage = nil
-                        UserDefaults.standard.set(accessToken, forKey: "userToken")
-                        UserDefaults.standard.set(nameResp, forKey: "userName")
-                        UserDefaults.standard.set(userId, forKey: "userId")
-                        print("✅ Вход: \(nameResp)")
-                        self.loadUsers()
+                        let mustReset = json["force_password_reset"] as? Bool ?? false
+                        if mustReset {
+                            self.pendingResetToken = accessToken
+                            self.requiresPasswordReset = true
+                            self.isLoggedIn = false
+                            self.errorMessage = "Нужно сменить временный пароль"
+                            print("⚠️ Требуется принудительная смена пароля для \(nameResp)")
+                        } else {
+                            self.token = accessToken
+                            self.userName = nameResp
+                            self.userId = userId
+                            self.isLoggedIn = true
+                            self.requiresPasswordReset = false
+                            self.pendingResetToken = nil
+                            self.errorMessage = nil
+                            UserDefaults.standard.set(accessToken, forKey: "userToken")
+                            UserDefaults.standard.set(nameResp, forKey: "userName")
+                            UserDefaults.standard.set(userId, forKey: "userId")
+                            print("✅ Вход: \(nameResp)")
+                            self.loadUsers()
+                        }
                     } catch { self.errorMessage = APIError.decodingError(error).errorDescription }
                 case .failure(let apiError): self.errorMessage = apiError.errorDescription
                 }
             }
         }.resume()
     }
+
+    func changePassword(newPassword: String, completion: @escaping (Result<Void, Error>) -> Void) {
+        guard newPassword.count >= 8 else {
+            completion(.failure(APIError.httpError(statusCode: 400, message: "Пароль должен быть не короче 8 символов")))
+            return
+        }
+        guard let resetToken = pendingResetToken else {
+            completion(.failure(APIError.unauthorized))
+            return
+        }
+        guard let url = URL(string: "\(baseURL)/auth/change-password") else {
+            completion(.failure(APIError.invalidURL))
+            return
+        }
+        var req = URLRequest(url: url)
+        req.httpMethod = "POST"
+        req.setValue("Bearer \(resetToken)", forHTTPHeaderField: "Authorization")
+        req.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        req.timeoutInterval = 10
+        req.httpBody = try? JSONSerialization.data(withJSONObject: ["new_password": newPassword])
+        session.dataTask(with: req) { data, response, error in
+            DispatchQueue.main.async {
+                if let error = error {
+                    completion(.failure(APIError.networkError(error)))
+                    return
+                }
+                switch self.handleHTTPResponse(response, data: data) {
+                case .success:
+                    self.errorMessage = nil
+                    self.pendingResetToken = nil
+                    self.requiresPasswordReset = false
+                    completion(.success(()))
+                case .failure(let apiError):
+                    completion(.failure(apiError))
+                }
+            }
+        }.resume()
+    }
     
     func logout() {
-        isLoggedIn = false; userName = nil; userId = nil; token = nil
+        isLoggedIn = false; userName = nil; userId = nil; token = nil; pendingResetToken = nil; requiresPasswordReset = false
         UserDefaults.standard.removeObject(forKey: "userToken")
         UserDefaults.standard.removeObject(forKey: "userName")
         UserDefaults.standard.removeObject(forKey: "userId")

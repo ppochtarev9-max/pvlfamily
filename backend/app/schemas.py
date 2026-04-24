@@ -9,8 +9,31 @@ class UserBase(BaseModel):
 class UserCreate(UserBase):
     pass
 
+class UserLogin(BaseModel):
+    name: str
+    password: str
+
+class AdminUserCreate(BaseModel):
+    name: str
+    password: str
+    is_active: bool = True
+    must_reset_password: bool = True
+
+class PasswordChangeRequest(BaseModel):
+    new_password: str
+
+class LoginResponse(BaseModel):
+    access_token: str
+    token_type: str
+    user_id: int
+    name: str
+    force_password_reset: bool = False
+
 class UserOut(UserBase):
     id: int
+    is_active: bool = True
+    is_admin: bool = False
+    must_reset_password: bool = False
     created_at: datetime
     model_config = ConfigDict(from_attributes=True)
 

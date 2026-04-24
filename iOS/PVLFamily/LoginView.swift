@@ -2,7 +2,10 @@ import SwiftUI
 
 struct LoginView: View {
     @EnvironmentObject var authManager: AuthManager
-    @State private var newName: String = ""
+    @State private var userName: String = ""
+    @State private var password: String = ""
+    @State private var newPassword: String = ""
+    @State private var confirmPassword: String = ""
     @State private var isAnimating: Bool = false
     
     var body: some View {
@@ -66,95 +69,87 @@ struct LoginView: View {
                         .padding(.horizontal)
                         .opacity(isAnimating ? 1.0 : 0.0)
                         .animation(.easeInOut.delay(0.5), value: isAnimating)
-                        
-                        // Список пользователей
-                        if !authManager.users.isEmpty {
-                            VStack(alignment: .leading, spacing: 12) {
-                                Text("Быстрый вход")
-                                    .font(.headline)
-                                    .foregroundColor(.secondary)
-                                    .padding(.horizontal, 4)
-                                
-                                VStack(spacing: 8) {
-                                    // ИСПРАВЛЕНО: используем indices и безопасное получение данных
-                                    ForEach(authManager.users.indices, id: \.self) { index in
-                                        let user = authManager.users[index]
-                                        if let name = user["name"] as? String {
-                                            Button(action: {
-                                                withAnimation {
-                                                    authManager.login(name: name)
-                                                }
-                                            }) {
-                                                HStack {
-                                                    Circle()
-                                                        .fill(Color.blue.opacity(0.1))
-                                                        .frame(width: 40, height: 40)
-                                                        .overlay(
-                                                            Image(systemName: "person.fill")
-                                                                .foregroundColor(.blue)
-                                                        )
-                                                    
-                                                    Text(name)
-                                                        .font(.body)
-                                                        .fontWeight(.medium)
-                                                        .foregroundColor(.primary)
-                                                    
-                                                    Spacer()
-                                                    
-                                                    Image(systemName: "chevron.right")
-                                                        .foregroundColor(.gray)
-                                                }
-                                                .padding()
-                                                .background(Color(.systemBackground))
-                                                .cornerRadius(16)
-                                                .shadow(color: Color.black.opacity(0.05), radius: 5, x: 0, y: 2)
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-                            .padding(.horizontal)
-                            .opacity(isAnimating ? 1.0 : 0.0)
-                            .animation(.easeInOut.delay(0.7), value: isAnimating)
-                        }
-                        
+
                         Divider()
                             .padding(.horizontal)
                             .opacity(isAnimating ? 1.0 : 0.0)
                         
-                        // Создание нового пользователя
+                        // Логин
                         VStack(alignment: .leading, spacing: 12) {
-                            Text("Новый пользователь")
+                            Text("Вход")
                                 .font(.headline)
                                 .foregroundColor(.secondary)
                                 .padding(.horizontal, 4)
                             
-                            HStack(spacing: 12) {
-                                TextField("Введите имя", text: $newName)
+                            VStack(spacing: 12) {
+                                TextField("Введите имя", text: $userName)
                                     .textFieldStyle(.plain)
                                     .padding()
                                     .background(Color(.systemBackground))
                                     .cornerRadius(16)
                                     .shadow(color: Color.black.opacity(0.05), radius: 5, x: 0, y: 2)
-                                    .accessibilityIdentifier("NameInput") // Добавь это
+                                    .accessibilityIdentifier("NameInput")
+
+                                SecureField("Введите пароль", text: $password)
+                                    .textFieldStyle(.plain)
+                                    .padding()
+                                    .background(Color(.systemBackground))
+                                    .cornerRadius(16)
+                                    .shadow(color: Color.black.opacity(0.05), radius: 5, x: 0, y: 2)
+                                    .accessibilityIdentifier("PasswordInput")
 
                                 Button(action: {
                                     withAnimation {
-                                        authManager.login(name: newName)
+                                        authManager.login(name: userName, password: password)
                                     }
-                                    
                                 }) {
-                                    Image(systemName: "arrow.right.circle.fill")
-                                        .font(.system(size: 40))
-                                        .foregroundColor(newName.isEmpty ? .gray : .blue)
+                                    Text("Войти")
+                                        .fontWeight(.semibold)
+                                        .frame(maxWidth: .infinity)
+                                        .padding()
+                                        .background((userName.isEmpty || password.isEmpty) ? Color.gray : Color.blue)
+                                        .foregroundColor(.white)
+                                        .cornerRadius(12)
                                 }
-                                .disabled(newName.isEmpty)
-                                .accessibilityIdentifier("LoginButton") // <--- ПРАВИЛЬНО: здесь
+                                .disabled(userName.isEmpty || password.isEmpty)
+                                .accessibilityIdentifier("LoginButton")
                             }
                         }
                         .padding(.horizontal)
                         .opacity(isAnimating ? 1.0 : 0.0)
                         .animation(.easeInOut.delay(0.9), value: isAnimating)
+
+                        if authManager.requiresPasswordReset {
+                            VStack(alignment: .leading, spacing: 12) {
+                                Text("Смена временного пароля")
+                                    .font(.headline)
+                                    .foregroundColor(.orange)
+                                SecureField("Новый пароль (минимум 8 символов)", text: $newPassword)
+                                    .textFieldStyle(.roundedBorder)
+                                SecureField("Повторите новый пароль", text: $confirmPassword)
+                                    .textFieldStyle(.roundedBorder)
+                                Button("Сохранить новый пароль") {
+                                    guard newPassword == confirmPassword else {
+                                        authManager.errorMessage = "Пароли не совпадают"
+                                        return
+                                    }
+                                    authManager.changePassword(newPassword: newPassword) { result in
+                                        switch result {
+                                        case .success:
+                                            authManager.errorMessage = "Пароль обновлен. Выполните вход заново."
+                                            password = ""
+                                            newPassword = ""
+                                            confirmPassword = ""
+                                        case .failure(let error):
+                                            authManager.errorMessage = error.localizedDescription
+                                        }
+                                    }
+                                }
+                                .buttonStyle(.borderedProminent)
+                                .disabled(newPassword.count < 8 || confirmPassword.isEmpty)
+                            }
+                            .padding(.horizontal)
+                        }
                         
                         // Ошибка
                         if let error = authManager.errorMessage {

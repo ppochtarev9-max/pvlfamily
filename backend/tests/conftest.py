@@ -5,6 +5,12 @@ from fastapi.testclient import TestClient
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 from app.database import Base, get_db
+
+os.environ.setdefault("SECRET_KEY", "test-secret-key")
+os.environ.setdefault("ADMIN_TOKEN", "test-admin-token")
+os.environ.setdefault("ADMIN_NAME", "Паша")
+os.environ.setdefault("ADMIN_INITIAL_PASSWORD", "Temporary123")
+
 from app.main import app
 from app import auth, budget, tracker
 
@@ -51,7 +57,13 @@ def client():
 
 @pytest.fixture
 def test_user(client):
-    user_data = {"name": "TestUser"}
+    user_data = {"name": "TestUser", "password": "Password123"}
+    create_resp = client.post(
+        "/auth/admin/users",
+        json={"name": user_data["name"], "password": user_data["password"], "must_reset_password": False},
+        headers={"X-Admin-Token": "test-admin-token"},
+    )
+    assert create_resp.status_code in [200, 201, 409]
     response = client.post("/auth/login", json=user_data)
     token = response.json().get("access_token")
     user_data["access_token"] = token

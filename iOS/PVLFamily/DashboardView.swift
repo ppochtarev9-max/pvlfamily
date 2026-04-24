@@ -35,13 +35,9 @@ struct DashboardView: View {
     @State private var lastWakeUpTime: Date?
     @State private var lastUpdated: Date?
 
-    // Таймеры
-    @State private var backgroundTimer: Timer?
-    
     // Флаги управления
     @State private var hasLoadedInitialStatus = false
     @State private var isSyncing = false
-    @State private var isViewActive = false
     
     // Live Activity
     @State private var currentActivity: Activity<SleepActivityAttributes>?
@@ -123,26 +119,21 @@ struct DashboardView: View {
                     loadTrackerStatus()
                     hasLoadedInitialStatus = true
                 }
-                isViewActive = true
-                
                 if isSleeping || lastWakeUpTime != nil {
-                    startBackgroundTimer()
+                    updateLiveActivityIfTracking()
                 }
             }
             .onDisappear {
                 print("👁️ [LIFECYCLE] Dashboard исчез с экрана (onDisappear).")
-                isViewActive = false
             }
             .onReceive(NotificationCenter.default.publisher(for: UIApplication.willEnterForegroundNotification)) { _ in
                 print("☀️ [LIFECYCLE] Приложение возвращается на передний план.")
-                isViewActive = true
                 if isSleeping || lastWakeUpTime != nil {
-                    startBackgroundTimer()
+                    updateLiveActivityIfTracking()
                 }
             }
             .onReceive(NotificationCenter.default.publisher(for: UIApplication.didEnterBackgroundNotification)) { _ in
                 print("🌙 [LIFECYCLE] Приложение ушло в фон.")
-                isViewActive = false
             }
             
             .refreshable {
@@ -206,42 +197,15 @@ struct DashboardView: View {
         }
     }
     
-    // --- ЛОГИКА ТАЙМЕРОВ ---
+    // --- Live Activity: подписка на `Text(..., .timer)` в extension — тикает без фонового Timer ---
 
     @MainActor
-    func startBackgroundTimer() {
+    func updateLiveActivityIfTracking() {
         guard ActivityAuthorizationInfo().areActivitiesEnabled else { return }
-        
-        if backgroundTimer != nil { return }
-        
-        print("🚀 [TIMER] Запуск фонового таймера (интервал 10 сек) для виджета.")
-        
-        backgroundTimer = Timer.scheduledTimer(withTimeInterval: 10.0, repeats: true) { _ in
-            let activity = currentActivity ?? Activity<SleepActivityAttributes>.activities.first
-            
-            if let activity = activity {
-                let refDate = isSleeping ? (sleepStartTime ?? Date()) : (lastWakeUpTime ?? Date())
-                let accurateElapsed = max(0, Int(Date().timeIntervalSince(refDate)))
-                print("⏱ [WIDGET BG] Тик: \(accurateElapsed) сек.")
-                
-                Task { @MainActor in
-                    updateLiveActivity()
-                }
-            } else {
-                print("⏹ [TIMER] Активностей не найдено. Остановка фонового таймера.")
-                stopBackgroundTimer()
-            }
-        }
-        RunLoop.current.add(backgroundTimer!, forMode: .common)
+        guard isSleeping || lastWakeUpTime != nil else { return }
+        updateLiveActivity()
     }
-    
-    @MainActor
-    func stopBackgroundTimer() {
-        backgroundTimer?.invalidate()
-        backgroundTimer = nil
-        print("🛑 [TIMER] Фоновый таймер остановлен.")
-    }
-    
+
     // --- ОБЩАЯ ЛОГИКА ---
     
     func loadTrackerStatus(force: Bool = false) {
@@ -345,13 +309,8 @@ struct DashboardView: View {
             self.isSleeping = newState
             if newState {
                 if let ref = newRefDate { startLiveActivity(startTime: ref) }
-                startBackgroundTimer()
             } else {
-                startBackgroundTimer()
-            }
-        } else {
-            if isSleeping || lastWakeUpTime != nil {
-                startBackgroundTimer()
+                // остаёмся в режиме бодрствования; LA обновим ниже
             }
         }
         
@@ -359,6 +318,10 @@ struct DashboardView: View {
              let ref = isSleeping ? (sleepStartTime ?? Date()) : (lastWakeUpTime ?? Date())
              print("🆘 [FIX] Активность потеряна, пересоздаем...")
              startLiveActivity(startTime: ref)
+        }
+
+        if isSleeping || lastWakeUpTime != nil {
+            updateLiveActivityIfTracking()
         }
     }
     
@@ -380,7 +343,6 @@ struct DashboardView: View {
         isSleeping = true
         sleepStartTime = Date()
         lastWakeUpTime = nil
-        startBackgroundTimer()
         
         authManager.startSleep { result in
             DispatchQueue.main.async {
@@ -622,15 +584,11 @@ struct TrackerStatusWidget: View {
                 Spacer()
             }
             
-            TimelineView(.periodic(from: referenceDate, by: 1.0)) { context in
-                let elapsed = Int(referenceDate.distance(to: Date()))
-                let formatted = formatTime(max(0, elapsed))
-                
-                Text(formatted)
-                    .font(.system(size: 36, weight: .bold, design: .rounded))
-                    .foregroundColor(isSleeping ? .purple : .orange)
-                    .monospacedDigit()
-            }
+            // Системный тик (как Live Activity) — совпадает с островом/лок-скрином
+            Text(referenceDate, style: .timer)
+                .font(.system(size: 36, weight: .bold, design: .rounded))
+                .foregroundColor(isSleeping ? .purple : .orange)
+                .monospacedDigit()
             
             HStack(spacing: 12) {
                 if isSleeping {
@@ -653,13 +611,6 @@ struct TrackerStatusWidget: View {
         .background(Color(.systemBackground))
         .cornerRadius(20)
         .shadow(color: Color.black.opacity(0.1), radius: 10, x: 0, y: 5)
-    }
-    
-    func formatTime(_ seconds: Int) -> String {
-        let h = seconds / 3600
-        let m = (seconds % 3600) / 60
-        let s = seconds % 60
-        return String(format: "%02d:%02d:%02d", h, m, s)
     }
 }
 

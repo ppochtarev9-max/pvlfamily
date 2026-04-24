@@ -37,11 +37,7 @@ struct SleepActivityProvider: TimelineProvider {
 struct PVLFamilyLiveActivity: Widget {
     var body: some WidgetConfiguration {
         ActivityConfiguration(for: SleepActivityAttributes.self) { context in
-            // Вычисляем время прямо здесь
-            let elapsedTime = Date().timeIntervalSince(context.state.startTime)
-            let formattedTime = formatTime(Int(max(0, elapsedTime)))
-
-            // --- ЭКРАН БЛОКИРОВКИ ---
+            // --- ЭКРАН БЛОКИРОВКИ — Text(.timer) тикает в системе без Activity.update от приложения ---
             VStack(spacing: 12) {
                 HStack {
                     Image(systemName: context.state.isSleeping ? "moon.fill" : "sun.max.fill")
@@ -54,7 +50,7 @@ struct PVLFamilyLiveActivity: Widget {
 
                     Spacer()
 
-                    Text(formattedTime)
+                    Text(context.state.startTime, style: .timer)
                         .font(.system(.title2, design: .rounded))
                         .monospacedDigit()
                         .foregroundColor(context.state.isSleeping ? .purple : .orange)
@@ -74,20 +70,15 @@ struct PVLFamilyLiveActivity: Widget {
             .activityBackgroundTint(Color(.systemBackground).opacity(0.9))
             .activitySystemActionForegroundColor(.primary)
             .containerBackground(.fill.tertiary, for: .widget)
-            //.activityPeriodicUpdate(seconds: 10) // <-- Должно работать после containerBackground в новых iOS
 
         } dynamicIsland: { context in
-            // Вычисляем время для Dynamic Island
-            let elapsedTime = Date().timeIntervalSince(context.state.startTime)
-            let formattedTime = formatTime(Int(max(0, elapsedTime)))
-            
             return DynamicIsland {
                 // Expanded Region
                 DynamicIslandExpandedRegion(.leading) {
                     VStack(alignment: .leading) {
                         Text(context.state.statusText)
                             .font(.headline)
-                        Text(formattedTime)
+                        Text(context.state.startTime, style: .timer)
                             .font(.title3)
                             .monospacedDigit()
                             .foregroundColor(context.state.isSleeping ? .purple : .orange)
@@ -139,9 +130,11 @@ struct PVLFamilyLiveActivity: Widget {
                 Image(systemName: context.state.isSleeping ? "moon.fill" : "sun.max.fill")
                     .foregroundColor(context.state.isSleeping ? .purple : .orange)
             } compactTrailing: {
-                Text(formattedTime)
+                Text(context.state.startTime, style: .timer)
                     .font(.caption2)
                     .monospacedDigit()
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.5)
             } minimal: {
                 Image(systemName: context.state.isSleeping ? "moon.fill" : "sun.max.fill")
                     .foregroundColor(context.state.isSleeping ? .purple : .orange)
@@ -151,14 +144,6 @@ struct PVLFamilyLiveActivity: Widget {
 }
 
 // --- ХЕЛПЕРЫ ---
-func formatTime(_ seconds: Int) -> String {
-    let h = seconds / 3600
-    let m = (seconds % 3600) / 60
-    let s = seconds % 60
-    if h > 0 { return String(format: "%d:%02d:%02d", h, m, s) }
-    return String(format: "%02d:%02d", m, s)
-}
-
 func formatDate(_ date: Date) -> String {
     let f = DateFormatter()
     f.timeStyle = .short

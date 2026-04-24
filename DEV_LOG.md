@@ -263,3 +263,13 @@
 **Итог:** единая кодовая база на `main` подтянута **локально и на cloud**; сервис `pvlfamily` и зависимости в `backend/venv` согласованы; `backend/.env` — единственный источник admin/auth. Парольный вход и смена пароля на production проверены. Схема бюджета на SQLite приведена к `groups` / `subcategories` (`ensure_budget_schema` + при необходимости реимпорт `import_history.py`). Команды деплоя и пути смотри `COMMANDS_full.md` / `PROJECT_CONTEXT.md`.
 
 **Дальше:** по бэклогу — следующий приоритет/topic по выбору (SEC-замыкание аудита, UI, аналитика, тесты iOS).
+
+---
+
+## Сессия: Live Activity — системный таймер
+
+**Дата:** 2026-04-24
+
+**Проблема:** в разметке LA время считалось как `formatTime` от `Date()` в момент последнего `Activity.update`; в фоне приложение не вызывало `update` → цифры замирали.
+
+**Решение:** в `PVLFamilyActivity.swift` везде отображение через `Text(context.state.startTime, style: .timer)`; в `DashboardView` убран 10-секундный `Timer`, добавлен `updateLiveActivityIfTracking()` при sync/foreground/onAppear; в `TrackerStatusWidget` тот же `Text(..., style: .timer)` вместо `TimelineView` + ручного формата.

@@ -190,40 +190,57 @@ class AuthManager: ObservableObject {
         session.dataTask(with: request) { data, response, error in
             DispatchQueue.main.async {
                 if let error = error { self.errorMessage = APIError.networkError(error).errorDescription; return }
-                switch self.handleHTTPResponse(response, data: data) {
-                case .success:
-                    guard let data = data else { self.errorMessage = APIError.noData.errorDescription; return }
-                    do {
-                        guard let json = try JSONSerialization.jsonObject(with: data) as? [String: Any],
-                              let accessToken = json["access_token"] as? String,
-                              let nameResp = json["name"] as? String,
-                              let userId = json["user_id"] as? Int else {
-                            throw APIError.decodingError(NSError(domain: "JSON", code: -1, userInfo: [:]))
-                        }
-                        let mustReset = json["force_password_reset"] as? Bool ?? false
-                        if mustReset {
-                            self.pendingResetToken = accessToken
-                            self.requiresPasswordReset = true
-                            self.isLoggedIn = false
-                            self.errorMessage = "Нужно сменить временный пароль"
-                            print("⚠️ Требуется принудительная смена пароля для \(nameResp)")
-                        } else {
-                            self.token = accessToken
-                            self.userName = nameResp
-                            self.userId = userId
-                            self.isLoggedIn = true
-                            self.requiresPasswordReset = false
-                            self.pendingResetToken = nil
-                            self.errorMessage = nil
-                            UserDefaults.standard.set(accessToken, forKey: "userToken")
-                            UserDefaults.standard.set(nameResp, forKey: "userName")
-                            UserDefaults.standard.set(userId, forKey: "userId")
-                            print("✅ Вход: \(nameResp)")
-                            self.loadUsers()
-                        }
-                    } catch { self.errorMessage = APIError.decodingError(error).errorDescription }
-                case .failure(let apiError): self.errorMessage = apiError.errorDescription
+                guard let httpResponse = response as? HTTPURLResponse else {
+                    self.errorMessage = APIError.serverError.errorDescription
+                    return
                 }
+                // 401 на /auth/login — неверные учётные данные, не «сессия истекла» (см. handleHTTPResponse)
+                if httpResponse.statusCode == 401 {
+                    let msg = Self.apiErrorMessage(from: data)
+                    if msg == "Неизвестная ошибка" || msg.isEmpty {
+                        self.errorMessage = "Неверное имя или пароль"
+                    } else {
+                        self.errorMessage = msg
+                    }
+                    return
+                }
+                if !(200...299).contains(httpResponse.statusCode) {
+                    self.errorMessage = APIError.httpError(
+                        statusCode: httpResponse.statusCode,
+                        message: Self.apiErrorMessage(from: data)
+                    ).errorDescription
+                    return
+                }
+                guard let data = data else { self.errorMessage = APIError.noData.errorDescription; return }
+                do {
+                    guard let json = try JSONSerialization.jsonObject(with: data) as? [String: Any],
+                          let accessToken = json["access_token"] as? String,
+                          let nameResp = json["name"] as? String,
+                          let userId = json["user_id"] as? Int else {
+                        throw APIError.decodingError(NSError(domain: "JSON", code: -1, userInfo: [:]))
+                    }
+                    let mustReset = json["force_password_reset"] as? Bool ?? false
+                    if mustReset {
+                        self.pendingResetToken = accessToken
+                        self.requiresPasswordReset = true
+                        self.isLoggedIn = false
+                        self.errorMessage = "Нужно сменить временный пароль"
+                        print("⚠️ Требуется принудительная смена пароля для \(nameResp)")
+                    } else {
+                        self.token = accessToken
+                        self.userName = nameResp
+                        self.userId = userId
+                        self.isLoggedIn = true
+                        self.requiresPasswordReset = false
+                        self.pendingResetToken = nil
+                        self.errorMessage = nil
+                        UserDefaults.standard.set(accessToken, forKey: "userToken")
+                        UserDefaults.standard.set(nameResp, forKey: "userName")
+                        UserDefaults.standard.set(userId, forKey: "userId")
+                        print("✅ Вход: \(nameResp)")
+                        self.loadUsers()
+                    }
+                } catch { self.errorMessage = APIError.decodingError(error).errorDescription }
             }
         }.resume()
     }

@@ -1,133 +1,186 @@
-import csv, re, os
+import argparse
+import csv
+import os
+import re
 from datetime import datetime
 
-USER_NAME = "Паша"
-CSV_FILE = "history.csv"
 
-def parse_amount(s):
-    if not s: return 0.0
-    return float(re.sub(r'[^\d,.+-]', '', str(s)).replace(',', '.'))
+DEFAULT_USER_NAME = "Паша"
+DEFAULT_CSV_FILE = "history.csv"
 
-def detect_encoding(path):
-    with open(path, 'rb') as f:
+
+def parse_amount(raw_value: str) -> float:
+    if not raw_value:
+        return 0.0
+    normalized = re.sub(r"[^\d,.+-]", "", str(raw_value)).replace(",", ".")
+    return float(normalized) if normalized else 0.0
+
+
+def detect_encoding(path: str) -> str:
+    with open(path, "rb") as f:
         chunk = f.read(2048)
-        if chunk.startswith(b'\xef\xbb\xbf'): return 'utf-8-sig'
+        if chunk.startswith(b"\xef\xbb\xbf"):
+            return "utf-8-sig"
         try:
-            chunk.decode('utf-8')
-            return 'utf-8'
-        except: return 'windows-1251'
+            chunk.decode("utf-8")
+            return "utf-8"
+        except UnicodeDecodeError:
+            return "windows-1251"
 
-def main():
-    print(f"=== ЗАГРУЗКА ИСТОРИИ ({USER_NAME}) ===")
-    
-    # ИМПОРТ ВНУТРИ ФУНКЦИИ
+
+def parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description="Импорт истории транзакций из CSV в новую модель groups/subcategories.")
+    parser.add_argument("--user", default=DEFAULT_USER_NAME, help="Имя пользователя, от имени которого создаются транзакции.")
+    parser.add_argument("--csv", default=DEFAULT_CSV_FILE, help="Путь к CSV-файлу истории.")
+    parser.add_argument("--dry-run", action="store_true", help="Проверка без записи в БД.")
+    parser.add_argument(
+        "--replace-user-transactions",
+        action="store_true",
+        help="Удалить существующие транзакции пользователя перед импортом.",
+    )
+    return parser.parse_args()
+
+
+def main() -> None:
+    args = parse_args()
+    print(f"=== ИМПОРТ ИСТОРИИ ({args.user}) ===")
+    print(f"CSV: {args.csv}")
+    print(f"Режим: {'DRY-RUN' if args.dry_run else 'WRITE'}")
+
     from app.database import SessionLocal, engine, Base
     from app import models
-    
-    # ГАРАНТИЯ: Создаем таблицы по актуальным моделям перед работой
-    # Это добавит отсутствующие колонки (например, creator_name_snapshot), если их нет
+
     Base.metadata.create_all(bind=engine)
-    
+
+    if not os.path.exists(args.csv):
+        print(f"❌ Файл не найден: {args.csv}")
+        return
+
     db = SessionLocal()
     try:
-        user = db.query(models.User).filter(models.User.name == USER_NAME).first()
+        user = db.query(models.User).filter(models.User.name == args.user).first()
         if not user:
-            print(f"❌ Пользователь '{USER_NAME}' не найден!")
-            return
-        
-        print("🧹 Полная очистка данных...")
-        db.query(models.Transaction).filter(models.Transaction.created_by_user_id == user.id).delete()
-        db.query(models.Category).filter().delete()
-        db.commit()
-        
-        if not os.path.exists(CSV_FILE):
-            print(f"❌ Файл {CSV_FILE} не найден")
+            print(f"❌ Пользователь '{args.user}' не найден")
             return
 
-        enc = detect_encoding(CSV_FILE)
-        print(f"📂 Чтение файла (кодировка: {enc})...")
-        
-        cat_cache = {}
-        cnt_cat = 0
-        cnt_tx = 0
+        if args.replace_user_transactions:
+            print("🧹 Удаление существующих транзакций пользователя...")
+            db.query(models.Transaction).filter(models.Transaction.created_by_user_id == user.id).delete()
+            if not args.dry_run:
+                db.commit()
 
-        with open(CSV_FILE, 'r', encoding=enc) as f:
-            reader = csv.DictReader(f, delimiter=';')
-            for i, row in enumerate(reader, 2):
-                d_str = row.get('Дата', '').strip()
-                v_str = row.get('Вид', '').strip()
-                c_name = row.get('Категория', '').strip()
-                s_name = row.get('Подкатегория', '').strip()
-                a_str = row.get('Сумма', '0')
+        enc = detect_encoding(args.csv)
+        print(f"📂 Чтение CSV (кодировка: {enc})...")
 
-                if not d_str: continue
-                try: dt = datetime.strptime(d_str, "%d.%m.%Y")
-                except: continue
+        group_cache = {}
+        subcategory_cache = {}
 
-                amt = parse_amount(a_str)
-                is_income = 'Доход' in v_str
-                if is_income: amt = abs(amt)
-                else: amt = -abs(amt)
-                
+        created_groups = 0
+        created_subcategories = 0
+        imported_transactions = 0
+        skipped_rows = 0
+
+        with open(args.csv, "r", encoding=enc) as f:
+            reader = csv.DictReader(f, delimiter=";")
+            for row_num, row in enumerate(reader, start=2):
+                date_str = (row.get("Дата") or "").strip()
+                kind_str = (row.get("Вид") or "").strip()
+                group_name = (row.get("Категория") or "").strip()
+                sub_name = (row.get("Подкатегория") or "").strip()
+                amount_str = row.get("Сумма", "0")
+
+                if not date_str or not group_name:
+                    skipped_rows += 1
+                    continue
+
+                try:
+                    tx_date = datetime.strptime(date_str, "%d.%m.%Y")
+                except ValueError:
+                    print(f"⚠️ Строка {row_num}: некорректная дата '{date_str}', пропуск")
+                    skipped_rows += 1
+                    continue
+
+                is_income = "Доход" in kind_str
                 tx_type = "income" if is_income else "expense"
+                amount = parse_amount(amount_str)
+                amount = abs(amount) if is_income else -abs(amount)
 
-                # 1. Создаем/ищем Родителя
-                cat_id = None
-                if c_name:
-                    key = (c_name, None)
-                    if key not in cat_cache:
-                        existing = db.query(models.Category).filter(models.Category.name==c_name, models.Category.parent_id.is_(None)).first()
-                        if not existing:
-                            existing = models.Category(name=c_name, type=tx_type, parent_id=None)
-                            db.add(existing)
-                            db.flush()
-                            cnt_cat += 1
-                            print(f"   + Категория: {c_name}")
-                        cat_cache[key] = existing.id
-                    cat_id = cat_cache[key]
-
-                # 2. Создаем/ищем Подкатегорию
-                final_id = cat_id
-                if s_name and cat_id:
-                    clean_sub = s_name.strip()
-                    if clean_sub:
-                        key_s = (clean_sub, cat_id)
-                        if key_s not in cat_cache:
-                            existing_s = db.query(models.Category).filter(models.Category.name==clean_sub, models.Category.parent_id==cat_id).first()
-                            if not existing_s:
-                                parent = db.get(models.Category, cat_id)
-                                p_type = parent.type if parent else tx_type
-                                existing_s = models.Category(name=clean_sub, type=p_type, parent_id=cat_id)
-                                db.add(existing_s)
-                                db.flush()
-                                cnt_cat += 1
-                                print(f"      + Подкатегория: {clean_sub}")
-                            cat_cache[key_s] = existing_s.id
-                        final_id = cat_cache[key_s]
-
-                if final_id:
-                    # СОЗДАНИЕ ТРАНЗАКЦИИ С НОВЫМ ПОЛЕМ
-                    tx = models.Transaction(
-                        amount=amt, 
-                        date=dt, 
-                        category_id=final_id,
-                        transaction_type=tx_type, 
-                        created_by_user_id=user.id,
-                        creator_name_snapshot=user.name  # Явно передаем имя
+                group_key = (group_name, tx_type)
+                group = group_cache.get(group_key)
+                if not group:
+                    group = (
+                        db.query(models.CategoryGroup)
+                        .filter(
+                            models.CategoryGroup.name == group_name,
+                            models.CategoryGroup.type == tx_type,
+                        )
+                        .first()
                     )
-                    db.add(tx)
-                    cnt_tx += 1
+                    if not group:
+                        group = models.CategoryGroup(name=group_name, type=tx_type, is_hidden=False)
+                        db.add(group)
+                        db.flush()
+                        created_groups += 1
+                        print(f"   + Группа: {group_name} ({tx_type})")
+                    group_cache[group_key] = group
 
-        db.commit()
-        print(f"\n✅ ГОТОВО! Категорий: {cnt_cat}, Транзакций: {cnt_tx}")
+                if not sub_name:
+                    sub_name = "Общее"
 
-    except Exception as e:
+                sub_key = (sub_name, group.id)
+                sub = subcategory_cache.get(sub_key)
+                if not sub:
+                    sub = (
+                        db.query(models.Category)
+                        .filter(
+                            models.Category.name == sub_name,
+                            models.Category.group_id == group.id,
+                        )
+                        .first()
+                    )
+                    if not sub:
+                        sub = models.Category(name=sub_name, group_id=group.id, is_hidden=False)
+                        db.add(sub)
+                        db.flush()
+                        created_subcategories += 1
+                        print(f"      + Подкатегория: {sub_name}")
+                    subcategory_cache[sub_key] = sub
+
+                tx = models.Transaction(
+                    amount=amount,
+                    transaction_type=tx_type,
+                    category_id=sub.id,
+                    description=None,
+                    date=tx_date,
+                    created_by_user_id=user.id,
+                    creator_name_snapshot=user.name,
+                )
+                db.add(tx)
+                imported_transactions += 1
+
+        if args.dry_run:
+            db.rollback()
+            print("🧪 DRY-RUN завершен: изменения не сохранены.")
+        else:
+            db.commit()
+            print("✅ Импорт завершен: изменения сохранены.")
+
+        print(
+            "Итог: "
+            f"групп создано={created_groups}, "
+            f"подкатегорий создано={created_subcategories}, "
+            f"транзакций импортировано={imported_transactions}, "
+            f"строк пропущено={skipped_rows}"
+        )
+
+    except Exception as exc:
         db.rollback()
-        print(f"❌ Ошибка: {e}")
+        print(f"❌ Ошибка импорта: {exc}")
         import traceback
         traceback.print_exc()
     finally:
         db.close()
+
 
 if __name__ == "__main__":
     main()

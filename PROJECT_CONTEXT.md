@@ -8,13 +8,20 @@
 - backend API (FastAPI)
 - выгрузки данных в Excel
 
-## Окружение разработки (актуально на 2026-04-23)
+## Окружение разработки (актуально на 2026-04-24)
 
 - OS: macOS (Darwin 25.4.0, ARM64)
 - Xcode: 26.4, Swift 6.3
 - Python: 3.12.x (локально), проектный venv в `backend/venv`
-- Backend stack: FastAPI, Uvicorn, SQLAlchemy, openpyxl, slowapi
+- Backend stack: FastAPI, Uvicorn, SQLAlchemy, openpyxl, slowapi, passlib, python-dotenv
 - Режимы API: Local `http://127.0.0.1:8000` / Cloud `https://pvlfamily.ru`
+
+### Снимок: локаль и production (2026-04-24)
+
+- **Репозиторий** `main` синхронизирован локально и на сервере; конфиг **только** `backend/.env` (секреты, `ADMIN_*`, `SECRET_KEY`).
+- **Cloud:** приложение в `/home/user1/pvl_app`, venv `backend/venv`, systemd `pvlfamily`, Uvicorn `app.main:app`, БД `backend/pvlfamily.db` (путь фиксирован в `database.py`).
+- **Auth:** парольный вход; bootstrap админа из env; в iOS при логине 401 показываем текст с сервера / «неверные данные», а не «сессия истекла».
+- **Бюджет / SQLite:** `create_all` **не** обновляет схему существующих таблиц. Если в `categories` нет `group_id`, при старте API выполняется `ensure_budget_schema()` в `main.py` (пересоздание `transactions` / `categories` / `category_groups`). Исторический импорт: `backend/import_history.py` (CSV `;`, владелец транзакций — пользователь с заданным `--user`).
 
 ## Архитектура
 

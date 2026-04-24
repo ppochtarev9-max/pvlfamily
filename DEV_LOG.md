@@ -253,3 +253,13 @@
 **Порядок операций (на сервере):** остановить `pvlfamily` → `DELETE` из `transactions`, `categories`, `category_groups` (в таком порядке) → положить CSV в `backend/` → `cd backend && ./venv/bin/python import_history.py --user "Паша" --csv history.csv` → `systemctl start pvlfamily`. Пользователи (`users`), календарь, трекер сна в этом сценарии **не** трогаем.
 
 **Миграция `categories.group_id` (2026-04-24):** если на сервере осталась старая таблица `categories` без `group_id`, `import_history` падает с `no such column: categories.group_id`. В `main.py` добавлен `ensure_budget_schema()`: при старте API обнаруживает отсутствие `group_id`, дропает `transactions`, `categories`, `category_groups` и пересоздаёт их через `create_all`.
+
+---
+
+## Сессия: веха — локаль, облако, БД (закреплено)
+
+**Дата:** 2026-04-24
+
+**Итог:** единая кодовая база на `main` подтянута **локально и на cloud**; сервис `pvlfamily` и зависимости в `backend/venv` согласованы; `backend/.env` — единственный источник admin/auth. Парольный вход и смена пароля на production проверены. Схема бюджета на SQLite приведена к `groups` / `subcategories` (`ensure_budget_schema` + при необходимости реимпорт `import_history.py`). Команды деплоя и пути смотри `COMMANDS_full.md` / `PROJECT_CONTEXT.md`.
+
+**Дальше:** по бэклогу — следующий приоритет/topic по выбору (SEC-замыкание аудита, UI, аналитика, тесты iOS).

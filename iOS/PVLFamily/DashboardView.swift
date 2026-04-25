@@ -2,6 +2,38 @@ import SwiftUI
 import UserNotifications
 import ActivityKit
 
+/// Разбор дат из `/tracker/status` (Python `isoformat`, дроби, `Z`, offset).
+/// «Голый» `ISO8601DateFormatter()` без опций часто возвращает `nil` → якорь сбрасывали в `Date()` и таймер показывал 00:00.
+fileprivate enum TrackerAPIDate {
+    static func parse(_ string: String?) -> Date? {
+        let trimmed = string?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        if trimmed.isEmpty { return nil }
+
+        let f = ISO8601DateFormatter()
+        f.formatOptions = [.withInternetDateTime, .withTimeZone, .withFractionalSeconds]
+        if let d = f.date(from: trimmed) { return d }
+        f.formatOptions = [.withInternetDateTime, .withTimeZone]
+        if let d = f.date(from: trimmed) { return d }
+        f.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        f.timeZone = TimeZone(identifier: "UTC")
+        if let d = f.date(from: trimmed) { return d }
+        f.formatOptions = [.withInternetDateTime]
+        f.timeZone = TimeZone(identifier: "UTC")
+        if let d = f.date(from: trimmed) { return d }
+        if let d = ISO8601DateFormatter().date(from: trimmed) { return d }
+
+        let df = DateFormatter()
+        df.locale = Locale(identifier: "en_US_POSIX")
+        df.timeZone = TimeZone(identifier: "UTC")
+        df.dateFormat = "yyyy-MM-dd'T'HH:mm:ss.SSS"
+        if let d = df.date(from: trimmed) { return d }
+        df.dateFormat = "yyyy-MM-dd'T'HH:mm:ss"
+        if let d = df.date(from: trimmed) { return d }
+        df.dateFormat = "yyyy-MM-dd HH:mm:ss"
+        return df.date(from: trimmed)
+    }
+}
+
 // --- ГЛОБАЛЬНЫЕ ФУНКЦИИ РАЗРЕШЕНИЙ ---
 func requestLiveActivityPermission() {
     Task {
@@ -76,7 +108,7 @@ struct DashboardView: View {
                     // ✅ ВИДЖЕТ ТРЕКЕРА
                     TrackerStatusWidget(
                         isSleeping: isSleeping,
-                        referenceDate: isSleeping ? (sleepStartTime ?? Date()) : (lastWakeUpTime ?? Date()),
+                        referenceDate: isSleeping ? sleepStartTime : lastWakeUpTime,
                         onStartSleep: { startSleepAction() },
                         onFinishSleep: { finishSleepAction() },
                         onQuickFeed: { performQuickFeed() }
@@ -281,26 +313,31 @@ struct DashboardView: View {
         print("🔄 [SYNC] Синхронизация... Было: \(isSleeping ? "Сон" : "Бод"), Стало: \(status.is_sleeping ? "Сон" : "Бод")")
         
         let newState = status.is_sleeping
-        let formatter = ISO8601DateFormatter()
         var newRefDate: Date? = nil
         
         if newState {
-            if let startStr = status.current_sleep_start, let d = formatter.date(from: startStr) {
-                self.sleepStartTime = d; newRefDate = d
+            // Сон: якорь — начало текущего сна.
+            if let d = TrackerAPIDate.parse(status.current_sleep_start) {
+                self.sleepStartTime = d
+                newRefDate = d
+            } else if let keep = self.sleepStartTime {
+                // API не отдало время старта или строка не распарсилась — не сбрасываем таймер на «сейчас».
+                newRefDate = keep
             } else {
-                self.sleepStartTime = Date(); newRefDate = Date()
+                self.sleepStartTime = Date()
+                newRefDate = self.sleepStartTime
             }
             self.lastWakeUpTime = nil
         } else {
+            // Бодрствование: на сервере `last_wake_up` = end_time последнего завершённого сна = момент пробуждения.
             self.sleepStartTime = nil
-            if let wakeStr = status.last_wake_up, let d = formatter.date(from: wakeStr) {
-                self.lastWakeUpTime = d; newRefDate = d
+            if let d = TrackerAPIDate.parse(status.last_wake_up) {
+                self.lastWakeUpTime = d
+                newRefDate = d
+            } else if let keep = self.lastWakeUpTime {
+                newRefDate = keep
             } else {
-                if self.lastWakeUpTime == nil {
-                     self.lastWakeUpTime = Date(); newRefDate = Date()
-                } else {
-                    newRefDate = self.lastWakeUpTime
-                }
+                self.lastWakeUpTime = nil
             }
         }
         
@@ -315,9 +352,11 @@ struct DashboardView: View {
         }
         
         if (isSleeping || lastWakeUpTime != nil) && (currentActivity == nil && Activity<SleepActivityAttributes>.activities.isEmpty) {
-             let ref = isSleeping ? (sleepStartTime ?? Date()) : (lastWakeUpTime ?? Date())
-             print("🆘 [FIX] Активность потеряна, пересоздаем...")
-             startLiveActivity(startTime: ref)
+            let ref: Date? = isSleeping ? sleepStartTime : lastWakeUpTime
+            if let ref {
+                print("🆘 [FIX] Активность потеряна, пересоздаем...")
+                startLiveActivity(startTime: ref)
+            }
         }
 
         if isSleeping || lastWakeUpTime != nil {
@@ -463,8 +502,12 @@ struct DashboardView: View {
         guard let activity = activityToUpdate else { return }
         
         let statusText = isSleeping ? "Спит" : "Бодрствует"
-        let iconStartTime = isSleeping ? (sleepStartTime ?? Date()) : (lastWakeUpTime ?? Date())
-        
+        let iconStartTime: Date? = isSleeping ? sleepStartTime : lastWakeUpTime
+        guard let iconStartTime else {
+            print("⚠️ [LA] Нет якоря времени — пропуск обновления Live Activity")
+            return
+        }
+
         let contentState = SleepActivityAttributes.ContentState(
             isSleeping: isSleeping,
             startTime: iconStartTime,
@@ -472,7 +515,7 @@ struct DashboardView: View {
             lastUpdated: Date()
         )
         let content = ActivityContent(state: contentState, staleDate: nil)
-        
+
         Task {
             do {
                 try await activity.update(content)
@@ -570,7 +613,8 @@ struct DashboardView: View {
 // --- ВИДЖЕТЫ ---
 struct TrackerStatusWidget: View {
     let isSleeping: Bool
-    let referenceDate: Date
+    /// Начало интервала: сон — `sleepStart`, бодрствование — момент пробуждения (`last_wake_up` с API).
+    let referenceDate: Date?
     let onStartSleep: () -> Void
     let onFinishSleep: () -> Void
     let onQuickFeed: () -> Void
@@ -585,10 +629,17 @@ struct TrackerStatusWidget: View {
             }
             
             // Системный тик (как Live Activity) — совпадает с островом/лок-скрином
-            Text(referenceDate, style: .timer)
-                .font(.system(size: 36, weight: .bold, design: .rounded))
-                .foregroundColor(isSleeping ? .purple : .orange)
-                .monospacedDigit()
+            Group {
+                if let ref = referenceDate {
+                    Text(ref, style: .timer)
+                        .foregroundColor(isSleeping ? .purple : .orange)
+                } else {
+                    Text("—")
+                        .foregroundColor(.secondary)
+                }
+            }
+            .font(.system(size: 36, weight: .bold, design: .rounded))
+            .monospacedDigit()
             
             HStack(spacing: 12) {
                 if isSleeping {

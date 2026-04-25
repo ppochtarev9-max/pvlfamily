@@ -1,5 +1,26 @@
 # 📓 Журнал Разработки (DevLog)
 
+## 2026-04-25 — UI унификация (Liquid Glass), merge в main, cloud-deploy
+
+**Контекст:** после прохода по макету нужно было быстро привести все ключевые экраны к единому стилю, влить в `main` и выкатить на облако без отдельной итерации тюнинга.
+
+### Сделано
+- **iOS UI:** добавлен `FamilyAppStyle.swift` (единые токены `screenBackground/accent/heroCardFill/cardStroke`) и применен по экранам и формам.
+- **Tab bar (iOS 26):** в `MainTabView` возвращен системный `TabView` в стиле Liquid Glass (`.tabViewStyle(.sidebarAdaptable)`, `.tabBarMinimizeBehavior(.onScrollDown)`), обновлены иконки вкладок.
+- **Dashboard:** убран декоративный `bell` без действия; сохранен и стилизован виджет трекера и блок действий.
+- **Экраны/формы:** приведены к единому стилю `BudgetView`, `CalendarView` (как «Дневник»), `TrackerView`, `ProfileView`, `TrackerStatsView`, `BudgetDetailsView`, `TransactionFormView`, `TrackerFormView`, `ExportDataView`, `CategorySelectionView`, `CategoriesManagerView`, `LoginView`.
+- **Repo hygiene:** в `.gitignore` добавлены `.deriveddata/`, `design-pixso/`, `design-pixso-2/`, `design-pixso-3/`.
+- **Build:** `xcodebuild -scheme PVLFamily -destination 'generic/platform=iOS' build` — успешно.
+- **Git flow:** изменения закоммичены (`ac0fb64`), ветка `feat/ui-pixso-pass1` fast-forward слита в `main`, затем `git push origin main`.
+- **Deploy:** выполнен `./deploy_cloud.sh`; на сервере `git pull --ff-only`, проверка зависимостей в `backend/venv`, `systemctl restart pvlfamily`, статус сервиса `active (running)`.
+
+### Уроки
+1. Для iOS 26 лучше опираться на системный `TabView` и нативные эффекты Liquid Glass, а не имитировать стекло вручную.
+2. Единый файл дизайн-токенов (`FamilyAppStyle`) резко снижает стоимость дальнейшего тюнинга.
+3. Перед деплоем UI-прохода достаточно короткого compile-check, но лучше отдельно закладывать ручной smoke по критичным сценариям.
+
+---
+
 ## 2026-04-25 — Трекер, таймер, деплой, демо-данные
 
 **Контекст:** сбои таймера на дашборде/Live Activity; `00:00` при открытии приложения; лишняя смена «истины» таймера; деплой на cloud после `push`.

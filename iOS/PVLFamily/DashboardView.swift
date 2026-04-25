@@ -115,19 +115,30 @@ struct DashboardView: View {
                     )
                     .padding(.horizontal)
                     
-                    Divider().padding(.horizontal)
-                    
                     Text("Другие действия")
-                        .font(.headline)
-                        .foregroundColor(.secondary)
+                        .font(.system(size: 14, weight: .semibold))
+                        .tracking(0.8)
+                        .foregroundColor(Color(.secondaryLabel))
                         .frame(maxWidth: .infinity, alignment: .leading)
                         .padding(.horizontal)
                     
                     LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 16) {
-                        ActionCard(title: "Транзакция", icon: "dollarsign.circle.fill", color: .green) {
+                        ActionCard(
+                            title: "Транзакция",
+                            subtitle: "Добавить запись",
+                            icon: "receipt",
+                            iconBackground: Color(red: 0.94, green: 0.99, blue: 0.96),
+                            iconColor: .green
+                        ) {
                             loadCategories()
                         }
-                        ActionCard(title: "Событие", icon: "calendar.badge.plus", color: .red) {
+                        ActionCard(
+                            title: "Событие",
+                            subtitle: "Новая запись",
+                            icon: "calendar.badge.plus",
+                            iconBackground: Color(red: 1.0, green: 0.97, blue: 0.93),
+                            iconColor: .orange
+                        ) {
                             showingEventSheet = true
                         }
                     }
@@ -141,6 +152,7 @@ struct DashboardView: View {
                 }
                 .padding(.vertical)
             }
+            .background(Color(.systemGray6))
             .navigationTitle("Главная")
             .onOpenURL { url in handleDeepLink(url) }
             
@@ -618,74 +630,166 @@ struct TrackerStatusWidget: View {
     let onStartSleep: () -> Void
     let onFinishSleep: () -> Void
     let onQuickFeed: () -> Void
+    private var accent: Color { FamilyAppStyle.accent }
     
     var body: some View {
         VStack(spacing: 16) {
             HStack {
-                Image(systemName: isSleeping ? "moon.fill" : "sun.max.fill")
-                    .font(.title2).foregroundColor(isSleeping ? .purple : .orange)
-                Text(isSleeping ? "Ребенок спит" : "Ребенок бодрствует").font(.headline)
+                Circle()
+                    .fill(accent)
+                    .frame(width: 10, height: 10)
+                Text(isSleeping ? "Ребёнок спит" : "Ребёнок бодрствует")
+                    .font(.system(size: 16, weight: .semibold))
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.85)
                 Spacer()
+                Text(referenceDate.map { "с \($0.pvlShortTime)" } ?? "")
+                    .font(.system(size: 13))
+                    .italic()
+                    .foregroundColor(Color(.secondaryLabel))
             }
-            
-            // Системный тик (как Live Activity) — совпадает с островом/лок-скрином
+
             Group {
                 if let ref = referenceDate {
                     Text(ref, style: .timer)
-                        .foregroundColor(isSleeping ? .purple : .orange)
+                        .foregroundColor(.primary)
                 } else {
                     Text("—")
                         .foregroundColor(.secondary)
                 }
             }
-            .font(.system(size: 36, weight: .bold, design: .rounded))
+            .font(.system(size: 52, weight: .bold, design: .rounded))
             .monospacedDigit()
-            
+            .frame(maxWidth: .infinity, alignment: .leading)
+
+            Text(referenceDate.map { "Начало: \($0.pvlStartLabel)" } ?? "Начало: —")
+                .font(.system(size: 13))
+                .italic()
+                .foregroundColor(Color(.secondaryLabel))
+                .frame(maxWidth: .infinity, alignment: .leading)
+
+            Rectangle()
+                .fill(FamilyAppStyle.cardStroke.opacity(0.9))
+                .frame(height: 1)
+
             HStack(spacing: 12) {
                 if isSleeping {
                     Button(action: onFinishSleep) {
-                        Label("Завершить сон", systemImage: "checkmark.circle.fill").frame(maxWidth: .infinity)
-                    }.buttonStyle(.borderedProminent).tint(.purple)
+                        Label("Завершить сон", systemImage: "moon")
+                            .font(.system(size: 15, weight: .semibold))
+                            .frame(maxWidth: .infinity, minHeight: 48)
+                    }
+                    .buttonStyle(.plain)
+                    .foregroundColor(.white)
+                    .background(accent)
+                    .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
                 } else {
                     Button(action: onStartSleep) {
-                        Label("Начать сон", systemImage: "moon.fill").frame(maxWidth: .infinity)
-                    }.buttonStyle(.borderedProminent).tint(.purple)
-                    
+                        Label("Начать сон", systemImage: "moon")
+                            .font(.system(size: 15, weight: .semibold))
+                            .frame(maxWidth: .infinity, minHeight: 48)
+                    }
+                    .buttonStyle(.plain)
+                    .foregroundColor(.white)
+                    .background(accent)
+                    .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+
                     Button(action: onQuickFeed) {
-                        Image(systemName: "drop.fill").font(.title2).frame(width: 50, height: 50)
+                        Image(systemName: "drop")
+                            .font(.system(size: 20, weight: .semibold))
+                            .frame(width: 48, height: 48)
                             .accessibilityIdentifier("QuickFeedButton")
-                    }.buttonStyle(.bordered).tint(.orange)
+                    }
+                    .buttonStyle(.plain)
+                    .foregroundColor(accent)
+                    .background(Color(.systemBackground))
+                    .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 12, style: .continuous)
+                            .stroke(FamilyAppStyle.cardStroke, lineWidth: 1.5)
+                    )
                 }
             }
         }
-        .padding()
-        .background(Color(.systemBackground))
-        .cornerRadius(20)
-        .shadow(color: Color.black.opacity(0.1), radius: 10, x: 0, y: 5)
+        .padding(24)
+        .background(FamilyAppStyle.heroCardFill)
+        .clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: 20, style: .continuous)
+                .stroke(FamilyAppStyle.cardStroke, lineWidth: 1.5)
+        )
     }
 }
 
 struct ActionCard: View {
     let title: String
+    let subtitle: String
     let icon: String
-    let color: Color
+    let iconBackground: Color
+    let iconColor: Color
     let action: () -> Void
     
     var body: some View {
         Button(action: action) {
-            VStack(spacing: 12) {
-                ZStack {
-                    Circle().fill(color.opacity(0.15)).frame(width: 60, height: 60)
-                    Image(systemName: icon).font(.title).foregroundColor(color)
+            VStack(alignment: .leading, spacing: 12) {
+                RoundedRectangle(cornerRadius: 10, style: .continuous)
+                    .fill(iconBackground)
+                    .frame(width: 40, height: 40)
+                    .overlay {
+                        Image(systemName: icon)
+                            .font(.system(size: 18, weight: .medium))
+                            .foregroundColor(iconColor)
+                    }
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(title)
+                        .font(.system(size: 15, weight: .semibold))
+                        .foregroundColor(.primary)
+                    Text(subtitle)
+                        .font(.system(size: 12))
+                        .italic()
+                        .foregroundColor(Color(.secondaryLabel))
                 }
-                Text(title).font(.subheadline).fontWeight(.medium).foregroundColor(.primary)
+                Spacer()
+                HStack {
+                    Spacer()
+                    Image(systemName: "chevron.right")
+                        .font(.system(size: 14, weight: .semibold))
+                        .foregroundColor(Color(.tertiaryLabel))
+                }
             }
-            .frame(maxWidth: .infinity)
-            .frame(height: 120)
-            .background(Color(.systemBackground))
-            .cornerRadius(20)
-            .shadow(color: Color.black.opacity(0.05), radius: 8, x: 0, y: 4)
         }
+        .buttonStyle(.plain)
+        .padding(20)
+        .frame(maxWidth: .infinity)
+        .frame(height: 185)
+        .background(Color(.systemBackground))
+        .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: 16, style: .continuous)
+                .stroke(Color(red: 0.89, green: 0.89, blue: 0.91), lineWidth: 1.5)
+        )
+    }
+}
+
+private extension Date {
+    var pvlShortTime: String {
+        let f = DateFormatter()
+        f.locale = Locale(identifier: "ru_RU")
+        f.timeZone = .current
+        f.dateFormat = "HH:mm"
+        return f.string(from: self)
+    }
+    
+    var pvlStartLabel: String {
+        let f = DateFormatter()
+        f.locale = Locale(identifier: "ru_RU")
+        f.timeZone = .current
+        if Calendar.current.isDateInToday(self) {
+            f.dateFormat = "'сегодня в' HH:mm"
+        } else {
+            f.setLocalizedDateFormatFromTemplate("d MMM, HH:mm")
+        }
+        return f.string(from: self)
     }
 }
 

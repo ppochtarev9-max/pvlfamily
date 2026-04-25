@@ -29,7 +29,7 @@ struct LoginView: View {
                             .aspectRatio(contentMode: .fill)
                             .frame(maxWidth: .infinity, minHeight: 300, maxHeight: 400)
                             .clipped()
-                            .shadow(color: Color.blue.opacity(0.3), radius: 20, x: 0, y: 10)
+                            .shadow(color: FamilyAppStyle.accent.opacity(0.3), radius: 20, x: 0, y: 10)
                             .opacity(isAnimating ? 1.0 : 0.0) // Только прозрачность
                             .animation(.easeInOut(duration: 1.0), value: isAnimating) // Плавное затухание
                         
@@ -61,6 +61,7 @@ struct LoginView: View {
                             .padding(4)
                             .background(Color(.systemGray5))
                             .cornerRadius(12)
+                            .tint(FamilyAppStyle.accent)
                             .onChange(of: authManager.selectedServer) { _, _ in
                                 authManager.updateBaseURL()
                                 authManager.loadUsers()
@@ -85,17 +86,23 @@ struct LoginView: View {
                                 TextField("Введите имя", text: $userName)
                                     .textFieldStyle(.plain)
                                     .padding()
-                                    .background(Color(.systemBackground))
-                                    .cornerRadius(16)
-                                    .shadow(color: Color.black.opacity(0.05), radius: 5, x: 0, y: 2)
+                                    .background(FamilyAppStyle.listCardFill)
+                                    .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+                                    .overlay(
+                                        RoundedRectangle(cornerRadius: 16, style: .continuous)
+                                            .strokeBorder(FamilyAppStyle.cardStroke, lineWidth: 1)
+                                    )
                                     .accessibilityIdentifier("NameInput")
 
                                 SecureField("Введите пароль", text: $password)
                                     .textFieldStyle(.plain)
                                     .padding()
-                                    .background(Color(.systemBackground))
-                                    .cornerRadius(16)
-                                    .shadow(color: Color.black.opacity(0.05), radius: 5, x: 0, y: 2)
+                                    .background(FamilyAppStyle.listCardFill)
+                                    .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+                                    .overlay(
+                                        RoundedRectangle(cornerRadius: 16, style: .continuous)
+                                            .strokeBorder(FamilyAppStyle.cardStroke, lineWidth: 1)
+                                    )
                                     .accessibilityIdentifier("PasswordInput")
 
                                 Button(action: {
@@ -107,9 +114,9 @@ struct LoginView: View {
                                         .fontWeight(.semibold)
                                         .frame(maxWidth: .infinity)
                                         .padding()
-                                        .background((userName.isEmpty || password.isEmpty) ? Color.gray : Color.blue)
+                                        .background((userName.isEmpty || password.isEmpty) ? Color.gray : FamilyAppStyle.accent)
                                         .foregroundColor(.white)
-                                        .cornerRadius(12)
+                                        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
                                 }
                                 .disabled(userName.isEmpty || password.isEmpty)
                                 .accessibilityIdentifier("LoginButton")
@@ -168,6 +175,7 @@ struct LoginView: View {
                     }
                 }
             }
+            .tint(FamilyAppStyle.accent)
             .onAppear {
                 isAnimating = true
             }

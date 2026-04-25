@@ -50,7 +50,7 @@ struct TrackerView: View {
                             HStack {
                                 VStack(alignment: .leading) {
                                     Text("Сон").font(.caption).foregroundColor(.secondary)
-                                    Text(sleepTimeText).font(.title2).fontWeight(.bold).foregroundColor(.purple)
+                                    Text(sleepTimeText).font(.title2).fontWeight(.bold).foregroundColor(FamilyAppStyle.accent)
                                 }
                                 Divider().frame(height: 30)
                                 VStack(alignment: .leading) {
@@ -64,29 +64,30 @@ struct TrackerView: View {
                                 .font(.caption)
                                 .foregroundColor(.secondary)
                         }
-                        .padding(20)
-                        .background(Color(.systemBackground))
-                        .cornerRadius(20)
-                        .shadow(color: .black.opacity(0.1), radius: 10, x: 0, y: 5)
+                        .padding(24)
+                        .background(FamilyAppStyle.heroCardFill)
+                        .clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 20, style: .continuous)
+                                .strokeBorder(FamilyAppStyle.cardStroke, lineWidth: 1.5)
+                        )
                         .padding(.horizontal)
                         
                         Button(action: { navigateToStats = true }) {
                             Text("Аналитика")
-                                .font(.headline)
+                                .font(.system(size: 15, weight: .semibold))
                                 .foregroundColor(.white)
                                 .frame(maxWidth: .infinity)
-                                .padding(.vertical, 10)
-                                .background(Color.purple)
-                                .cornerRadius(10)
+                                .padding(.vertical, 12)
+                                .background(FamilyAppStyle.accent)
+                                .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
                         }
                         .padding(.horizontal)
                         .navigationDestination(isPresented: $navigateToStats) {
                             TrackerStatsView()
                         }
-                        
-                        Divider().padding(.vertical, 10)
                     }
-                    .background(Color(.systemGroupedBackground))
+                    .background(Color.clear)
                 }
                 .frame(height: 220)
                 
@@ -100,8 +101,9 @@ struct TrackerView: View {
                         List {
                             ForEach(logs.sorted(by: { $0.start_time > $1.start_time })) { log in
                                 LogCard(log: log)
-                                    .listRowInsets(EdgeInsets(top: 4, leading: 0, bottom: 4, trailing: 0))
+                                    .listRowInsets(EdgeInsets(top: 4, leading: 16, bottom: 4, trailing: 16))
                                     .listRowSeparator(.hidden)
+                                    .listRowBackground(Color.clear)
                                     .contentShape(Rectangle())
                                     .onTapGesture {
                                         selectedLog = log
@@ -114,9 +116,11 @@ struct TrackerView: View {
                             }
                         }
                         .listStyle(.plain)
+                        .scrollContentBackground(.hidden)
                     }
                 }
             }
+            .background(FamilyAppStyle.screenBackground)
             .navigationTitle("")
             .toolbar {
                 ToolbarItem(placement: .principal) {
@@ -128,7 +132,7 @@ struct TrackerView: View {
                                 Text(formatDateShort(selectedDate)).fontWeight(.medium)
                                 Image(systemName: "calendar").font(.caption)
                             }
-                            .foregroundColor(.purple)
+                            .foregroundColor(FamilyAppStyle.accent)
                         }
                     }
                 }
@@ -136,7 +140,9 @@ struct TrackerView: View {
                     Button(action: {
                         selectedLog = nil; preselectedType = nil; showingAddSheet = true
                     }) {
-                        Image(systemName: "plus.circle.fill").font(.title2).foregroundColor(.blue)
+                        Image(systemName: "plus.circle.fill")
+                            .font(.title2)
+                            .foregroundStyle(FamilyAppStyle.accent)
                     }
                 }
             }
@@ -357,7 +363,7 @@ struct LogCard: View {
                     Text("\(dur) мин")
                         .font(.title3)
                         .fontWeight(.bold)
-                        .foregroundColor(log.event_type == "sleep" ? .purple : .orange)
+                        .foregroundColor(log.event_type == "sleep" ? FamilyAppStyle.accent : .orange)
                 } else if log.is_active {
                     Text("Идет...")
                         .font(.caption)
@@ -390,12 +396,11 @@ struct LogCard: View {
             .foregroundColor(.gray)
         }
         .padding(14)
-        .background(Color(.systemBackground))
-        .cornerRadius(14)
-        .shadow(color: Color.black.opacity(0.06), radius: 6, x: 0, y: 3)
+        .background(FamilyAppStyle.listCardFill)
+        .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
         .overlay(
-            RoundedRectangle(cornerRadius: 14)
-                .strokeBorder((log.event_type == "sleep" ? Color.purple : Color.orange).opacity(0.15), lineWidth: 1)
+            RoundedRectangle(cornerRadius: 16, style: .continuous)
+                .strokeBorder((log.event_type == "sleep" ? FamilyAppStyle.accent : Color.orange).opacity(0.25), lineWidth: 1)
         )
     }
     
@@ -444,9 +449,12 @@ struct QuickActionHandler: View {
             }
         }
         .frame(width: 200, height: 200)
-        .background(Color(.systemBackground))
-        .cornerRadius(20)
-        .shadow(radius: 10)
+        .background(FamilyAppStyle.listCardFill)
+        .clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: 20, style: .continuous)
+                .strokeBorder(FamilyAppStyle.cardStroke, lineWidth: 1)
+        )
         .onAppear { performQuickAction() }
     }
     

@@ -40,8 +40,9 @@ struct CalendarView: View {
                     List {
                         ForEach(events) { event in
                             EventCard(event: event)
-                                .listRowInsets(EdgeInsets(top: 8, leading: 0, bottom: 8, trailing: 0))
+                                .listRowInsets(EdgeInsets(top: 8, leading: 16, bottom: 8, trailing: 16))
                                 .listRowSeparator(.hidden)
+                                .listRowBackground(Color.clear)
                                 .swipeActions(edge: .trailing) {
                                     Button(role: .destructive) { deleteEvent(id: event.id) } label: {
                                         Label("Удалить", systemImage: "trash")
@@ -50,10 +51,11 @@ struct CalendarView: View {
                         }
                     }
                     .listStyle(.plain)
-                    .padding(.horizontal, 16)
+                    .scrollContentBackground(.hidden)
                 }
             }
-            .navigationTitle("Календарь")
+            .background(FamilyAppStyle.screenBackground)
+            .navigationTitle("Дневник")
             .toolbar {
                 ToolbarItem(placement: .topBarTrailing) {
                     Button(action: { showingAddSheet = true }) {
@@ -247,7 +249,7 @@ struct EventCard: View {
     var accentColor: Color {
         switch event.event_type {
         case "reminder": return .orange
-        default: return .blue
+        default: return FamilyAppStyle.accent
         }
     }
     
@@ -279,9 +281,12 @@ struct EventCard: View {
             Spacer()
         }
         .padding(16)
-        .background(Color(.systemBackground))
-        .cornerRadius(16)
-        .shadow(color: Color.black.opacity(0.05), radius: 8, x: 0, y: 4)
+        .background(FamilyAppStyle.listCardFill)
+        .clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: 20, style: .continuous)
+                .strokeBorder(FamilyAppStyle.cardStroke, lineWidth: 1)
+        )
     }
     
     func formatDate(_ string: String) -> String {
@@ -319,6 +324,8 @@ struct AddEventView: View {
                     Text("Напоминание").tag("reminder")
                 }
             }
+            .pvlFormScreenStyle()
+            .tint(FamilyAppStyle.accent)
             .navigationTitle("Новое событие")
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {

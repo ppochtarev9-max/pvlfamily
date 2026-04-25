@@ -170,7 +170,7 @@ struct BudgetView: View {
                             if let s = summary {
                                 Text(formatCurrency(s.balance))
                                     .font(.system(size: 48, weight: .bold))
-                                    .foregroundColor(s.balance >= 0 ? .blue : .red)
+                                    .foregroundColor(s.balance >= 0 ? FamilyAppStyle.accent : .red)
                                 HStack(spacing: 30) {
                                     VStack {
                                         Text("Доходы").font(.caption).foregroundColor(.secondary)
@@ -189,20 +189,23 @@ struct BudgetView: View {
                             }
                         }
                         .frame(maxWidth: .infinity)
-                        .padding(20)
-                        .background(Color(.systemBackground))
-                        .cornerRadius(20)
-                        .shadow(color: .black.opacity(0.1), radius: 10, x: 0, y: 5)
+                        .padding(24)
+                        .background(FamilyAppStyle.heroCardFill)
+                        .clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 20, style: .continuous)
+                                .strokeBorder(FamilyAppStyle.cardStroke, lineWidth: 1.5)
+                        )
                         .padding(.horizontal)
                         
                         Button(action: { navigateToDetails = true }) {
                             Text("Детализация")
-                                .font(.headline)
+                                .font(.system(size: 15, weight: .semibold))
                                 .foregroundColor(.white)
                                 .frame(maxWidth: .infinity)
-                                .padding(.vertical, 10)
-                                .background(Color.blue)
-                                .cornerRadius(10)
+                                .padding(.vertical, 12)
+                                .background(FamilyAppStyle.accent)
+                                .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
                         }
                         .padding(.horizontal)
                         .navigationDestination(isPresented: $navigateToDetails) {
@@ -215,11 +218,19 @@ struct BudgetView: View {
                                 selectedSubcategoryId: $selectedSubcategoryId // Обновлено
                             )
                         }
-                        Divider().padding(.vertical, 10)
                     }
-                    .background(Color(.systemGroupedBackground))
+                    .background(Color.clear)
                 }
                 .frame(height: 280)
+                
+                Text("Операции")
+                    .font(.system(size: 14, weight: .semibold))
+                    .tracking(0.8)
+                    .foregroundColor(Color(.secondaryLabel))
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.horizontal)
+                    .padding(.top, 12)
+                    .padding(.bottom, 8)
                 
                 // БЛОК 2: СПИСОК
                 Group {
@@ -231,16 +242,19 @@ struct BudgetView: View {
                                 TransactionCard(t: t)
                                     .listRowInsets(EdgeInsets(top: 4, leading: 0, bottom: 4, trailing: 0))
                                     .listRowSeparator(.hidden)
+                                    .listRowBackground(Color.clear)
                                     .swipeActions {
                                         Button(role: .destructive) { deleteTransaction(id: t.id) } label: { Label("Удалить", systemImage: "trash") }
-                                        Button { editTransaction(t) } label: { Label("Изменить", systemImage: "pencil") }.tint(.blue)
+                                        Button { editTransaction(t) } label: { Label("Изменить", systemImage: "pencil") }.tint(FamilyAppStyle.accent)
                                     }
                             }
                         }
                         .listStyle(.plain)
+                        .scrollContentBackground(.hidden)
                     }
                 }
             }
+            .background(FamilyAppStyle.screenBackground)
             .navigationTitle("")
             .toolbar {
                 ToolbarItem(placement: .principal) {
@@ -255,7 +269,7 @@ struct BudgetView: View {
                                 Image(systemName: "calendar")
                                     .font(.caption)
                             }
-                            .foregroundColor(.blue)
+                            .foregroundColor(FamilyAppStyle.accent)
                         }
                     }
                 }
@@ -263,7 +277,7 @@ struct BudgetView: View {
                     HStack(spacing: 15) {
                         Button(action: { showingFilterSheet = true }) {
                             Image(systemName: hasActiveFilters ? "line.3.horizontal.decrease.circle.fill" : "line.3.horizontal.decrease.circle")
-                                .foregroundColor(hasActiveFilters ? .blue : .gray)
+                                .foregroundColor(hasActiveFilters ? FamilyAppStyle.accent : .gray)
                         }
                         Button(action: { startNewTransaction() }) {
                             Image(systemName: "plus")
@@ -597,7 +611,7 @@ struct TransactionCard: View {
                     VStack(alignment: .leading, spacing: 2) {
                         Text("Остаток").font(.caption2).foregroundColor(.secondary).textCase(.uppercase)
                         Text(String(format: "%.0f ₽", bal)).font(.title).fontWeight(.heavy)
-                            .foregroundColor(bal >= 0 ? .blue : .orange)
+                            .foregroundColor(bal >= 0 ? FamilyAppStyle.accent : .orange)
                     }
                 }
                 Spacer()
@@ -608,10 +622,12 @@ struct TransactionCard: View {
             }
         }
         .padding(14)
-        .background(Color(.systemBackground))
-        .cornerRadius(14)
-        .shadow(color: Color.black.opacity(0.06), radius: 6, x: 0, y: 3)
-        .overlay(RoundedRectangle(cornerRadius: 14).strokeBorder((t.transaction_type == "income" ? Color.green : Color.red).opacity(0.15), lineWidth: 1))
+        .background(FamilyAppStyle.listCardFill)
+        .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: 16, style: .continuous)
+                .strokeBorder((t.transaction_type == "income" ? Color.green : Color.red).opacity(0.22), lineWidth: 1)
+        )
     }
     
     static func formatAmountStatic(_ amount: Double, type: String) -> String {
@@ -662,13 +678,13 @@ struct FilterSheet: View {
             Form {
                 Section("Пользователь") {
                     Button(action: { selectedUserId = nil; onUpdate() }) {
-                        HStack { Text("Все пользователи"); Spacer(); if selectedUserId == nil { Image(systemName: "checkmark").foregroundColor(.blue) } }
+                        HStack { Text("Все пользователи"); Spacer(); if selectedUserId == nil { Image(systemName: "checkmark").foregroundStyle(FamilyAppStyle.accent) } }
                     }
                     ForEach(0..<users.count, id: \.self) { index in
                         let user = users[index]
                         if let id = user["id"] as? Int, let name = user["name"] as? String {
                             Button(action: { selectedUserId = id; onUpdate() }) {
-                                HStack { Text(name); Spacer(); if selectedUserId == id { Image(systemName: "checkmark").foregroundColor(.blue) } }
+                                HStack { Text(name); Spacer(); if selectedUserId == id { Image(systemName: "checkmark").foregroundStyle(FamilyAppStyle.accent) } }
                             }
                         }
                     }
@@ -680,7 +696,7 @@ struct FilterSheet: View {
                             selectedDateFilter = filter
                             if filter != .custom { onUpdate(); isPresented = false }
                         }) {
-                            HStack { Text(filter.rawValue); Spacer(); if selectedDateFilter == filter { Image(systemName: "checkmark").foregroundColor(.blue) } }
+                            HStack { Text(filter.rawValue); Spacer(); if selectedDateFilter == filter { Image(systemName: "checkmark").foregroundStyle(FamilyAppStyle.accent) } }
                         }
                     }
                     if selectedDateFilter == .custom {
@@ -696,7 +712,7 @@ struct FilterSheet: View {
                         selectedSubcategoryId = nil
                         onUpdate()
                     }) {
-                        HStack { Text("Все категории"); Spacer(); if selectedGroupId == nil { Image(systemName: "checkmark").foregroundColor(.blue) } }
+                        HStack { Text("Все категории"); Spacer(); if selectedGroupId == nil { Image(systemName: "checkmark").foregroundStyle(FamilyAppStyle.accent) } }
                     }
                     
                     // Выбор Группы
@@ -710,7 +726,7 @@ struct FilterSheet: View {
                                     HStack {
                                         Text(group.name)
                                         Spacer()
-                                        if selectedGroupId == group.id && selectedSubcategoryId == nil { Image(systemName: "checkmark").foregroundColor(.blue) }
+                                        if selectedGroupId == group.id && selectedSubcategoryId == nil { Image(systemName: "checkmark").foregroundStyle(FamilyAppStyle.accent) }
                                     }
                                 }
                             }
@@ -735,7 +751,7 @@ struct FilterSheet: View {
                                     HStack {
                                         Text("↳ " + sub.name)
                                         Spacer()
-                                        if selectedSubcategoryId == sub.id { Image(systemName: "checkmark").foregroundColor(.blue) }
+                                        if selectedSubcategoryId == sub.id { Image(systemName: "checkmark").foregroundStyle(FamilyAppStyle.accent) }
                                     }
                                 }
                             }
@@ -759,6 +775,8 @@ struct FilterSheet: View {
                     }.foregroundColor(.red)
                 }
             }
+            .pvlFormScreenStyle()
+            .tint(FamilyAppStyle.accent)
             .navigationTitle("Фильтры")
             .toolbar {
                 ToolbarItem(placement: .confirmationAction) { Button("Готово") { onUpdate(); isPresented = false } }

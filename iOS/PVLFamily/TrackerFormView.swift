@@ -57,8 +57,8 @@ struct TrackerFormView: View {
                                 }
                                 .frame(maxWidth: .infinity)
                                 .padding(.vertical, 10)
-                                .background(selectedType == type.id ? Color.blue : Color(.systemGray5))
-                                .cornerRadius(12)
+                                .background(selectedType == type.id ? FamilyAppStyle.accent : Color(.systemGray5))
+                                .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
                             }
                             .disabled(isSaving || (existingLog != nil)) // Нельзя менять тип при редактировании существующего
                         }
@@ -142,6 +142,8 @@ struct TrackerFormView: View {
                     .disabled(isSaving)
                 }
             }
+            .pvlFormScreenStyle()
+            .tint(FamilyAppStyle.accent)
             .navigationTitle(formTitle)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {

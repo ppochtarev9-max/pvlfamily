@@ -15,6 +15,7 @@ struct TrackerStatsView: View {
             Group {
                 if isLoading {
                     ProgressView("Загрузка статистики...")
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
                 } else if let error = errorMessage {
                     ContentUnavailableView("Ошибка", systemImage: "exclamationmark.triangle", description: Text(error))
                 } else if let stats = stats {
@@ -25,6 +26,7 @@ struct TrackerStatsView: View {
                                 Text("30 дней").tag(30)
                             }
                             .pickerStyle(.segmented)
+                            .tint(FamilyAppStyle.accent)
                             .padding(.horizontal)
                             .onChange(of: selectedDays) { _, newValue in
                                 loadStats(days: newValue)
@@ -32,20 +34,40 @@ struct TrackerStatsView: View {
                             
                             VStack(spacing: 12) {
                                 HStack {
-                                    StatCard(title: "Всего сна", value: formatHours(stats.total_sleep_minutes), icon: "moon.fill", color: .purple)
-                                    StatCard(title: "Средний сон", value: formatHours(stats.average_sleep_minutes), icon: "clock.fill", color: .blue)
+                                    StatCard(
+                                        title: "Всего сна",
+                                        value: formatHours(stats.total_sleep_minutes),
+                                        icon: "moon.fill",
+                                        color: FamilyAppStyle.accent
+                                    )
+                                    StatCard(
+                                        title: "Средний сон",
+                                        value: formatHours(stats.average_sleep_minutes),
+                                        icon: "clock.fill",
+                                        color: FamilyAppStyle.accent
+                                    )
                                 }
                                 HStack {
-                                    StatCard(title: "Кол-во снов", value: "\(stats.total_sessions)", icon: "list.bullet", color: .orange)
-                                    StatCard(title: "Дней в выборке", value: "\(stats.period_days)", icon: "calendar", color: .gray)
+                                    StatCard(
+                                        title: "Кол-во снов",
+                                        value: "\(stats.total_sessions)",
+                                        icon: "list.bullet",
+                                        color: .orange
+                                    )
+                                    StatCard(
+                                        title: "Дней в выборке",
+                                        value: "\(stats.period_days)",
+                                        icon: "calendar",
+                                        color: Color(.secondaryLabel)
+                                    )
                                 }
                             }
                             .padding(.horizontal)
                             
-                            Divider().padding(.horizontal)
-                            
                             Text("Динамика по дням")
-                                .font(.headline)
+                                .font(.system(size: 14, weight: .semibold))
+                                .tracking(0.8)
+                                .foregroundColor(Color(.secondaryLabel))
                                 .frame(maxWidth: .infinity, alignment: .leading)
                                 .padding(.horizontal)
                             
@@ -55,9 +77,9 @@ struct TrackerStatsView: View {
                                         x: .value("Дата", formatDateShort(item.date)),
                                         y: .value("Минуты", item.sleep_minutes)
                                     )
-                                    .foregroundStyle(Color.purple.gradient)
+                                    .foregroundStyle(FamilyAppStyle.accent.gradient)
                                     .cornerRadius(4)
-                                    .annotation(position: .top) { // <-- ИСПРАВЛЕНО ЗДЕСЬ
+                                    .annotation(position: .top) {
                                         Text(formatHours(item.sleep_minutes))
                                             .font(.caption2)
                                             .foregroundColor(.secondary)
@@ -85,10 +107,13 @@ struct TrackerStatsView: View {
                     ContentUnavailableView("Нет данных", systemImage: "chart.bar.xaxis", description: Text("Попробуйте изменить период"))
                 }
             }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .background(FamilyAppStyle.screenBackground)
             .navigationTitle("Статистика сна")
             .toolbar {
                 ToolbarItem(placement: .topBarTrailing) {
                     Button("Готово") { dismiss() }
+                        .foregroundStyle(FamilyAppStyle.accent)
                 }
             }
             .onAppear {
@@ -182,15 +207,19 @@ struct StatCard: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             HStack {
-                Image(systemName: icon).foregroundColor(color)
+                Image(systemName: icon).foregroundStyle(color)
                 Text(title).font(.caption).foregroundColor(.secondary)
                 Spacer()
             }
             Text(value).font(.title2).fontWeight(.bold)
         }
         .padding()
-        .background(Color(.systemBackground))
-        .cornerRadius(12)
-        .shadow(color: Color.black.opacity(0.05), radius: 5, x: 0, y: 2)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(FamilyAppStyle.listCardFill)
+        .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: 16, style: .continuous)
+                .strokeBorder(FamilyAppStyle.cardStroke, lineWidth: 1)
+        )
     }
 }

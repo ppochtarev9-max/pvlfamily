@@ -38,7 +38,7 @@ struct CategoriesManagerView: View {
                             showHiddenToggle.toggle()
                         }) {
                             Image(systemName: showHiddenToggle ? "eye.fill" : "eye.slash")
-                                .foregroundColor(showHiddenToggle ? .blue : .gray)
+                                .foregroundStyle(showHiddenToggle ? FamilyAppStyle.accent : Color.gray)
                                 .font(.system(size: 18))
                         }
                     }) {
@@ -60,8 +60,8 @@ struct CategoriesManagerView: View {
                             showingAddGroupSheet = true
                         }) {
                             HStack {
-                                Image(systemName: "plus.circle.fill").foregroundColor(.blue).font(.title2)
-                                Text("Добавить новую категорию").fontWeight(.semibold).foregroundColor(.blue)
+                                Image(systemName: "plus.circle.fill").foregroundStyle(FamilyAppStyle.accent).font(.title2)
+                                Text("Добавить новую категорию").fontWeight(.semibold).foregroundStyle(FamilyAppStyle.accent)
                             }
                             .frame(maxWidth: .infinity, alignment: .leading)
                             .padding(.vertical, 4)
@@ -70,8 +70,10 @@ struct CategoriesManagerView: View {
                     }
                 }
                 .listStyle(.insetGrouped)
+                .pvlFormScreenStyle()
             }
         }
+        .background(FamilyAppStyle.screenBackground)
         .navigationTitle("Категории")
         .navigationBarTitleDisplayMode(.large)
         .toolbar {
@@ -262,15 +264,15 @@ struct GroupRow: View {
     var body: some View {
         HStack(spacing: 12) {
             ZStack {
-                Circle().fill(group.type == "income" ? Color.green.opacity(0.15) : Color.blue.opacity(0.15)).frame(width: 40, height: 40)
+                Circle().fill(group.type == "income" ? Color.green.opacity(0.15) : FamilyAppStyle.accent.opacity(0.15)).frame(width: 40, height: 40)
                 Image(systemName: group.type == "income" ? "arrow.down.left.and.arrow.up.right" : "cart.fill")
                     .font(.system(size: 18, weight: .semibold))
-                    .foregroundColor(group.type == "income" ? .green : .blue)
+                    .foregroundStyle(group.type == "income" ? Color.green : FamilyAppStyle.accent)
             }
             VStack(alignment: .leading, spacing: 4) {
                 Text(group.name).font(.system(size: 17, weight: .semibold)).foregroundColor(group.is_hidden ? .gray : .primary).strikethrough(group.is_hidden)
                 HStack(spacing: 6) {
-                    Text("\(group.subcategories.count) подкатегорий").font(.system(size: 13, weight: .medium)).foregroundColor(.blue)
+                    Text("\(group.subcategories.count) подкатегорий").font(.system(size: 13, weight: .medium)).foregroundStyle(FamilyAppStyle.accent)
                     if group.is_hidden { Text("• Скрыто").font(.caption).foregroundColor(.orange) }
                 }
             }
@@ -284,7 +286,7 @@ struct GroupRow: View {
             Button(role: .destructive) { onDelete() } label: { Label("Удалить", systemImage: "trash") }
             Button { onHide() } label: { Label(group.is_hidden ? "Вернуть" : "Скрыть", systemImage: group.is_hidden ? "eye" : "eye.slash") }
                 .tint(group.is_hidden ? .green : .orange)
-            Button { onEdit() } label: { Label("Изменить", systemImage: "pencil") }.tint(.blue)
+            Button { onEdit() } label: { Label("Изменить", systemImage: "pencil") }.tint(FamilyAppStyle.accent)
         }
     }
 }
@@ -327,7 +329,8 @@ struct SubCategoryListView: View {
                             print("👁️ [SUB] Toggle скрытых нажат. Было: \(showHiddenToggle)")
                             showHiddenToggle.toggle()
                         }) {
-                            Image(systemName: showHiddenToggle ? "eye.fill" : "eye.slash").foregroundColor(showHiddenToggle ? .blue : .gray)
+                            Image(systemName: showHiddenToggle ? "eye.fill" : "eye.slash")
+                                .foregroundStyle(showHiddenToggle ? FamilyAppStyle.accent : Color.gray)
                         }
                     }) {
                         if filteredSubs.isEmpty {
@@ -349,11 +352,16 @@ struct SubCategoryListView: View {
                         }
                         
                         Button(action: { editingSub = nil; showingAddSubSheet = true }) {
-                            HStack { Image(systemName: "plus.circle.fill").foregroundColor(.blue); Text("Добавить подкатегорию").fontWeight(.medium).foregroundColor(.blue) }
+                            HStack {
+                                Image(systemName: "plus.circle.fill").foregroundStyle(FamilyAppStyle.accent)
+                                Text("Добавить подкатегорию").fontWeight(.medium).foregroundStyle(FamilyAppStyle.accent)
+                            }
                             .frame(maxWidth: .infinity, alignment: .leading).padding(.vertical, 2)
                         }.listRowSeparator(.hidden)
                     }
                 }
+                .listStyle(.insetGrouped)
+                .pvlFormScreenStyle()
                 .navigationTitle("Подкатегории")
                 .navigationBarTitleDisplayMode(.inline)
                 .sheet(isPresented: $showingAddSubSheet) {
@@ -506,7 +514,7 @@ struct SubCategoryRow: View {
     
     var body: some View {
         HStack(spacing: 12) {
-            Rectangle().fill(sub.is_hidden ? Color.gray : Color.blue).frame(width: 4, height: 40).cornerRadius(2)
+            Rectangle().fill(sub.is_hidden ? Color.gray : FamilyAppStyle.accent).frame(width: 4, height: 40).cornerRadius(2)
             VStack(alignment: .leading, spacing: 4) {
                 Text(sub.name).font(.system(size: 16, weight: .medium)).foregroundColor(sub.is_hidden ? .gray : .primary).strikethrough(sub.is_hidden)
                 if sub.is_hidden { Text("Скрыта").font(.caption).foregroundColor(.gray) }
@@ -519,7 +527,7 @@ struct SubCategoryRow: View {
             Button(role: .destructive) { onDelete() } label: { Label("Удалить", systemImage: "trash") }
             Button { onHide() } label: { Label(sub.is_hidden ? "Вернуть" : "Скрыть", systemImage: sub.is_hidden ? "eye" : "eye.slash") }
                 .tint(sub.is_hidden ? .green : .orange)
-            Button { onEdit() } label: { Label("Изменить", systemImage: "pencil") }.tint(.blue)
+            Button { onEdit() } label: { Label("Изменить", systemImage: "pencil") }.tint(FamilyAppStyle.accent)
         }
     }
 }
@@ -544,6 +552,8 @@ struct CategoryGroupForm: View {
                 Picker("Тип", selection: $type) { Text("Расход").tag("expense"); Text("Доход").tag("income") }
                     .pickerStyle(.segmented).disabled(isSaving || editGroup != nil)
             }
+            .pvlFormScreenStyle()
+            .tint(FamilyAppStyle.accent)
             .navigationTitle(editGroup == nil ? "Новая" : "Ред.")
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) { Button("Отмена") { isPresented = false } }
@@ -569,6 +579,8 @@ struct SubCategoryForm: View {
     var body: some View {
         NavigationStack {
             Form { TextField("Название", text: $name).autocapitalization(.words) }
+            .pvlFormScreenStyle()
+            .tint(FamilyAppStyle.accent)
             .navigationTitle(editSub == nil ? "Новая" : "Ред.")
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) { Button("Отмена") { isPresented = false } }

@@ -37,14 +37,14 @@ struct CategorySelectionView: View {
                                     Text(group.name)
                                     Spacer()
                                     if selectedGroupId == group.id {
-                                        Image(systemName: "checkmark").foregroundColor(.blue)
+                                        Image(systemName: "checkmark").foregroundStyle(FamilyAppStyle.accent)
                                     }
                                 }
                             }
                         }
                     } label: {
                         HStack {
-                            Image(systemName: "folder.fill").foregroundColor(.blue)
+                            Image(systemName: "folder.fill").foregroundStyle(FamilyAppStyle.accent)
                             Text(selectedGroup?.name ?? "Выберите категорию")
                                 .foregroundColor(selectedGroup != nil ? .primary : .secondary)
                             Spacer()
@@ -82,7 +82,7 @@ struct CategorySelectionView: View {
                                             Text(sub.name)
                                             Spacer()
                                             if selectedSubcategoryId == sub.id {
-                                                Image(systemName: "checkmark").foregroundColor(.blue)
+                                                Image(systemName: "checkmark").foregroundStyle(FamilyAppStyle.accent)
                                             }
                                         }
                                     }
@@ -109,12 +109,14 @@ struct CategorySelectionView: View {
                                     onSelect()
                                 }
                                 .font(.headline)
-                                .foregroundColor(.blue)
+                                .foregroundStyle(FamilyAppStyle.accent)
                             }
                         }
                     }
                 }
             }
+            .pvlFormScreenStyle()
+            .tint(FamilyAppStyle.accent)
             .navigationTitle("Выбор категории")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {

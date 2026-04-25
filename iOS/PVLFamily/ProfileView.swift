@@ -36,11 +36,11 @@ struct ProfileView: View {
                             HStack(spacing: 20) {
                                 ZStack {
                                     Circle()
-                                        .fill(Color.blue.opacity(0.1))
+                                        .fill(FamilyAppStyle.accent.opacity(0.12))
                                         .frame(width: 80, height: 80)
                                     Image(systemName: "person.fill")
                                         .font(.system(size: 40))
-                                        .foregroundColor(.blue)
+                                        .foregroundStyle(FamilyAppStyle.accent)
                                 }
                                 
                                 VStack(alignment: .leading, spacing: 8) {
@@ -91,7 +91,7 @@ struct ProfileView: View {
                                         .foregroundColor(.green)
                                     Text("Экспорт данных")
                                         .fontWeight(.medium)
-                                        .foregroundColor(.blue)
+                                        .foregroundColor(FamilyAppStyle.accent)
                                     Spacer()
                                     Image(systemName: "chevron.right")
                                         .font(.caption)
@@ -142,8 +142,10 @@ struct ProfileView: View {
                         }
                     }
                     .listStyle(.insetGrouped)
+                    .scrollContentBackground(.hidden)
                 }
             }
+            .background(FamilyAppStyle.screenBackground)
             .navigationTitle("Профиль")
             .navigationDestination(isPresented: $showingCategoriesManager) {
                 CategoriesManagerView(categoryGroups: $categoryGroups)

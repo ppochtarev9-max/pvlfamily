@@ -23,14 +23,18 @@ struct BudgetDetailsView: View {
                 // Заголовок с переключением месяцев
                 HStack {
                     Button(action: { changeStatsMonth(-1) }) {
-                        Image(systemName: "chevron.left").foregroundColor(.secondary)
+                        Image(systemName: "chevron.left")
+                            .font(.body.weight(.semibold))
+                            .foregroundStyle(FamilyAppStyle.accent)
                     }
                     Spacer()
                     Text(monthYearString(from: statsMonth))
                         .font(.subheadline).fontWeight(.semibold)
                     Spacer()
                     Button(action: { changeStatsMonth(1) }) {
-                        Image(systemName: "chevron.right").foregroundColor(.secondary)
+                        Image(systemName: "chevron.right")
+                            .font(.body.weight(.semibold))
+                            .foregroundStyle(FamilyAppStyle.accent)
                     }
                 }
                 .padding(.horizontal)
@@ -55,8 +59,14 @@ struct BudgetDetailsView: View {
                                 .contentShape(Rectangle())
                         }
                         .padding(16)
-                        .background(Color.green.opacity(0.12))
-                        .cornerRadius(12)
+                        .background(
+                            RoundedRectangle(cornerRadius: 16, style: .continuous)
+                                .fill(Color.green.opacity(0.08))
+                        )
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 16, style: .continuous)
+                                .strokeBorder(Color.green.opacity(0.28), lineWidth: 1)
+                        )
                     }
                     
                     if !expenses.isEmpty {
@@ -75,8 +85,14 @@ struct BudgetDetailsView: View {
                                 .contentShape(Rectangle())
                         }
                         .padding(16)
-                        .background(Color.red.opacity(0.12))
-                        .cornerRadius(12)
+                        .background(
+                            RoundedRectangle(cornerRadius: 16, style: .continuous)
+                                .fill(Color.red.opacity(0.08))
+                        )
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 16, style: .continuous)
+                                .strokeBorder(Color.red.opacity(0.28), lineWidth: 1)
+                        )
                     }
                     
                     if incomes.isEmpty && expenses.isEmpty {
@@ -92,9 +108,17 @@ struct BudgetDetailsView: View {
                             Spacer()
                             Text(formatCurrency(st.balance))
                                 .font(.subheadline).fontWeight(.bold)
-                                .foregroundColor(st.balance >= 0 ? .blue : .orange)
+                                .foregroundColor(st.balance >= 0 ? FamilyAppStyle.accent : .orange)
                         }
-                    }.padding(.top, 4)
+                    }
+                    .padding(16)
+                    .background(FamilyAppStyle.listCardFill)
+                    .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 16, style: .continuous)
+                            .strokeBorder(FamilyAppStyle.cardStroke, lineWidth: 1)
+                    )
+                    .padding(.top, 4)
                 } else if isLoading {
                     ProgressView()
                 } else {
@@ -103,6 +127,7 @@ struct BudgetDetailsView: View {
             }
             .padding()
         }
+        .background(FamilyAppStyle.screenBackground)
         .navigationTitle("Детализация")
         .navigationBarTitleDisplayMode(.inline)
         .onAppear(perform: loadStats)

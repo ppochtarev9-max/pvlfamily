@@ -62,6 +62,8 @@ struct ExportDataView: View {
                 Text("Файл будет сформирован и открыт в меню «Поделиться» для сохранения или отправки.")
             }
         }
+        .pvlFormScreenStyle()
+        .tint(FamilyAppStyle.accent)
         .navigationTitle("Экспорт данных")
         .navigationBarTitleDisplayMode(.inline)
         .alert("Ошибка", isPresented: $showErrorAlert) {

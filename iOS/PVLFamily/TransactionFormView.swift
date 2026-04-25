@@ -82,9 +82,12 @@ struct TransactionFormView: View {
                                 .foregroundColor(type == "income" ? .green : .red)
                                 .multilineTextAlignment(.center)
                                 .padding()
-                                .background(Color(.systemBackground))
-                                .cornerRadius(20)
-                                .overlay(RoundedRectangle(cornerRadius: 20).strokeBorder(type == "income" ? Color.green.opacity(0.3) : Color.red.opacity(0.3), lineWidth: 2))
+                                .background(FamilyAppStyle.listCardFill)
+                                .clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
+                                .overlay(
+                                    RoundedRectangle(cornerRadius: 20, style: .continuous)
+                                        .strokeBorder(type == "income" ? Color.green.opacity(0.35) : Color.red.opacity(0.35), lineWidth: 2)
+                                )
                                 .disabled(isSaving)
                                 .onAppear { DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { isAmountFocused = true } }
                             
@@ -108,7 +111,7 @@ struct TransactionFormView: View {
                             
                             Button(action: { showingCategorySheet = true }) {
                                 HStack {
-                                    Image(systemName: "tag.fill").foregroundColor(.blue)
+                                    Image(systemName: "tag.fill").foregroundStyle(FamilyAppStyle.accent)
                                     if let gid = selectedGroupId, let group = categoryGroups.first(where: { $0.id == gid }) {
                                         if let sid = selectedSubcategoryId, let sub = group.subcategories.first(where: { $0.id == sid }) {
                                             Text("\(group.name) / \(sub.name)").foregroundColor(.primary)
@@ -122,9 +125,12 @@ struct TransactionFormView: View {
                                     Image(systemName: "chevron.right").font(.caption).foregroundColor(.gray)
                                 }
                                 .padding()
-                                .background(Color(.systemBackground))
-                                .cornerRadius(16)
-                                .shadow(color: Color.black.opacity(0.05), radius: 5, x: 0, y: 2)
+                                .background(FamilyAppStyle.listCardFill)
+                                .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+                                .overlay(
+                                    RoundedRectangle(cornerRadius: 16, style: .continuous)
+                                        .strokeBorder(FamilyAppStyle.cardStroke, lineWidth: 1)
+                                )
                             }
                             .disabled(isSaving)
                         }
@@ -136,13 +142,21 @@ struct TransactionFormView: View {
                             DatePicker("Дата операции", selection: $date, displayedComponents: .date)
                                 .datePickerStyle(.compact)
                                 .padding()
-                                .background(Color(.systemBackground))
-                                .cornerRadius(16)
+                                .background(FamilyAppStyle.listCardFill)
+                                .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+                                .overlay(
+                                    RoundedRectangle(cornerRadius: 16, style: .continuous)
+                                        .strokeBorder(FamilyAppStyle.cardStroke, lineWidth: 1)
+                                )
                                 .disabled(isSaving)
                             TextField("Заметка", text: $note)
                                 .padding()
-                                .background(Color(.systemBackground))
-                                .cornerRadius(16)
+                                .background(FamilyAppStyle.listCardFill)
+                                .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+                                .overlay(
+                                    RoundedRectangle(cornerRadius: 16, style: .continuous)
+                                        .strokeBorder(FamilyAppStyle.cardStroke, lineWidth: 1)
+                                )
                                 .disabled(isSaving)
                         }
                         .padding(.horizontal)
@@ -159,7 +173,7 @@ struct TransactionFormView: View {
                                 .padding()
                                 .background((type == "income" ? Color.green : Color.red))
                                 .foregroundColor(.white)
-                                .cornerRadius(20)
+                                .clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
                             }
                             .disabled(isSaving) // Убрали проверку finalCategoryId == nil, так как теперь есть заглушка
                             
@@ -170,7 +184,7 @@ struct TransactionFormView: View {
                                     .padding()
                                     .background(Color.red.opacity(0.1))
                                     .foregroundColor(.red)
-                                    .cornerRadius(16)
+                                    .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
                                 }
                                 .disabled(isSaving)
                             }
@@ -181,7 +195,8 @@ struct TransactionFormView: View {
                 }
                 .padding(.vertical)
             }
-            .background(Color(.systemGroupedBackground))
+            .background(FamilyAppStyle.screenBackground)
+            .tint(FamilyAppStyle.accent)
             .navigationTitle(transactionToEdit == nil ? "Новая операция" : "Редактирование")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {

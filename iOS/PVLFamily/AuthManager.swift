@@ -133,7 +133,7 @@ class AuthManager: ObservableObject {
         let hasIdKey = UserDefaults.standard.object(forKey: "userId") != nil
         
         print("🔑 [AUTH] Token: \(savedToken != nil ? "Есть" : "Нет")")
-        print("🔑 TOKEN VALUE: \(savedToken)")
+        //print("🔑 TOKEN VALUE: \(savedToken)")
         print("🔑 [AUTH] Name: \(savedName ?? "Нет")")
         print("🔑 [AUTH] ID: \(hasIdKey ? String(savedId) : "Не задан")")
         

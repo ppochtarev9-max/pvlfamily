@@ -90,7 +90,8 @@
 
 ## Известные проблемы и техдолг
 
-- Live Activity: таймер сна/бодрствования использует `Text(startTime, style: .timer)` в extension и в `TrackerStatusWidget` (секунда в секунду без фонового `Timer` в приложении).
+- Live Activity: таймер сна/бодрствования использует `Text(startTime, style: .timer)` в extension и в `TrackerStatusWidget` (секунда в секунду без фонового `Timer` в приложении). Синхронизация с API: `syncWithStatus` в `DashboardView` — разбор ISO через `TrackerAPIDate.parse`, якорь бодрствования = `last_wake_up` (конец последнего сна); при ошибке разбора не подставлять `Date()`.
+- Демо-данные трекера: `backend/seed_tracker_demo.py` (сброс `baby_logs` + 50–60 записей). Деплой на cloud: `deploy_cloud.sh` из корня, переменные в `.env_commands`.
 - Есть риск рассинхронизации контракта между backend и iOS при изменении модели категорий бюджета.
 - Нужны дополнительные unit-тесты в iOS (сейчас основной фокус на UI tests).
 

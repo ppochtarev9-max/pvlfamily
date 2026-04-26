@@ -8,7 +8,7 @@
 - backend API (FastAPI)
 - выгрузки данных в Excel
 
-## Окружение разработки (актуально на 2026-04-25)
+## Окружение разработки (актуально на 2026-04-26)
 
 - OS: macOS (Darwin 25.4.0, ARM64)
 - Xcode: 26.4, Swift 6.3
@@ -16,7 +16,7 @@
 - Backend stack: FastAPI, Uvicorn, SQLAlchemy, openpyxl, slowapi, passlib, python-dotenv
 - Режимы API: Local `http://127.0.0.1:8000` / Cloud `https://pvlfamily.ru`
 
-### Снимок: локаль и production (2026-04-25)
+### Снимок: локаль и production (2026-04-26)
 
 - **Репозиторий** `main` синхронизирован локально и на сервере; конфиг **только** `backend/.env` (секреты, `ADMIN_*`, `SECRET_KEY`).
 - **Cloud:** приложение в `/home/user1/pvl_app`, venv `backend/venv`, systemd `pvlfamily`, Uvicorn `app.main:app`, БД `backend/pvlfamily.db` (путь фиксирован в `database.py`).
@@ -24,6 +24,7 @@
 - **Бюджет / SQLite:** `create_all` **не** обновляет схему существующих таблиц. Если в `categories` нет `group_id`, при старте API выполняется `ensure_budget_schema()` в `main.py` (пересоздание `transactions` / `categories` / `category_groups`). Исторический импорт: `backend/import_history.py` (CSV `;`, владелец транзакций — пользователь с заданным `--user`).
 - **UI iOS (Liquid Glass pass):** в `main` влит единый визуальный проход по вкладкам/формам (`FamilyAppStyle.swift`), системный таббар iOS 26 (`TabView` + `sidebarAdaptable`), унификация карточек/фонов/акцентов на экранах `Dashboard/Budget/Calendar(Дневник)/Tracker/Profile` и связанных формах/листах.
 - **Git hygiene:** локальные артефакты (`.deriveddata/`, `design-pixso*`) добавлены в `.gitignore`; рабочий `main` после деплоя синхронизирован с `origin/main`.
+- **Пагинация API (2026-04-26):** `GET /budget/transactions` → JSON-объект `items` + `has_more` + `total` (не массив с корня); keyset `after_date`+`after_id`, глобальный `balance` на строке = оконный `SUM` по **всей** таблице `transactions`, лента фильтруется отдельно. `GET /tracker/logs` → `items` + `has_more` + `total`, keyset `after_start_time`+`after_id`. Клиент iOS: догрузка внизу списка; выбор «Пользователь» в фильтре бюджета влияет на шапку (сводка), не на скрытие чужих операций в ленте.
 
 ## Архитектура
 
@@ -49,6 +50,7 @@
 ## Текущий API-контракт (важное)
 
 - Budget в `main` работает через `groups/subcategories` (без legacy `categories`).
+- **Списки с историей:** `GET /budget/transactions` и `GET /tracker/logs` (см. снимок выше) — только с Bearer; пагинация keyset, без выдачи «всей базы» одним ответом.
 - Экспорт данных:
   - `GET /budget/export/excel`
   - `GET /tracker/export/excel`

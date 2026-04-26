@@ -1,5 +1,25 @@
 # 📓 Журнал Разработки (DevLog)
 
+## 2026-04-26 — Пагинация лент, глобальный баланс на карточках, деплой
+
+**Контекст:** к росту истории (десятки/сотни тысяч операций) — убрать «скачай всё»; баланс на карточке бюджета — обязателен (как раньше: накопленный total по **всем** операциям, не сужается лентовыми фильтрами). Лента бюджета **общая** для всех; фильтр «кто внёс» влияет на **сумму в шапке**, не на сокрытие чужих операций.
+
+### Сделано
+- **Backend `GET /budget/transactions`:** ответ `TransactionPageOut` — `items`, `has_more`, `total`. Keyset: `after_date` + `after_id` (сортировка `date`↓, `id`↓), `limit` 1…500, опции `date_from`/`date_to`, `category_id`, `group_id`, опционально `created_by_user_id` (iOS в обычном сценарии **не** шлёт). Авторизация: `dependencies=[Depends(get_current_user)]`. Накопленный `balance` в каждом элементе: `SUM(amount) OVER (ORDER BY date ASC, id ASC)` **по всей таблице** (внутренний CTE), фильтрация ленты — внешним `WHERE` (тот же смысл, что у монолитного списка + reverse).
+- **POST `/budget/transactions`:** баланс в ответе — одна агрегатная `SUM` по хронологии, без чтения всех строк; убрана ссылка на несуществующий `app.state` при дефолтной категории.
+- **Backend `GET /tracker/logs`:** ответ `BabyLogPageOut` — `items`, `has_more`, `total`, keyset `after_start_time` + `after_id` (тот же `limit`, без глубокого `OFFSET`).
+- **iOS `BudgetView`:** декод `TransactionListPage`, подгрузка внизу списка, `PVLDateParsing` для согласованного разбора дат, фильтр периода/категорий уходит в query; `selectedUserId` **только** для `getDashboardSummary`; подпись в фильтре, что «Пользователь» = шапка. На **карточке** — строка с накопленным балансом (`formatBalanceOnCard`), если `balance` в JSON.
+- **iOS `TrackerView`:** `LogsListPage`, подгрузка страниц, тот же паттерн курсора.
+- **Тесты:** `test_budget`, `test_tracker` под новую форму JSON.
+- **Git / релиз:** коммит `aa74adb` в `main` (включая сопутствующие `CalendarView`/`FamilyAppStyle`, новый `PVLDateParsing.swift`), `git push origin main`, `./deploy_cloud.sh` (cloud подтянул `..aa74adb`, `systemctl restart pvlfamily` — `active (running)`), `GET https://pvlfamily.ru/health` — `ok`.
+
+### Уроки
+1. **Два смысла баланса:** на карточке ленты = глобальная касса; в шапке с «пользователем» = агрегат по **выбранному** user — не смешивать в одном query-параметре к ленте.
+2. **Окно в SQL** даёт O(1) на строку плюс индексы, без N запросов и без кача всей истории в Python.
+3. **Контракт** лент: обёртка `items` + `has_more` — клиенты должны мигрировать разом; старый «массив с корня» снят.
+
+---
+
 ## 2026-04-25 — UI унификация (Liquid Glass), merge в main, cloud-deploy
 
 **Контекст:** после прохода по макету нужно было быстро привести все ключевые экраны к единому стилю, влить в `main` и выкатить на облако без отдельной итерации тюнинга.

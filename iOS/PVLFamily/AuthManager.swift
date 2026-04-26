@@ -1,5 +1,7 @@
 import Foundation
 import Combine
+import LocalAuthentication
+import Security
 
 // --- МОДЕЛИ ОШИБОК ---
 enum APIError: LocalizedError {
@@ -38,6 +40,7 @@ class AuthManager: ObservableObject {
     @Published var userId: Int?
     @Published var errorMessage: String?
     @Published var users: [[String: Any]] = []
+    @Published var loginUsers: [[String: Any]] = []
     @Published var requiresPasswordReset: Bool = false
     
     @Published var selectedServer: ServerMode {
@@ -51,6 +54,10 @@ class AuthManager: ObservableObject {
 
     var baseURL: String = "http://127.0.0.1:8000"
     private var pendingResetToken: String?
+    private let defaults = UserDefaults.standard
+    private let lastLoginNameKey = "lastLoginName"
+    private let biometricEnabledKey = "biometricEnabled"
+    @Published var biometricEnabled: Bool = false
     
     private let session: URLSession = {
         let config = URLSessionConfiguration.default
@@ -85,8 +92,10 @@ class AuthManager: ObservableObject {
         }
         
         updateBaseURL()
+        biometricEnabled = defaults.bool(forKey: biometricEnabledKey)
         loadStoredUser()
         loadUsers()
+        loadPublicUsers()
     }
 
     static func resolvedBaseURL(for mode: ServerMode) -> String {
@@ -113,6 +122,21 @@ class AuthManager: ObservableObject {
     func updateBaseURL() {
         self.baseURL = Self.resolvedBaseURL(for: selectedServer)
         print("🌐 Сервер: \(baseURL)")
+    }
+
+    func setBiometricEnabled(_ enabled: Bool) {
+        biometricEnabled = enabled
+        defaults.set(enabled, forKey: biometricEnabledKey)
+    }
+
+    func lastLoginName() -> String? {
+        defaults.string(forKey: lastLoginNameKey)
+    }
+
+    func canUseBiometrics() -> Bool {
+        var error: NSError?
+        let context = LAContext()
+        return context.canEvaluatePolicy(.deviceOwnerAuthenticationWithBiometrics, error: &error)
     }
     
     private func handleHTTPResponse(_ response: URLResponse?, data: Data?) -> Result<Void, APIError> {
@@ -171,6 +195,30 @@ class AuthManager: ObservableObject {
                     }
                 case .failure(let apiError): self.errorMessage = apiError.errorDescription
                 }
+            }
+        }.resume()
+    }
+
+    func loadPublicUsers() {
+        guard let url = URL(string: "\(baseURL)/auth/users/public") else { return }
+        var req = URLRequest(url: url)
+        req.timeoutInterval = 10
+        session.dataTask(with: req) { data, response, error in
+            DispatchQueue.main.async {
+                if let error = error {
+                    self.errorMessage = APIError.networkError(error).errorDescription
+                    return
+                }
+                guard let httpResponse = response as? HTTPURLResponse, (200...299).contains(httpResponse.statusCode) else {
+                    self.errorMessage = "Не удалось загрузить список пользователей"
+                    return
+                }
+                guard let data = data,
+                      let json = try? JSONSerialization.jsonObject(with: data) as? [[String: Any]] else {
+                    self.errorMessage = "Некорректный список пользователей"
+                    return
+                }
+                self.loginUsers = json
             }
         }.resume()
     }
@@ -237,12 +285,42 @@ class AuthManager: ObservableObject {
                         UserDefaults.standard.set(accessToken, forKey: "userToken")
                         UserDefaults.standard.set(nameResp, forKey: "userName")
                         UserDefaults.standard.set(userId, forKey: "userId")
+                        self.defaults.set(nameResp, forKey: self.lastLoginNameKey)
+                        if self.biometricEnabled {
+                            _ = self.savePasswordToKeychain(password, account: nameResp)
+                        }
                         print("✅ Вход: \(nameResp)")
                         self.loadUsers()
                     }
                 } catch { self.errorMessage = APIError.decodingError(error).errorDescription }
             }
         }.resume()
+    }
+
+    func loginWithBiometrics() {
+        guard biometricEnabled else {
+            errorMessage = "Face ID выключен в настройках входа"
+            return
+        }
+        guard let name = lastLoginName() else {
+            errorMessage = "Нет последнего пользователя для Face ID"
+            return
+        }
+        guard let password = loadPasswordFromKeychain(account: name) else {
+            errorMessage = "Нет сохраненного пароля для Face ID"
+            return
+        }
+        let context = LAContext()
+        let reason = "Войти как \(name)"
+        context.evaluatePolicy(.deviceOwnerAuthenticationWithBiometrics, localizedReason: reason) { success, error in
+            DispatchQueue.main.async {
+                if success {
+                    self.login(name: name, password: password)
+                } else {
+                    self.errorMessage = error?.localizedDescription ?? "Face ID не прошел"
+                }
+            }
+        }
     }
 
     func changePassword(newPassword: String, completion: @escaping (Result<Void, Error>) -> Void) {
@@ -305,6 +383,91 @@ class AuthManager: ObservableObject {
             case .failure(let apiError): completion(.failure(apiError))
             }
         }.resume()
+    }
+
+    func createUserByAdmin(name: String, password: String, isActive: Bool, mustResetPassword: Bool, completion: @escaping (Result<Void, Error>) -> Void) {
+        guard let token = token else { completion(.failure(APIError.unauthorized)); return }
+        guard let url = URL(string: "\(baseURL)/auth/users") else { completion(.failure(APIError.invalidURL)); return }
+        var req = URLRequest(url: url)
+        req.httpMethod = "POST"
+        req.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        req.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        req.timeoutInterval = 10
+        req.httpBody = try? JSONSerialization.data(withJSONObject: [
+            "name": name,
+            "password": password,
+            "is_active": isActive,
+            "must_reset_password": mustResetPassword
+        ])
+        session.dataTask(with: req) { data, response, error in
+            if let error = error { completion(.failure(APIError.networkError(error))); return }
+            switch self.handleHTTPResponse(response, data: data) {
+            case .success: completion(.success(()))
+            case .failure(let apiError): completion(.failure(apiError))
+            }
+        }.resume()
+    }
+
+    func updateUserByAdmin(userId: Int, name: String, password: String?, isActive: Bool, mustResetPassword: Bool, completion: @escaping (Result<Void, Error>) -> Void) {
+        guard let token = token else { completion(.failure(APIError.unauthorized)); return }
+        guard let url = URL(string: "\(baseURL)/auth/users/\(userId)") else { completion(.failure(APIError.invalidURL)); return }
+        var req = URLRequest(url: url)
+        req.httpMethod = "PUT"
+        req.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        req.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        req.timeoutInterval = 10
+        var payload: [String: Any] = [
+            "name": name,
+            "is_active": isActive,
+            "must_reset_password": mustResetPassword
+        ]
+        if let password, !password.isEmpty {
+            payload["password"] = password
+        }
+        req.httpBody = try? JSONSerialization.data(withJSONObject: payload)
+        session.dataTask(with: req) { data, response, error in
+            if let error = error { completion(.failure(APIError.networkError(error))); return }
+            switch self.handleHTTPResponse(response, data: data) {
+            case .success: completion(.success(()))
+            case .failure(let apiError): completion(.failure(apiError))
+            }
+        }.resume()
+    }
+
+    private func keychainServiceName() -> String {
+        let host = URL(string: baseURL)?.host ?? "pvlfamily"
+        return "pvlfamily.auth.\(host)"
+    }
+
+    private func savePasswordToKeychain(_ password: String, account: String) -> Bool {
+        guard let data = password.data(using: .utf8) else { return false }
+        let service = keychainServiceName()
+        let query: [String: Any] = [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: service,
+            kSecAttrAccount as String: account
+        ]
+        SecItemDelete(query as CFDictionary)
+        var add = query
+        add[kSecValueData as String] = data
+        let status = SecItemAdd(add as CFDictionary, nil)
+        return status == errSecSuccess
+    }
+
+    private func loadPasswordFromKeychain(account: String) -> String? {
+        let query: [String: Any] = [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: keychainServiceName(),
+            kSecAttrAccount as String: account,
+            kSecReturnData as String: true,
+            kSecMatchLimit as String: kSecMatchLimitOne
+        ]
+        var item: AnyObject?
+        let status = SecItemCopyMatching(query as CFDictionary, &item)
+        guard status == errSecSuccess,
+              let data = item as? Data,
+              let password = String(data: data, encoding: .utf8) else { return nil }
+        return password
     }
 }
 

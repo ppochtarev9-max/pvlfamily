@@ -3,7 +3,7 @@ from pathlib import Path
 from dotenv import load_dotenv
 from fastapi import APIRouter, Depends, HTTPException, Header, Request
 from sqlalchemy.orm import Session
-from typing import List
+from typing import List, Optional
 from jose import jwt, JWTError
 from datetime import datetime, timedelta, timezone
 from slowapi import Limiter
@@ -84,6 +84,47 @@ def get_current_user(authorization: str = Header(None), db: Session = Depends(ge
     
     return user
 
+
+def require_admin(current_user: models.User = Depends(get_current_user)) -> models.User:
+    if not current_user.is_admin:
+        raise HTTPException(status_code=403, detail="Только админ может выполнять это действие")
+    return current_user
+
+
+def _mark_user_deleted_in_snapshots(db: Session, user: models.User) -> None:
+    """
+    Перед удалением User: в транзакциях/событиях/логах фиксируем имя в snapshot как «… (удален)»,
+    чтобы после SET NULL на FK в UI оставалось читаемое «ИМЯ (удален)».
+    """
+    suffix = " (удален)"
+
+    def stamp(existing: Optional[str]) -> str:
+        base = (existing or user.name or "").strip()
+        if not base:
+            return f"Пользователь{suffix}"
+        if base.endswith(suffix):
+            return base
+        return f"{base}{suffix}"
+
+    for tx in (
+        db.query(models.Transaction)
+        .filter(models.Transaction.created_by_user_id == user.id)
+        .all()
+    ):
+        tx.creator_name_snapshot = stamp(tx.creator_name_snapshot)
+
+    for ev in (
+        db.query(models.CalendarEvent)
+        .filter(models.CalendarEvent.user_id == user.id)
+        .all()
+    ):
+        ev.creator_name_snapshot = stamp(ev.creator_name_snapshot)
+
+    for log in (
+        db.query(models.BabyLog).filter(models.BabyLog.user_id == user.id).all()
+    ):
+        log.creator_name_snapshot = stamp(log.creator_name_snapshot)
+
 @router.post("/login", response_model=schemas.LoginResponse)
 @limiter.limit("5/minute")  # Защита: макс 5 попыток входа в минуту с одного IP
 def login(request: Request, user_data: schemas.UserLogin, db: Session = Depends(get_db)):
@@ -112,6 +153,17 @@ def get_users(db: Session = Depends(get_db), current_user: models.User = Depends
     users = db.query(models.User).all()
     return users
 
+
+@router.get("/users/public", response_model=List[schemas.PublicUserOut])
+def get_public_users(db: Session = Depends(get_db)):
+    users = (
+        db.query(models.User)
+        .filter(models.User.is_active == True)
+        .order_by(models.User.name.asc())
+        .all()
+    )
+    return users
+
 @router.delete("/users/{user_id}")
 def delete_user(user_id: int, db: Session = Depends(get_db), current_user: models.User = Depends(get_current_user)):
     if not current_user.is_admin:
@@ -119,10 +171,82 @@ def delete_user(user_id: int, db: Session = Depends(get_db), current_user: model
     user = db.query(models.User).filter(models.User.id == user_id).first()
     if not user:
         raise HTTPException(status_code=404, detail="Пользователь не найден")
-    
+    if user.id == current_user.id:
+        raise HTTPException(status_code=400, detail="Нельзя удалить собственного пользователя-админа")
+    _mark_user_deleted_in_snapshots(db, user)
     db.delete(user)
     db.commit()
     return {"detail": "Пользователь успешно удален"}
+
+
+@router.post("/users", response_model=schemas.UserOut)
+def create_user_by_admin_bearer(
+    payload: schemas.AdminUserCreate,
+    db: Session = Depends(get_db),
+    current_admin: models.User = Depends(require_admin),
+):
+    _ = current_admin
+    validate_password_policy(payload.password)
+    name = payload.name.strip()
+    if not name:
+        raise HTTPException(status_code=400, detail="Имя не может быть пустым")
+
+    exists = db.query(models.User).filter(models.User.name == name).first()
+    if exists:
+        raise HTTPException(status_code=409, detail="Пользователь уже существует")
+
+    user = models.User(
+        name=name,
+        password_hash=hash_password(payload.password),
+        is_active=payload.is_active,
+        is_admin=False,
+        must_reset_password=payload.must_reset_password,
+    )
+    db.add(user)
+    db.commit()
+    db.refresh(user)
+    return user
+
+
+@router.put("/users/{user_id}", response_model=schemas.UserOut)
+def update_user_by_admin(
+    user_id: int,
+    payload: schemas.AdminUserUpdate,
+    db: Session = Depends(get_db),
+    current_admin: models.User = Depends(require_admin),
+):
+    user = db.query(models.User).filter(models.User.id == user_id).first()
+    if not user:
+        raise HTTPException(status_code=404, detail="Пользователь не найден")
+
+    if payload.name is not None:
+        new_name = payload.name.strip()
+        if not new_name:
+            raise HTTPException(status_code=400, detail="Имя не может быть пустым")
+        exists = (
+            db.query(models.User)
+            .filter(models.User.name == new_name, models.User.id != user_id)
+            .first()
+        )
+        if exists:
+            raise HTTPException(status_code=409, detail="Пользователь с таким именем уже существует")
+        user.name = new_name
+
+    if payload.password is not None:
+        validate_password_policy(payload.password)
+        user.password_hash = hash_password(payload.password)
+
+    if payload.is_active is not None:
+        if user.id == current_admin.id and payload.is_active is False:
+            raise HTTPException(status_code=400, detail="Нельзя деактивировать текущего админа")
+        user.is_active = payload.is_active
+
+    if payload.must_reset_password is not None:
+        user.must_reset_password = payload.must_reset_password
+
+    db.commit()
+    db.refresh(user)
+    return user
 
 @router.post("/admin/users", response_model=schemas.UserOut)
 def create_user_by_admin(

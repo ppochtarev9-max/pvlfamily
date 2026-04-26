@@ -23,6 +23,11 @@ struct ProfileView: View {
         return nil
     }
 
+    var isCurrentUserAdmin: Bool {
+        guard let uid = authManager.userId else { return false }
+        return authManager.users.first(where: { ($0["id"] as? Int) == uid })?["is_admin"] as? Bool ?? false
+    }
+
     var body: some View {
         NavigationStack {
             Group {
@@ -65,6 +70,18 @@ struct ProfileView: View {
                         
                         // Настройки
                         Section("Настройки") {
+                            if isCurrentUserAdmin {
+                                NavigationLink(destination: UserManagementView()) {
+                                    HStack {
+                                        Image(systemName: "person.3.sequence.fill")
+                                            .foregroundColor(FamilyAppStyle.accent)
+                                        Text("Пользователи (админ)")
+                                            .fontWeight(.medium)
+                                        Spacer()
+                                    }
+                                }
+                            }
+
                             // Управление категориями
                             Button(action: {
                                 loadCategories()
@@ -167,6 +184,9 @@ struct ProfileView: View {
                 }
             } message: {
                 Text("Вы уверены? Это действие нельзя отменить.")
+            }
+            .onAppear {
+                authManager.loadUsers()
             }
         }
     }

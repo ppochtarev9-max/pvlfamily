@@ -7,6 +7,24 @@ struct LoginView: View {
     @State private var newPassword: String = ""
     @State private var confirmPassword: String = ""
     @State private var isAnimating: Bool = false
+    @State private var rememberForFaceID: Bool = false
+    @State private var step: LoginStep = .chooseUser
+    @State private var customUserMode = false
+
+    enum LoginStep {
+        case chooseUser
+        case auth
+    }
+
+    private var canUseFaceIDNow: Bool {
+        authManager.canUseBiometrics()
+        && authManager.biometricEnabled
+        && authManager.lastLoginName() == userName
+    }
+
+    private var canContinueFromUserStep: Bool {
+        !userName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
     
     var body: some View {
         NavigationStack {
@@ -64,7 +82,7 @@ struct LoginView: View {
                             .tint(FamilyAppStyle.accent)
                             .onChange(of: authManager.selectedServer) { _, _ in
                                 authManager.updateBaseURL()
-                                authManager.loadUsers()
+                                authManager.loadPublicUsers()
                             }
                         }
                         .padding(.horizontal)
@@ -83,43 +101,136 @@ struct LoginView: View {
                                 .padding(.horizontal, 4)
                             
                             VStack(spacing: 12) {
-                                TextField("Введите имя", text: $userName)
-                                    .textFieldStyle(.plain)
-                                    .padding()
-                                    .background(FamilyAppStyle.listCardFill)
-                                    .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
-                                    .overlay(
-                                        RoundedRectangle(cornerRadius: 16, style: .continuous)
-                                            .strokeBorder(FamilyAppStyle.cardStroke, lineWidth: 1)
-                                    )
-                                    .accessibilityIdentifier("NameInput")
-
-                                SecureField("Введите пароль", text: $password)
-                                    .textFieldStyle(.plain)
-                                    .padding()
-                                    .background(FamilyAppStyle.listCardFill)
-                                    .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
-                                    .overlay(
-                                        RoundedRectangle(cornerRadius: 16, style: .continuous)
-                                            .strokeBorder(FamilyAppStyle.cardStroke, lineWidth: 1)
-                                    )
-                                    .accessibilityIdentifier("PasswordInput")
-
-                                Button(action: {
-                                    withAnimation {
-                                        authManager.login(name: userName, password: password)
+                                if step == .chooseUser {
+                                    if !customUserMode, !authManager.loginUsers.isEmpty {
+                                        Menu {
+                                            ForEach(0..<authManager.loginUsers.count, id: \.self) { index in
+                                                let user = authManager.loginUsers[index]
+                                                if let name = user["name"] as? String {
+                                                    Button(name) { userName = name }
+                                                }
+                                            }
+                                            Divider()
+                                            Button("Другой пользователь...") {
+                                                customUserMode = true
+                                                userName = ""
+                                            }
+                                        } label: {
+                                            HStack {
+                                                Image(systemName: "person.crop.circle")
+                                                Text(userName.isEmpty ? "Выбрать пользователя" : userName)
+                                                    .foregroundColor(userName.isEmpty ? .secondary : .primary)
+                                                Spacer()
+                                                Image(systemName: "chevron.down")
+                                                    .font(.caption)
+                                                    .foregroundColor(.secondary)
+                                            }
+                                            .padding()
+                                            .background(FamilyAppStyle.listCardFill)
+                                            .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+                                            .overlay(
+                                                RoundedRectangle(cornerRadius: 16, style: .continuous)
+                                                    .strokeBorder(FamilyAppStyle.cardStroke, lineWidth: 1)
+                                            )
+                                        }
+                                        .accessibilityIdentifier("UserPickerMenu")
                                     }
-                                }) {
-                                    Text("Войти")
-                                        .fontWeight(.semibold)
-                                        .frame(maxWidth: .infinity)
+
+                                    if customUserMode || authManager.loginUsers.isEmpty {
+                                        TextField("Введите имя", text: $userName)
+                                            .textFieldStyle(.plain)
+                                            .padding()
+                                            .background(FamilyAppStyle.listCardFill)
+                                            .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+                                            .overlay(
+                                                RoundedRectangle(cornerRadius: 16, style: .continuous)
+                                                    .strokeBorder(FamilyAppStyle.cardStroke, lineWidth: 1)
+                                            )
+                                            .accessibilityIdentifier("NameInput")
+                                    }
+
+                                    Button(action: {
+                                        withAnimation(.easeInOut) {
+                                            step = .auth
+                                        }
+                                    }) {
+                                        Text("Продолжить")
+                                            .fontWeight(.semibold)
+                                            .frame(maxWidth: .infinity)
+                                            .padding()
+                                            .background(canContinueFromUserStep ? FamilyAppStyle.accent : Color.gray)
+                                            .foregroundColor(.white)
+                                            .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+                                    }
+                                    .disabled(!canContinueFromUserStep)
+                                } else {
+                                    HStack {
+                                        Text(userName)
+                                            .font(.headline)
+                                        Spacer()
+                                        Button("Сменить пользователя") {
+                                            withAnimation(.easeInOut) {
+                                                step = .chooseUser
+                                                password = ""
+                                            }
+                                        }
+                                        .font(.subheadline)
+                                    }
+                                    .padding(.horizontal, 4)
+
+                                    if canUseFaceIDNow {
+                                        Button(action: {
+                                            authManager.loginWithBiometrics()
+                                        }) {
+                                            Label("Войти через Face ID", systemImage: "faceid")
+                                                .fontWeight(.semibold)
+                                                .frame(maxWidth: .infinity)
+                                                .padding()
+                                                .background(FamilyAppStyle.accent)
+                                                .foregroundColor(.white)
+                                                .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+                                        }
+                                        .accessibilityIdentifier("BiometricLoginButton")
+
+                                        Text("или войдите по паролю")
+                                            .font(.caption)
+                                            .foregroundStyle(.secondary)
+                                    }
+
+                                    SecureField("Введите пароль", text: $password)
+                                        .textFieldStyle(.plain)
                                         .padding()
-                                        .background((userName.isEmpty || password.isEmpty) ? Color.gray : FamilyAppStyle.accent)
-                                        .foregroundColor(.white)
-                                        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+                                        .background(FamilyAppStyle.listCardFill)
+                                        .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+                                        .overlay(
+                                            RoundedRectangle(cornerRadius: 16, style: .continuous)
+                                                .strokeBorder(FamilyAppStyle.cardStroke, lineWidth: 1)
+                                        )
+                                        .accessibilityIdentifier("PasswordInput")
+
+                                    Toggle(isOn: $rememberForFaceID) {
+                                        Text("Запомнить пароль для Face ID")
+                                            .font(.subheadline)
+                                    }
+                                    .tint(FamilyAppStyle.accent)
+
+                                    Button(action: {
+                                        withAnimation {
+                                            authManager.setBiometricEnabled(rememberForFaceID)
+                                            authManager.login(name: userName, password: password)
+                                        }
+                                    }) {
+                                        Text("Войти")
+                                            .fontWeight(.semibold)
+                                            .frame(maxWidth: .infinity)
+                                            .padding()
+                                            .background(password.isEmpty ? Color.gray : FamilyAppStyle.accent)
+                                            .foregroundColor(.white)
+                                            .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+                                    }
+                                    .disabled(password.isEmpty)
+                                    .accessibilityIdentifier("LoginButton")
                                 }
-                                .disabled(userName.isEmpty || password.isEmpty)
-                                .accessibilityIdentifier("LoginButton")
                             }
                         }
                         .padding(.horizontal)
@@ -178,6 +289,18 @@ struct LoginView: View {
             .tint(FamilyAppStyle.accent)
             .onAppear {
                 isAnimating = true
+                if let lastName = authManager.lastLoginName() {
+                    userName = lastName
+                }
+                rememberForFaceID = authManager.biometricEnabled
+                authManager.loadPublicUsers()
+                step = .chooseUser
+                customUserMode = authManager.loginUsers.isEmpty
+            }
+            .onChange(of: authManager.loginUsers.count) { _, newCount in
+                if newCount > 0, !userName.isEmpty {
+                    customUserMode = false
+                }
             }
         }
     }

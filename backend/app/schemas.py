@@ -37,6 +37,20 @@ class UserOut(UserBase):
     created_at: datetime
     model_config = ConfigDict(from_attributes=True)
 
+
+class PublicUserOut(BaseModel):
+    id: int
+    name: str
+    is_active: bool = True
+    model_config = ConfigDict(from_attributes=True)
+
+
+class AdminUserUpdate(BaseModel):
+    name: Optional[str] = None
+    password: Optional[str] = None
+    is_active: Optional[bool] = None
+    must_reset_password: Optional[bool] = None
+
 # --- Category Group Schemas (КАТЕГОРИИ) ---
 class CategoryGroupBase(BaseModel):
     name: str

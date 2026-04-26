@@ -57,7 +57,7 @@ struct TrackerFormView: View {
                                 }
                                 .frame(maxWidth: .infinity)
                                 .padding(.vertical, 10)
-                                .background(selectedType == type.id ? FamilyAppStyle.accent : Color(.systemGray5))
+                                .background(selectedType == type.id ? FamilyAppStyle.accent : Color(.secondarySystemFill))
                                 .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
                             }
                             .disabled(isSaving || (existingLog != nil)) // Нельзя менять тип при редактировании существующего

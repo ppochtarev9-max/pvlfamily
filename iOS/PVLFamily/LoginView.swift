@@ -77,7 +77,7 @@ struct LoginView: View {
                             }
                             .pickerStyle(.segmented)
                             .padding(4)
-                            .background(Color(.systemGray5))
+                            .background(Color(.secondarySystemFill))
                             .cornerRadius(12)
                             .tint(FamilyAppStyle.accent)
                             .onChange(of: authManager.selectedServer) { _, _ in
@@ -158,7 +158,7 @@ struct LoginView: View {
                                             .fontWeight(.semibold)
                                             .frame(maxWidth: .infinity)
                                             .padding()
-                                            .background(canContinueFromUserStep ? FamilyAppStyle.accent : Color.gray)
+                                            .background(canContinueFromUserStep ? FamilyAppStyle.accent : FamilyAppStyle.buttonFillDisabled)
                                             .foregroundColor(.white)
                                             .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
                                     }
@@ -224,7 +224,7 @@ struct LoginView: View {
                                             .fontWeight(.semibold)
                                             .frame(maxWidth: .infinity)
                                             .padding()
-                                            .background(password.isEmpty ? Color.gray : FamilyAppStyle.accent)
+                                            .background(password.isEmpty ? FamilyAppStyle.buttonFillDisabled : FamilyAppStyle.accent)
                                             .foregroundColor(.white)
                                             .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
                                     }

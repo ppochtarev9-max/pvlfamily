@@ -107,7 +107,7 @@ struct CalendarView: View {
                                     HStack {
                                         Text(section.title)
                                             .font(.system(size: 13, weight: .semibold))
-                                            .foregroundColor(Color(red: 109 / 255, green: 108 / 255, blue: 106 / 255))
+                                            .foregroundColor(FamilyAppStyle.sectionHeaderForeground)
                                         Spacer()
                                         Text("\(n) \(PVLDateParsing.eventWord(n))")
                                             .font(.system(size: 12, weight: .medium))
@@ -361,7 +361,7 @@ struct EventCard: View {
                 Text((event.description?.isEmpty == false ? event.description! : eventTypeTitle))
                     .font(.system(size: 12))
                     .italic()
-                    .foregroundColor(Color(red: 156 / 255, green: 155 / 255, blue: 153 / 255))
+                    .foregroundColor(FamilyAppStyle.captionMuted)
                     .lineLimit(1)
             }
 
@@ -374,7 +374,7 @@ struct EventCard: View {
                 Text(shortDate(event.event_date))
                     .font(.system(size: 11))
                     .italic()
-                    .foregroundColor(Color(red: 156 / 255, green: 155 / 255, blue: 153 / 255))
+                    .foregroundColor(FamilyAppStyle.captionMuted)
             }
         }
         .frame(maxWidth: .infinity, minHeight: 62, alignment: .center)
@@ -382,7 +382,7 @@ struct EventCard: View {
         .overlay(alignment: .bottom) {
             if !isLastInGroup {
                 Rectangle()
-                    .fill(Color(red: 240 / 255, green: 239 / 255, blue: 236 / 255))
+                    .fill(FamilyAppStyle.hairline)
                     .frame(height: 1)
             }
         }
@@ -390,8 +390,8 @@ struct EventCard: View {
 
     private var iconBackground: Color {
         event.event_type == "reminder"
-            ? Color(red: 1.0, green: 0.97, blue: 0.93)
-            : Color(red: 0.94, green: 0.99, blue: 0.96)
+            ? FamilyAppStyle.softIconOrange
+            : FamilyAppStyle.softIconGreen
     }
     
     func formatDate(_ string: String) -> String {

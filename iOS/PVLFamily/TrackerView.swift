@@ -92,10 +92,11 @@ struct TrackerView: View {
 
     @ViewBuilder
     private func trackerHeroColumn(title: String, systemImage: String, value: String) -> some View {
-        VStack(alignment: .leading, spacing: 4) {
+        VStack(alignment: .center, spacing: 4) {
             Text(title)
                 .font(.system(size: 11, weight: .semibold))
                 .kerning(1)
+                .multilineTextAlignment(.center)
                 .foregroundColor(FamilyAppStyle.captionMuted)
             HStack(spacing: 4) {
                 Image(systemName: systemImage)
@@ -107,7 +108,7 @@ struct TrackerView: View {
                     .foregroundColor(FamilyAppStyle.pixsoInk)
             }
         }
-        .frame(maxWidth: .infinity, alignment: .leading)
+        .frame(maxWidth: .infinity, alignment: .center)
     }
 
     private func formatSleepDurationPixso(_ minutes: Int) -> String {
@@ -135,7 +136,7 @@ struct TrackerView: View {
             VStack(spacing: 0) {
                 // === ШАПКА С АНАЛИТИКОЙ (без фикс. высоты — нет пустой полосы под кнопкой) ===
                 VStack(spacing: 10) {
-                    HStack(alignment: .top, spacing: 0) {
+                    HStack(alignment: .center, spacing: 0) {
                         trackerHeroColumn(
                             title: sleepColumnTitle,
                             systemImage: "moon.fill",
@@ -174,7 +175,7 @@ struct TrackerView: View {
                     }
                     .padding(.horizontal)
                     .navigationDestination(isPresented: $navigateToStats) {
-                        TrackerStatsView()
+                        TrackerAnalyticsHubView()
                     }
                 }
                 
@@ -215,7 +216,7 @@ struct TrackerView: View {
                                     HStack {
                                         Text(section.title)
                                             .font(.system(size: 13, weight: .semibold))
-                                            .foregroundColor(Color(red: 109 / 255, green: 108 / 255, blue: 106 / 255))
+                                            .foregroundColor(FamilyAppStyle.sectionHeaderForeground)
                                         Spacer()
                                         Text("\(n) \(PVLDateParsing.eventWord(n))")
                                             .font(.system(size: 12, weight: .medium))
@@ -515,10 +516,10 @@ struct LogCard: View {
                     if log.is_active {
                         Text("активно")
                             .font(.system(size: 10, weight: .semibold))
-                            .foregroundColor(Color(red: 61 / 255, green: 138 / 255, blue: 90 / 255))
+                            .foregroundColor(FamilyAppStyle.incomeGreen)
                             .padding(.horizontal, 7)
                             .padding(.vertical, 2)
-                            .background(Color(red: 200 / 255, green: 240 / 255, blue: 216 / 255))
+                            .background(FamilyAppStyle.incomeSoftBadgeBackground)
                             .clipShape(RoundedRectangle(cornerRadius: 4, style: .continuous))
                     }
                 }
@@ -526,7 +527,7 @@ struct LogCard: View {
                 Text(timeRangeText)
                     .font(.system(size: 12))
                     .italic()
-                    .foregroundColor(Color(red: 156 / 255, green: 155 / 255, blue: 153 / 255))
+                    .foregroundColor(FamilyAppStyle.captionMuted)
                     .lineLimit(2)
             }
 
@@ -537,7 +538,7 @@ struct LogCard: View {
         .overlay(alignment: .bottom) {
             if !isLastInGroup {
                 Rectangle()
-                    .fill(Color(red: 240 / 255, green: 239 / 255, blue: 236 / 255))
+                    .fill(FamilyAppStyle.hairline)
                     .frame(height: 1)
             }
         }
@@ -557,8 +558,8 @@ struct LogCard: View {
 
     private var iconBackground: Color {
         log.event_type == "sleep"
-            ? Color(red: 237 / 255, green: 233 / 255, blue: 254 / 255)
-            : Color(red: 1.0, green: 0.97, blue: 0.93)
+            ? FamilyAppStyle.softIconPurple
+            : FamilyAppStyle.softIconOrange
     }
 
     private var timeRangeText: String {

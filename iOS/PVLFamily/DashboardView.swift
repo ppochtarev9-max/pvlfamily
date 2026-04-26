@@ -127,7 +127,7 @@ struct DashboardView: View {
                             title: "Транзакция",
                             subtitle: "Добавить запись",
                             icon: "receipt",
-                            iconBackground: Color(red: 0.94, green: 0.99, blue: 0.96),
+                            iconBackground: FamilyAppStyle.softIconGreen,
                             iconColor: .green
                         ) {
                             loadCategories()
@@ -136,7 +136,7 @@ struct DashboardView: View {
                             title: "Событие",
                             subtitle: "Новая запись",
                             icon: "calendar.badge.plus",
-                            iconBackground: Color(red: 1.0, green: 0.97, blue: 0.93),
+                            iconBackground: FamilyAppStyle.softIconOrange,
                             iconColor: .orange
                         ) {
                             showingEventSheet = true
@@ -152,7 +152,7 @@ struct DashboardView: View {
                 }
                 .padding(.vertical)
             }
-            .background(Color(.systemGray6))
+            .background(FamilyAppStyle.screenBackground)
             .navigationTitle("Главная")
             .onOpenURL { url in handleDeepLink(url) }
             
@@ -702,7 +702,7 @@ struct TrackerStatusWidget: View {
                     }
                     .buttonStyle(.plain)
                     .foregroundColor(accent)
-                    .background(Color(.systemBackground))
+                    .background(FamilyAppStyle.listCardFill)
                     .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
                     .overlay(
                         RoundedRectangle(cornerRadius: 12, style: .continuous)
@@ -762,11 +762,11 @@ struct ActionCard: View {
         .padding(20)
         .frame(maxWidth: .infinity)
         .frame(height: 185)
-        .background(Color(.systemBackground))
+        .background(FamilyAppStyle.listCardFill)
         .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
         .overlay(
             RoundedRectangle(cornerRadius: 16, style: .continuous)
-                .stroke(Color(red: 0.89, green: 0.89, blue: 0.91), lineWidth: 1.5)
+                .stroke(FamilyAppStyle.cardChromeBorder, lineWidth: 1.5)
         )
     }
 }

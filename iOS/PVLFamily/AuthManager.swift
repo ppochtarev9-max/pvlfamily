@@ -604,4 +604,28 @@ extension AuthManager {
         // Сейчас вернем пустой результат, так как логика считается на клиенте в TrackerView
         completion(.success(["total_sleep_minutes": 0, "sessions_count": 0]))
     }
+
+    /// Агрегаты сна за последние `days` (см. `GET /tracker/stats`).
+    func getTrackerStats(days: Int, completion: @escaping (Result<TrackerStats, Error>) -> Void) {
+        guard let token = token else { completion(.failure(APIError.unauthorized)); return }
+        let d = min(max(days, 1), 365)
+        guard let url = URL(string: "\(baseURL)/tracker/stats?days=\(d)") else { completion(.failure(APIError.invalidURL)); return }
+        var req = URLRequest(url: url)
+        req.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        req.timeoutInterval = 15
+        session.dataTask(with: req) { data, resp, err in
+            if let err = err { completion(.failure(APIError.networkError(err))); return }
+            if let h = resp as? HTTPURLResponse, !(200...299).contains(h.statusCode) {
+                completion(.failure(APIError.httpError(statusCode: h.statusCode, message: "tracker/stats")))
+                return
+            }
+            guard let data = data else { completion(.failure(APIError.noData)); return }
+            do {
+                let decoded = try JSONDecoder().decode(TrackerStats.self, from: data)
+                completion(.success(decoded))
+            } catch {
+                completion(.failure(APIError.decodingError(error)))
+            }
+        }.resume()
+    }
 }

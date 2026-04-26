@@ -34,7 +34,7 @@ struct BudgetView: View {
     @State private var selectedUserId: Int? = nil
     
     // Навигация
-    @State private var navigateToDetails = false
+    @State private var navigateToAnalytics = false
     @State private var balanceDate = Date()
     @State private var showBalanceCalendar = false
     
@@ -241,8 +241,8 @@ struct BudgetView: View {
                     .pvlPixsoHeroPanel()
                     .padding(.horizontal)
                     
-                    Button(action: { navigateToDetails = true }) {
-                        Text("Детализация")
+                    Button(action: { navigateToAnalytics = true }) {
+                        Text("Аналитика")
                             .font(.system(size: 15, weight: .semibold))
                             .foregroundColor(.white)
                             .frame(maxWidth: .infinity)
@@ -251,16 +251,6 @@ struct BudgetView: View {
                             .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
                     }
                     .padding(.horizontal)
-                    .navigationDestination(isPresented: $navigateToDetails) {
-                        BudgetDetailsView(
-                            selectedUserId: $selectedUserId,
-                            selectedDateFilter: $selectedDateFilter,
-                            customStartDate: $customStartDate,
-                            customEndDate: $customEndDate,
-                            selectedGroupId: $selectedGroupId,
-                            selectedSubcategoryId: $selectedSubcategoryId
-                        )
-                    }
                 }
                 
                 Text("Операции")
@@ -301,11 +291,11 @@ struct BudgetView: View {
                                     HStack {
                                         Text(section.title)
                                             .font(.system(size: 13, weight: .semibold))
-                                            .foregroundColor(Color(red: 109 / 255, green: 108 / 255, blue: 106 / 255))
+                                            .foregroundColor(FamilyAppStyle.sectionHeaderForeground)
                                         Spacer()
                                         Text(section.summary)
                                             .font(.system(size: 12, weight: .medium))
-                                            .foregroundColor(section.summaryHasIncome ? Color(red: 61 / 255, green: 138 / 255, blue: 90 / 255) : Color(red: 208 / 255, green: 128 / 255, blue: 104 / 255))
+                                            .foregroundColor(section.summaryHasIncome ? FamilyAppStyle.incomeGreen : FamilyAppStyle.expenseCoral)
                                     }
                                     .textCase(nil)
                                 }
@@ -337,6 +327,9 @@ struct BudgetView: View {
             .background(FamilyAppStyle.screenBackground)
             .navigationTitle("")
             .navigationBarTitleDisplayMode(.inline)
+            .navigationDestination(isPresented: $navigateToAnalytics) {
+                BudgetAnalyticsHubView(initialUserId: selectedUserId)
+            }
             .toolbar {
                 ToolbarItem(placement: .principal) {
                     HStack(spacing: 4) {
@@ -358,7 +351,7 @@ struct BudgetView: View {
                     HStack(spacing: 15) {
                         Button(action: { showingFilterSheet = true }) {
                             Image(systemName: hasActiveFilters ? "line.3.horizontal.decrease.circle.fill" : "line.3.horizontal.decrease.circle")
-                                .foregroundColor(hasActiveFilters ? FamilyAppStyle.accent : .gray)
+                                .foregroundColor(hasActiveFilters ? FamilyAppStyle.accent : FamilyAppStyle.captionMuted)
                         }
                         Button(action: { startNewTransaction() }) {
                             Image(systemName: "plus")
@@ -802,7 +795,7 @@ struct TransactionCard: View {
     var body: some View {
         HStack(alignment: .center, spacing: 12) {
             RoundedRectangle(cornerRadius: 10, style: .continuous)
-                .fill(Color(red: 237 / 255, green: 236 / 255, blue: 234 / 255))
+                .fill(FamilyAppStyle.softIconNeutral)
                 .frame(width: 36, height: 36)
                 .overlay {
                     Image(systemName: typeIcon)
@@ -818,7 +811,7 @@ struct TransactionCard: View {
                 Text((t.description?.isEmpty == false ? t.description! : defaultSubtitle))
                     .font(.system(size: 12))
                     .italic()
-                    .foregroundColor(Color(red: 156 / 255, green: 155 / 255, blue: 153 / 255))
+                    .foregroundColor(FamilyAppStyle.captionMuted)
                     .lineLimit(1)
             }
 
@@ -836,7 +829,7 @@ struct TransactionCard: View {
                 Text(timeText)
                     .font(.system(size: 11))
                     .italic()
-                    .foregroundColor(Color(red: 156 / 255, green: 155 / 255, blue: 153 / 255))
+                    .foregroundColor(FamilyAppStyle.captionMuted)
             }
         }
         .frame(maxWidth: .infinity, minHeight: 62, alignment: .center)
@@ -844,16 +837,14 @@ struct TransactionCard: View {
         .overlay(alignment: .bottom) {
             if !isLastInGroup {
                 Rectangle()
-                    .fill(Color(red: 240 / 255, green: 239 / 255, blue: 236 / 255))
+                    .fill(FamilyAppStyle.hairline)
                     .frame(height: 1)
             }
         }
     }
 
     private var typeTint: Color {
-        t.transaction_type == "income"
-            ? Color(red: 61 / 255, green: 138 / 255, blue: 90 / 255)
-            : Color(red: 208 / 255, green: 128 / 255, blue: 104 / 255)
+        t.transaction_type == "income" ? FamilyAppStyle.incomeGreen : FamilyAppStyle.expenseCoral
     }
 
     private var typeIcon: String {

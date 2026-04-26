@@ -38,7 +38,7 @@ struct CategoriesManagerView: View {
                             showHiddenToggle.toggle()
                         }) {
                             Image(systemName: showHiddenToggle ? "eye.fill" : "eye.slash")
-                                .foregroundStyle(showHiddenToggle ? FamilyAppStyle.accent : Color.gray)
+                                .foregroundStyle(showHiddenToggle ? FamilyAppStyle.accent : FamilyAppStyle.captionMuted)
                                 .font(.system(size: 18))
                         }
                     }) {
@@ -330,7 +330,7 @@ struct SubCategoryListView: View {
                             showHiddenToggle.toggle()
                         }) {
                             Image(systemName: showHiddenToggle ? "eye.fill" : "eye.slash")
-                                .foregroundStyle(showHiddenToggle ? FamilyAppStyle.accent : Color.gray)
+                                .foregroundStyle(showHiddenToggle ? FamilyAppStyle.accent : FamilyAppStyle.captionMuted)
                         }
                     }) {
                         if filteredSubs.isEmpty {
@@ -514,7 +514,7 @@ struct SubCategoryRow: View {
     
     var body: some View {
         HStack(spacing: 12) {
-            Rectangle().fill(sub.is_hidden ? Color.gray : FamilyAppStyle.accent).frame(width: 4, height: 40).cornerRadius(2)
+            Rectangle().fill(sub.is_hidden ? FamilyAppStyle.captionMuted : FamilyAppStyle.accent).frame(width: 4, height: 40).cornerRadius(2)
             VStack(alignment: .leading, spacing: 4) {
                 Text(sub.name).font(.system(size: 16, weight: .medium)).foregroundColor(sub.is_hidden ? .gray : .primary).strikethrough(sub.is_hidden)
                 if sub.is_hidden { Text("Скрыта").font(.caption).foregroundColor(.gray) }

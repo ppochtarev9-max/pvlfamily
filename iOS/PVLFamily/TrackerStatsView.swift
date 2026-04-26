@@ -4,124 +4,134 @@ import Charts
 struct TrackerStatsView: View {
     @EnvironmentObject var authManager: AuthManager
     @Environment(\.dismiss) var dismiss
-    
+
+    /// Если `false` — вложен в навигацию с родителя (`TrackerAnalyticsHubView`).
+    var embedInNavigationStack: Bool = true
+
     @State private var stats: TrackerStats?
     @State private var isLoading = true
     @State private var errorMessage: String?
     @State private var selectedDays = 7
-    
+
     var body: some View {
-        NavigationStack {
-            Group {
-                if isLoading {
-                    ProgressView("Загрузка статистики...")
-                        .frame(maxWidth: .infinity, maxHeight: .infinity)
-                } else if let error = errorMessage {
-                    ContentUnavailableView("Ошибка", systemImage: "exclamationmark.triangle", description: Text(error))
-                } else if let stats = stats {
-                    ScrollView {
-                        VStack(spacing: 24) {
-                            Picker("Период", selection: $selectedDays) {
-                                Text("7 дней").tag(7)
-                                Text("30 дней").tag(30)
-                            }
-                            .pickerStyle(.segmented)
-                            .tint(FamilyAppStyle.accent)
-                            .padding(.horizontal)
-                            .onChange(of: selectedDays) { _, newValue in
-                                loadStats(days: newValue)
-                            }
-                            
-                            VStack(spacing: 12) {
-                                HStack {
-                                    StatCard(
-                                        title: "Всего сна",
-                                        value: formatHours(stats.total_sleep_minutes),
-                                        icon: "moon.fill",
-                                        color: FamilyAppStyle.accent
-                                    )
-                                    StatCard(
-                                        title: "Средний сон",
-                                        value: formatHours(stats.average_sleep_minutes),
-                                        icon: "clock.fill",
-                                        color: FamilyAppStyle.accent
-                                    )
-                                }
-                                HStack {
-                                    StatCard(
-                                        title: "Кол-во снов",
-                                        value: "\(stats.total_sessions)",
-                                        icon: "list.bullet",
-                                        color: .orange
-                                    )
-                                    StatCard(
-                                        title: "Дней в выборке",
-                                        value: "\(stats.period_days)",
-                                        icon: "calendar",
-                                        color: Color(.secondaryLabel)
-                                    )
-                                }
-                            }
-                            .padding(.horizontal)
-                            
-                            Text("Динамика по дням")
-                                .font(.system(size: 14, weight: .semibold))
-                                .tracking(0.8)
-                                .foregroundColor(Color(.secondaryLabel))
-                                .frame(maxWidth: .infinity, alignment: .leading)
-                                .padding(.horizontal)
-                            
-                            if #available(iOS 17.0, *) {
-                                Chart(stats.daily_breakdown, id: \.date) { item in
-                                    BarMark(
-                                        x: .value("Дата", formatDateShort(item.date)),
-                                        y: .value("Минуты", item.sleep_minutes)
-                                    )
-                                    .foregroundStyle(FamilyAppStyle.accent.gradient)
-                                    .cornerRadius(4)
-                                    .annotation(position: .top) {
-                                        Text(formatHours(item.sleep_minutes))
-                                            .font(.caption2)
-                                            .foregroundColor(.secondary)
-                                    }
-                                }
-                                .frame(height: 200)
-                                .padding(.horizontal)
-                            } else {
-                                List(stats.daily_breakdown) { item in
-                                    HStack {
-                                        Text(formatDateShort(item.date))
-                                        Spacer()
-                                        Text(formatHours(item.sleep_minutes))
-                                            .fontWeight(.bold)
-                                    }
-                                }
-                                .frame(height: 300)
-                            }
-                            
-                            Spacer(minLength: 20)
+        let page = Group {
+            if isLoading {
+                ProgressView("Загрузка статистики...")
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+            } else if let error = errorMessage {
+                ContentUnavailableView("Ошибка", systemImage: "exclamationmark.triangle", description: Text(error))
+            } else if let stats = stats {
+                ScrollView {
+                    VStack(spacing: 24) {
+                        Picker("Период", selection: $selectedDays) {
+                            Text("7 дней").tag(7)
+                            Text("30 дней").tag(30)
                         }
-                        .padding(.vertical)
+                        .pickerStyle(.segmented)
+                        .tint(FamilyAppStyle.accent)
+                        .padding(.horizontal)
+                        .onChange(of: selectedDays) { _, newValue in
+                            loadStats(days: newValue)
+                        }
+
+                        VStack(spacing: 12) {
+                            HStack {
+                                StatCard(
+                                    title: "Всего сна",
+                                    value: formatHours(stats.total_sleep_minutes),
+                                    icon: "moon.fill",
+                                    color: FamilyAppStyle.accent
+                                )
+                                StatCard(
+                                    title: "Средний сон",
+                                    value: formatHours(stats.average_sleep_minutes),
+                                    icon: "clock.fill",
+                                    color: FamilyAppStyle.accent
+                                )
+                            }
+                            HStack {
+                                StatCard(
+                                    title: "Кол-во снов",
+                                    value: "\(stats.total_sessions)",
+                                    icon: "list.bullet",
+                                    color: .orange
+                                )
+                                StatCard(
+                                    title: "Дней в выборке",
+                                    value: "\(stats.period_days)",
+                                    icon: "calendar",
+                                    color: Color(.secondaryLabel)
+                                )
+                            }
+                        }
+                        .padding(.horizontal)
+
+                        Text("Динамика по дням")
+                            .font(.system(size: 14, weight: .semibold))
+                            .tracking(0.8)
+                            .foregroundColor(Color(.secondaryLabel))
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .padding(.horizontal)
+
+                        if #available(iOS 17.0, *) {
+                            Chart(stats.daily_breakdown, id: \.date) { item in
+                                BarMark(
+                                    x: .value("Дата", formatDateShort(item.date)),
+                                    y: .value("Минуты", item.sleep_minutes)
+                                )
+                                .foregroundStyle(FamilyAppStyle.accent.gradient)
+                                .cornerRadius(4)
+                                .annotation(position: .top) {
+                                    Text(formatHours(item.sleep_minutes))
+                                        .font(.caption2)
+                                        .foregroundColor(.secondary)
+                                }
+                            }
+                            .frame(height: 200)
+                            .padding(.horizontal)
+                        } else {
+                            List(stats.daily_breakdown) { item in
+                                HStack {
+                                    Text(formatDateShort(item.date))
+                                    Spacer()
+                                    Text(formatHours(item.sleep_minutes))
+                                        .fontWeight(.bold)
+                                }
+                            }
+                            .frame(height: 300)
+                        }
+
+                        Spacer(minLength: 20)
                     }
-                } else {
-                    ContentUnavailableView("Нет данных", systemImage: "chart.bar.xaxis", description: Text("Попробуйте изменить период"))
+                    .padding(.vertical)
                 }
+            } else {
+                ContentUnavailableView("Нет данных", systemImage: "chart.bar.xaxis", description: Text("Попробуйте изменить период"))
             }
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
-            .background(FamilyAppStyle.screenBackground)
-            .navigationTitle("Статистика сна")
-            .toolbar {
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(FamilyAppStyle.screenBackground)
+        .navigationTitle("Статистика сна")
+        .navigationBarTitleDisplayMode(.inline)
+        .toolbar {
+            if embedInNavigationStack {
                 ToolbarItem(placement: .topBarTrailing) {
                     Button("Готово") { dismiss() }
                         .foregroundStyle(FamilyAppStyle.accent)
                 }
             }
-            .onAppear {
-                loadStats(days: selectedDays)
-            }
+        }
+        .onAppear {
+            loadStats(days: selectedDays)
+        }
+
+        if embedInNavigationStack {
+            NavigationStack { page }
+        } else {
+            page
         }
     }
-    
+
     func loadStats(days: Int) {
         isLoading = true
         errorMessage = nil

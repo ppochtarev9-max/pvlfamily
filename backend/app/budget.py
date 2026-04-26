@@ -1,5 +1,6 @@
 from fastapi import APIRouter, Depends, HTTPException, status, Response, Query, Body
 from sqlalchemy.orm import Session, joinedload
+from sqlalchemy import or_, and_, func, select
 from typing import List, Optional
 from datetime import datetime
 import io
@@ -254,24 +255,133 @@ def make_tx_resp(t, current_balance=None):
         resp.balance = current_balance
     return resp
 
-@router.get("/transactions", response_model=List[schemas.TransactionOut])
-def get_transactions(response: Response, db: Session = Depends(get_db)):
+def _parse_query_datetime(value: Optional[str], field: str) -> Optional[datetime]:
+    if not value:
+        return None
+    try:
+        return datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        raise HTTPException(status_code=400, detail=f"Invalid {field} format")
+
+
+@router.get(
+    "/transactions",
+    response_model=schemas.TransactionPageOut,
+    dependencies=[Depends(get_current_user)],
+)
+def get_transactions(
+    response: Response,
+    db: Session = Depends(get_db),
+    limit: int = Query(100, ge=1, le=500, description="Размер страницы"),
+    after_date: Optional[str] = Query(
+        None, description="Курсор: дата последней выданной строки (с newest-first)"
+    ),
+    after_id: Optional[int] = Query(None, description="Курсор: id (вместе с after_date)"),
+    date_from: Optional[str] = None,
+    date_to: Optional[str] = None,
+    category_id: Optional[int] = None,
+    group_id: Optional[int] = None,
+    created_by_user_id: Optional[int] = Query(
+        None,
+        description="Опциональный фильтр по автору; по умолчанию видны все операции",
+    ),
+):
+    """
+    Список операций: лента для всех; фильтры (даты, категории) — в query, как «что подглядываем».
+    Баланс на карточке — глобальный накопительный, как в старой выдаче: SUM(amount) по всем операциям
+    по мере (date, id) без сужения под фильтр.
+    """
     response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
-    
-    # Загружаем сразу связи, чтобы не было N+1 запросов
-    all_txs = db.query(models.Transaction).options(
-        joinedload(models.Transaction.category).joinedload(models.Category.group)
-    ).order_by(models.Transaction.date.asc()).all()
-    
-    current_balance = 0.0
-    result = []
-    
-    for t in all_txs:
-        current_balance += t.amount
-        resp = make_tx_resp(t, current_balance)
-        result.append(resp)
-        
-    return list(reversed(result))
+
+    if (after_date is None) != (after_id is None):
+        raise HTTPException(
+            status_code=400,
+            detail="Укажите оба параметра: after_date и after_id, либо ни одного",
+        )
+
+    d_from = _parse_query_datetime(date_from, "date_from")
+    d_to = _parse_query_datetime(date_to, "date_to")
+
+    t = models.Transaction.__table__
+    # Глобальный бегущий total по всему движению; фильтры — только внешним SELECT
+    run_bal = (
+        func.sum(t.c.amount)
+        .over(order_by=(t.c.date.asc(), t.c.id.asc()))
+        .label("running_balance")
+    )
+    inner = select(t, run_bal).select_from(t)
+    sub = inner.subquery("tx_win")
+
+    sub_ids: Optional[List[int]] = None
+    if group_id is not None:
+        sub_ids = [r[0] for r in db.query(models.Category.id).filter(models.Category.group_id == group_id).all()]
+        if not sub_ids:
+            return schemas.TransactionPageOut(items=[], has_more=False, total=0)
+
+    q_count = db.query(models.Transaction)
+    if created_by_user_id is not None:
+        q_count = q_count.filter(models.Transaction.created_by_user_id == created_by_user_id)
+    if d_from is not None:
+        q_count = q_count.filter(models.Transaction.date >= d_from)
+    if d_to is not None:
+        q_count = q_count.filter(models.Transaction.date <= d_to)
+    if category_id is not None:
+        q_count = q_count.filter(models.Transaction.category_id == category_id)
+    if sub_ids is not None:
+        q_count = q_count.filter(models.Transaction.category_id.in_(sub_ids))
+    total = q_count.count()
+
+    outer = select(sub)
+    if created_by_user_id is not None:
+        outer = outer.where(sub.c.created_by_user_id == created_by_user_id)
+    if d_from is not None:
+        outer = outer.where(sub.c.date >= d_from)
+    if d_to is not None:
+        outer = outer.where(sub.c.date <= d_to)
+    if category_id is not None:
+        outer = outer.where(sub.c.category_id == category_id)
+    if sub_ids is not None:
+        outer = outer.where(sub.c.category_id.in_(sub_ids))
+    if after_date is not None and after_id is not None:
+        c_dt = _parse_query_datetime(after_date, "after_date")
+        if c_dt is None:
+            raise HTTPException(status_code=400, detail="Invalid after_date")
+        outer = outer.where(
+            or_(
+                sub.c.date < c_dt,
+                and_(sub.c.date == c_dt, sub.c.id < after_id),
+            )
+        )
+    take = min(limit + 1, 501)
+    outer = outer.order_by(sub.c.date.desc(), sub.c.id.desc()).limit(take)
+
+    result_rows = list(db.execute(outer).mappings().all())
+    has_more = len(result_rows) > limit
+    if has_more:
+        result_rows = result_rows[:limit]
+
+    if not result_rows:
+        return schemas.TransactionPageOut(items=[], has_more=has_more, total=total)
+
+    page_ids = [int(m["id"]) for m in result_rows]
+    id_to_balance = {int(m["id"]): float(m["running_balance"] or 0.0) for m in result_rows}
+
+    orm_txs = (
+        db.query(models.Transaction)
+        .options(
+            joinedload(models.Transaction.category).joinedload(models.Category.group)
+        )
+        .filter(models.Transaction.id.in_(page_ids))
+        .all()
+    )
+    by_id = {x.id: x for x in orm_txs}
+    items = []
+    for tid in page_ids:
+        t_obj = by_id.get(tid)
+        if t_obj is None:
+            continue
+        items.append(make_tx_resp(t_obj, id_to_balance.get(tid, 0.0)))
+    return schemas.TransactionPageOut(items=items, has_more=has_more, total=total)
 
 @router.post("/transactions", response_model=schemas.TransactionOut, status_code=201)
 def create_transaction(
@@ -283,18 +393,13 @@ def create_transaction(
     category_id = tx.category_id
     
     if category_id is None:
-        if hasattr(app.state, 'default_category_id'):
-            category_id = app.state.default_category_id
-        else:
-            # Фолбэк: ищем вручную, если вдруг app.state не заполнен
-            default_group = db.query(models.CategoryGroup).filter(models.CategoryGroup.name == "Без категории").first()
-            if default_group:
-                default_sub = db.query(models.Category).filter(models.Category.group_id == default_group.id).first()
-                if default_sub:
-                    category_id = default_sub.id
-            
-            if category_id is None:
-                raise HTTPException(status_code=500, detail="Системная ошибка: не найдена категория по умолчанию")
+        default_group = db.query(models.CategoryGroup).filter(models.CategoryGroup.name == "Без категории").first()
+        if default_group:
+            default_sub = db.query(models.Category).filter(models.Category.group_id == default_group.id).first()
+            if default_sub:
+                category_id = default_sub.id
+        if category_id is None:
+            raise HTTPException(status_code=500, detail="Системная ошибка: не найдена категория по умолчанию")
 
     # Проверка существования категории (на всякий случай)
     cat = db.get(models.Category, category_id)
@@ -314,18 +419,27 @@ def create_transaction(
     db.add(db_tx)
     db.commit()
     db.refresh(db_tx)
-    
-    # Пересчитываем баланс для ответа (упрощенно, можно оптимизировать)
-    # Для точности лучше вернуть просто объект, а баланс считать на фронте или отдельным запросом
-    # Но оставим как было для совместимости
-    all_txs = db.query(models.Transaction).order_by(models.Transaction.date.asc()).all()
-    bal = 0.0
-    for t in all_txs:
-        bal += t.amount
-        if t.id == db_tx.id:
-            return make_tx_resp(db_tx, bal)
-            
-    return make_tx_resp(db_tx)
+    db_tx = (
+        db.query(models.Transaction)
+        .options(
+            joinedload(models.Transaction.category).joinedload(models.Category.group)
+        )
+        .filter(models.Transaction.id == db_tx.id)
+        .first()
+    )
+    if not db_tx:
+        raise HTTPException(status_code=500, detail="Ошибка чтения созданной операции")
+    sum_row = (
+        db.query(func.coalesce(func.sum(models.Transaction.amount), 0.0))
+        .filter(
+            or_(
+                models.Transaction.date < db_tx.date,
+                and_(models.Transaction.date == db_tx.date, models.Transaction.id <= db_tx.id),
+            )
+        )
+        .scalar()
+    )
+    return make_tx_resp(db_tx, float(sum_row or 0.0))
 
 @router.get("/transactions/{tx_id}", response_model=schemas.TransactionOut)
 def get_transaction(tx_id: int, db: Session = Depends(get_db)):

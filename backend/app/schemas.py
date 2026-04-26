@@ -96,6 +96,12 @@ class TransactionOut(TransactionBase):
     creator_name: Optional[str] = None
     model_config = ConfigDict(from_attributes=True)
 
+
+class TransactionPageOut(BaseModel):
+    items: List[TransactionOut]
+    has_more: bool
+    total: int
+
 # --- Остальные схемы без изменений ---
 class EventBase(BaseModel):
     title: str
@@ -134,3 +140,9 @@ class BabyLogOut(BabyLogBase):
     creator_name: Optional[str] = None
     is_active: bool = False    
     model_config = ConfigDict(from_attributes=True)
+
+
+class BabyLogPageOut(BaseModel):
+    items: List[BabyLogOut]
+    has_more: bool
+    total: int

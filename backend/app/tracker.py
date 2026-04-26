@@ -1,6 +1,6 @@
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
-from sqlalchemy import func
+from sqlalchemy import func, or_, and_
 from datetime import datetime, timezone, timedelta
 from typing import List, Optional, Dict, Any
 import io
@@ -11,13 +11,12 @@ from fastapi.responses import StreamingResponse
 
 from .database import get_db
 from .models import BabyLog, User
-from .schemas import BabyLogCreate, BabyLogOut, BabyLogUpdate
+from .schemas import BabyLogCreate, BabyLogOut, BabyLogUpdate, BabyLogPageOut
 from .auth import get_current_user
 
 from fastapi import Request
 from slowapi import Limiter
 from slowapi.util import get_remote_address
-from .auth import get_current_user
 from .models import User
 
 limiter = Limiter(key_func=get_remote_address)
@@ -114,31 +113,64 @@ def get_tracker_status(
             "last_wake_up": last_wake_time.isoformat() if last_wake_time else None
         }
 
-@router.get("/logs", response_model=List[BabyLogOut])
+def _parse_log_cursor_time(value: Optional[str], field: str) -> Optional[datetime]:
+    if not value:
+        return None
+    try:
+        return datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        raise HTTPException(status_code=400, detail=f"Invalid {field} format")
+
+
+@router.get("/logs", response_model=BabyLogPageOut)
 def get_logs(
-    skip: int = 0, 
-    limit: int = 100, 
+    limit: int = Query(100, ge=1, le=500),
+    after_start_time: Optional[str] = Query(
+        None, description="Курсор: start_time + id (новые сначала)"
+    ),
+    after_id: Optional[int] = None,
     event_type: Optional[str] = None,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
-    query = db.query(BabyLog).filter(BabyLog.user_id == current_user.id)
-    
+    if (after_start_time is None) != (after_id is None):
+        raise HTTPException(
+            status_code=400,
+            detail="Укажите оба параметра: after_start_time и after_id, либо ни одного",
+        )
+
+    q = db.query(BabyLog).filter(BabyLog.user_id == current_user.id)
     if event_type:
-        query = query.filter(BabyLog.event_type == event_type)
-        
-    logs = query.order_by(BabyLog.start_time.desc()).offset(skip).limit(limit).all()
-    
-    result = []
-    for log in logs:
-        is_active = (log.end_time is None)
-        
+        q = q.filter(BabyLog.event_type == event_type)
+
+    total = q.count()
+
+    if after_start_time is not None and after_id is not None:
+        c_t = _parse_log_cursor_time(after_start_time, "after_start_time")
+        if c_t is None:
+            raise HTTPException(status_code=400, detail="Invalid after_start_time")
+        q = q.filter(
+            or_(
+                BabyLog.start_time < c_t,
+                and_(BabyLog.start_time == c_t, BabyLog.id < after_id),
+            )
+        )
+
+    take = min(limit + 1, 501)
+    rows = q.order_by(BabyLog.start_time.desc(), BabyLog.id.desc()).limit(take).all()
+    has_more = len(rows) > limit
+    if has_more:
+        rows = rows[:limit]
+
+    result: List[BabyLogOut] = []
+    for log in rows:
+        is_active = log.end_time is None
         log_dict = BabyLogOut.from_orm(log)
         log_dict.creator_name = log.creator_name_snapshot if log.creator_name_snapshot else "Пользователь (удален)"
         log_dict.is_active = is_active
         result.append(log_dict)
-        
-    return result
+
+    return BabyLogPageOut(items=result, has_more=has_more, total=total)
 
 @router.post("/logs", response_model=BabyLogOut)
 def create_log(

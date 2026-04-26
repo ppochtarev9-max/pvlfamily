@@ -22,6 +22,35 @@ struct CalendarView: View {
         let event_type: String
     }
     
+    private var todayEventCount: Int {
+        let cal = Calendar.current
+        return events.filter { e in
+            guard let d = PVLDateParsing.parse(e.event_date) else { return false }
+            return cal.isDateInToday(d)
+        }.count
+    }
+
+    private var groupedEvents: [(title: String, items: [CalendarEvent])] {
+        let grouped = Dictionary(grouping: events) { event in
+            PVLDateParsing.parse(event.event_date).map { Calendar.current.startOfDay(for: $0) } ?? .distantPast
+        }
+        let sortedKeys = grouped.keys.sorted(by: >)
+        return sortedKeys.map { day in
+            let title: String
+            if Calendar.current.isDateInToday(day) {
+                title = "Сегодня"
+            } else if Calendar.current.isDateInYesterday(day) {
+                title = "Вчера"
+            } else {
+                let f = DateFormatter()
+                f.locale = Locale(identifier: "ru_RU")
+                f.dateFormat = "dd.MM"
+                title = f.string(from: day)
+            }
+            return (title, (grouped[day] ?? []).sorted(by: { $0.event_date > $1.event_date }))
+        }
+    }
+    
     var body: some View {
         NavigationStack {
             Group {
@@ -37,21 +66,63 @@ struct CalendarView: View {
                 } else if events.isEmpty {
                     ContentUnavailableView("Нет событий", systemImage: "calendar.badge.exclamationmark", description: Text("Добавьте новое событие"))
                 } else {
-                    List {
-                        ForEach(events) { event in
-                            EventCard(event: event)
-                                .listRowInsets(EdgeInsets(top: 8, leading: 16, bottom: 8, trailing: 16))
-                                .listRowSeparator(.hidden)
-                                .listRowBackground(Color.clear)
-                                .swipeActions(edge: .trailing) {
-                                    Button(role: .destructive) { deleteEvent(id: event.id) } label: {
-                                        Label("Удалить", systemImage: "trash")
-                                    }
-                                }
+                    VStack(alignment: .leading, spacing: 0) {
+                        if todayEventCount > 0 {
+                            HStack {
+                                Text("Сегодня")
+                                    .font(.system(size: 14, weight: .semibold))
+                                Spacer()
+                                Text("\(todayEventCount) \(PVLDateParsing.eventWord(todayEventCount))")
+                                    .font(.system(size: 14, weight: .medium))
+                                    .foregroundColor(FamilyAppStyle.captionMuted)
+                            }
+                            .padding(16)
+                            .pvlPixsoHeroPanel()
+                            .padding(.horizontal, 16)
+                            .padding(.bottom, 4)
                         }
+                        List {
+                            ForEach(groupedEvents.indices, id: \.self) { sectionIndex in
+                                let section = groupedEvents[sectionIndex]
+                                let n = section.items.count
+                                Section {
+                                    ForEach(Array(section.items.enumerated()), id: \.element.id) { index, event in
+                                        EventCard(event: event, isLastInGroup: index == n - 1)
+                                            .listRowInsets(EdgeInsets(top: 0, leading: 16, bottom: 0, trailing: 16))
+                                            .listRowSeparator(.hidden, edges: .all)
+                                            .listRowBackground(
+                                                PVLGroupedRowBackground(
+                                                    isFirst: index == 0,
+                                                    isLast: index == n - 1,
+                                                    isSingle: n == 1
+                                                )
+                                            )
+                                            .swipeActions(edge: .trailing) {
+                                                Button(role: .destructive) { deleteEvent(id: event.id) } label: {
+                                                    Label("Удалить", systemImage: "trash")
+                                                }
+                                            }
+                                    }
+                                } header: {
+                                    HStack {
+                                        Text(section.title)
+                                            .font(.system(size: 13, weight: .semibold))
+                                            .foregroundColor(Color(red: 109 / 255, green: 108 / 255, blue: 106 / 255))
+                                        Spacer()
+                                        Text("\(n) \(PVLDateParsing.eventWord(n))")
+                                            .font(.system(size: 12, weight: .medium))
+                                            .foregroundColor(FamilyAppStyle.captionMuted)
+                                    }
+                                    .textCase(nil)
+                                }
+                            }
+                        }
+                        .listStyle(.plain)
+                        .listRowSpacing(0)
+                        .listSectionSpacing(8)
+                        .scrollContentBackground(.hidden)
                     }
-                    .listStyle(.plain)
-                    .scrollContentBackground(.hidden)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
                 }
             }
             .background(FamilyAppStyle.screenBackground)
@@ -227,6 +298,10 @@ struct CalendarView: View {
             }
         }.resume()
     }
+
+    func parseEventDate(_ string: String) -> Date? {
+        PVLDateParsing.parse(string)
+    }
     
     func formatDate(_ string: String) -> String {
         let isoFormatter = ISO8601DateFormatter()
@@ -245,6 +320,7 @@ struct CalendarView: View {
 // --- КОМПОНЕНТ: КАРТОЧКА СОБЫТИЯ ---
 struct EventCard: View {
     let event: CalendarView.CalendarEvent
+    var isLastInGroup: Bool = true
     
     var accentColor: Color {
         switch event.event_type {
@@ -252,41 +328,70 @@ struct EventCard: View {
         default: return FamilyAppStyle.accent
         }
     }
+
+    private var eventIcon: String {
+        switch event.event_type {
+        case "reminder": return "bell.badge.fill"
+        default: return "calendar.badge.plus"
+        }
+    }
+
+    private var eventTypeTitle: String {
+        switch event.event_type {
+        case "reminder": return "Напоминание"
+        default: return "Событие"
+        }
+    }
     
     var body: some View {
-        HStack(spacing: 16) {
-            Rectangle()
-                .fill(accentColor)
-                .frame(width: 6)
-                .cornerRadius(3)
-            
-            VStack(alignment: .leading, spacing: 6) {
-                Text(event.title)
-                    .font(.headline)
-                    .fontWeight(.semibold)
-                
-                if let desc = event.description, !desc.isEmpty {
-                    Text(desc)
-                        .font(.subheadline)
-                        .foregroundColor(.secondary)
-                        .lineLimit(2)
+        HStack(alignment: .center, spacing: 12) {
+            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                .fill(iconBackground)
+                .frame(width: 36, height: 36)
+                .overlay {
+                    Image(systemName: eventIcon)
+                        .font(.system(size: 18, weight: .medium))
+                        .foregroundStyle(accentColor)
                 }
-                
-                Text(formatDate(event.event_date))
-                    .font(.caption)
-                    .foregroundColor(.gray)
-                    .padding(.top, 2)
+
+            VStack(alignment: .leading, spacing: 2) {
+                Text(event.title)
+                    .font(.system(size: 15, weight: .semibold))
+                    .lineLimit(1)
+                Text((event.description?.isEmpty == false ? event.description! : eventTypeTitle))
+                    .font(.system(size: 12))
+                    .italic()
+                    .foregroundColor(Color(red: 156 / 255, green: 155 / 255, blue: 153 / 255))
+                    .lineLimit(1)
             }
-            
+
             Spacer()
+
+            VStack(alignment: .trailing, spacing: 2) {
+                Text(timeOnly(event.event_date))
+                    .font(.system(size: 15, weight: .semibold))
+                    .foregroundStyle(accentColor)
+                Text(shortDate(event.event_date))
+                    .font(.system(size: 11))
+                    .italic()
+                    .foregroundColor(Color(red: 156 / 255, green: 155 / 255, blue: 153 / 255))
+            }
         }
-        .padding(16)
-        .background(FamilyAppStyle.listCardFill)
-        .clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
-        .overlay(
-            RoundedRectangle(cornerRadius: 20, style: .continuous)
-                .strokeBorder(FamilyAppStyle.cardStroke, lineWidth: 1)
-        )
+        .frame(maxWidth: .infinity, minHeight: 62, alignment: .center)
+        .padding(.vertical, 8)
+        .overlay(alignment: .bottom) {
+            if !isLastInGroup {
+                Rectangle()
+                    .fill(Color(red: 240 / 255, green: 239 / 255, blue: 236 / 255))
+                    .frame(height: 1)
+            }
+        }
+    }
+
+    private var iconBackground: Color {
+        event.event_type == "reminder"
+            ? Color(red: 1.0, green: 0.97, blue: 0.93)
+            : Color(red: 0.94, green: 0.99, blue: 0.96)
     }
     
     func formatDate(_ string: String) -> String {
@@ -300,6 +405,18 @@ struct EventCard: View {
             return f.string(from: date)
         }
         return string
+    }
+
+    func timeOnly(_ string: String) -> String {
+        PVLDateParsing.timeHHmm(from: string)
+    }
+
+    func shortDate(_ string: String) -> String {
+        guard let d = PVLDateParsing.parse(string) else { return "" }
+        let f = DateFormatter()
+        f.locale = Locale(identifier: "ru_RU")
+        f.dateFormat = "dd.MM"
+        return f.string(from: d)
     }
 }
 

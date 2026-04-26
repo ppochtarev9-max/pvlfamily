@@ -51,7 +51,11 @@ def test_get_transactions(client, test_user):
     
     response = client.get("/budget/transactions", headers=headers)
     assert response.status_code == 200
-    assert isinstance(response.json(), list)
+    data = response.json()
+    assert "items" in data
+    assert "has_more" in data
+    assert "total" in data
+    assert isinstance(data["items"], list)
 
 def test_delete_transaction(client, test_user):
     token = test_user["access_token"]
@@ -71,7 +75,7 @@ def test_delete_transaction(client, test_user):
     
     tr_id = tr_resp.json().get("id")
     if not tr_id:
-        trans = client.get("/budget/transactions", headers=headers).json()
+        trans = client.get("/budget/transactions", headers=headers).json()["items"]
         # Ищем нашу транзакцию по описанию, если ID нет в ответе
         for t in trans:
             if t.get("description") == "ToDelete":

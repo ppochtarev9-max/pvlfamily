@@ -107,8 +107,10 @@ def test_get_logs_history(client, test_user):
     # Получаем список
     response = client.get("/tracker/logs", headers=headers)
     assert response.status_code == 200
-    logs = response.json()
-    
+    data = response.json()
+    assert "items" in data
+    assert "has_more" in data
+    logs = data["items"]
     assert isinstance(logs, list)
     assert len(logs) > 0
     # Проверяем, что последнее событие - наше
@@ -147,7 +149,7 @@ def test_delete_log(client, test_user):
     
     # Проверяем, что удалена
     logs_resp = client.get("/tracker/logs", headers=headers)
-    logs = logs_resp.json()
+    logs = logs_resp.json()["items"]
     ids = [log["id"] for log in logs]
     assert log_id not in ids
 

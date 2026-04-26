@@ -7,6 +7,9 @@ struct TrackerView: View {
     @State private var logs: [BabyLog] = []
     @State private var dailyStats: DailyStats?
     @State private var isLoading = false
+    @State private var hasMoreLogs = false
+    @State private var isLoadingMoreLogs = false
+    @State private var nextLogsCursor: (startISO: String, id: Int)? = nil
     @State private var errorMessage: String?
     @State private var showErrorAlert = false
     
@@ -37,59 +40,143 @@ struct TrackerView: View {
         let sessions_count: Int
     }
     
-    var sleepTimeText: String { formatMinutes(dailyStats?.total_sleep_minutes ?? 0) }
-    var wakeTimeText: String { formatMinutes(dailyStats?.total_wake_minutes ?? 0) }
+    fileprivate struct LogsListPage: Codable {
+        let items: [BabyLog]
+        let has_more: Bool
+        let total: Int
+    }
     
+    private var sleepColumnTitle: String {
+        Calendar.current.isDateInToday(selectedDate) ? "СОН СЕГОДНЯ" : "СОН"
+    }
+
+    /// Сон за выбранные сутки — «9ч 42м», как в Pixso.
+    private var sleepDurationHero: String {
+        formatSleepDurationPixso(dailyStats?.total_sleep_minutes ?? 0)
+    }
+
+    private var episodesHero: String {
+        "\(dailyStats?.sessions_count ?? 0)"
+    }
+
+    /// Время первого пробуждения в этот день (ранний `end_time` сна), «08:14».
+    private var firstWakeClockHero: String {
+        guard let d = firstWakeTime(on: selectedDate, logs: logs) else { return "—" }
+        let f = DateFormatter()
+        f.locale = Locale(identifier: "ru_RU")
+        f.dateFormat = "HH:mm"
+        return f.string(from: d)
+    }
+    
+    private var groupedLogs: [(title: String, items: [BabyLog])] {
+        let sortedLogs = logs.sorted(by: { $0.start_time > $1.start_time })
+        let grouped = Dictionary(grouping: sortedLogs) { log in
+            parseDate(log.start_time).map { Calendar.current.startOfDay(for: $0) } ?? .distantPast
+        }
+        let sortedKeys = grouped.keys.sorted(by: >)
+        return sortedKeys.map { day in
+            let title: String
+            if Calendar.current.isDateInToday(day) {
+                title = "Сегодня"
+            } else if Calendar.current.isDateInYesterday(day) {
+                title = "Вчера"
+            } else {
+                let f = DateFormatter()
+                f.locale = Locale(identifier: "ru_RU")
+                f.dateFormat = "dd.MM"
+                title = f.string(from: day)
+            }
+            return (title, grouped[day] ?? [])
+        }
+    }
+
+    @ViewBuilder
+    private func trackerHeroColumn(title: String, systemImage: String, value: String) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text(title)
+                .font(.system(size: 11, weight: .semibold))
+                .kerning(1)
+                .foregroundColor(FamilyAppStyle.captionMuted)
+            HStack(spacing: 4) {
+                Image(systemName: systemImage)
+                    .font(.system(size: 16, weight: .medium))
+                    .foregroundStyle(FamilyAppStyle.pixsoInk)
+                Text(value)
+                    .font(.system(size: 24, weight: .bold))
+                    .kerning(-0.5)
+                    .foregroundColor(FamilyAppStyle.pixsoInk)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private func formatSleepDurationPixso(_ minutes: Int) -> String {
+        guard minutes > 0 else { return "—" }
+        let h = minutes / 60
+        let m = minutes % 60
+        if h > 0, m > 0 { return "\(h)ч \(m)м" }
+        if h > 0 { return "\(h)ч" }
+        return "\(m)м"
+    }
+
+    /// Раннее окончание сна в этот день (по макету — «время пробуждения»).
+    private func firstWakeTime(on day: Date, logs: [BabyLog]) -> Date? {
+        let cal = Calendar.current
+        var ends: [Date] = []
+        for log in logs where log.event_type == "sleep" {
+            guard let endStr = log.end_time, let end = parseDate(endStr) else { continue }
+            if cal.isDate(end, inSameDayAs: day) { ends.append(end) }
+        }
+        return ends.min()
+    }
+
     var body: some View {
         NavigationStack {
             VStack(spacing: 0) {
-                // === ШАПКА С АНАЛИТИКОЙ ===
-                ScrollView {
-                    VStack(spacing: 16) {
-                        VStack(spacing: 12) {
-                            HStack {
-                                VStack(alignment: .leading) {
-                                    Text("Сон").font(.caption).foregroundColor(.secondary)
-                                    Text(sleepTimeText).font(.title2).fontWeight(.bold).foregroundColor(FamilyAppStyle.accent)
-                                }
-                                Divider().frame(height: 30)
-                                VStack(alignment: .leading) {
-                                    Text("Бодрствование").font(.caption).foregroundColor(.secondary)
-                                    Text(wakeTimeText).font(.title2).fontWeight(.bold).foregroundColor(.orange)
-                                }
-                            }
-                            .frame(maxWidth: .infinity)
-                            
-                            Text("\(dailyStats?.sessions_count ?? 0) снов за день")
-                                .font(.caption)
-                                .foregroundColor(.secondary)
-                        }
-                        .padding(24)
-                        .background(FamilyAppStyle.heroCardFill)
-                        .clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
-                        .overlay(
-                            RoundedRectangle(cornerRadius: 20, style: .continuous)
-                                .strokeBorder(FamilyAppStyle.cardStroke, lineWidth: 1.5)
+                // === ШАПКА С АНАЛИТИКОЙ (без фикс. высоты — нет пустой полосы под кнопкой) ===
+                VStack(spacing: 10) {
+                    HStack(alignment: .top, spacing: 0) {
+                        trackerHeroColumn(
+                            title: sleepColumnTitle,
+                            systemImage: "moon.fill",
+                            value: sleepDurationHero
                         )
-                        .padding(.horizontal)
-                        
-                        Button(action: { navigateToStats = true }) {
-                            Text("Аналитика")
-                                .font(.system(size: 15, weight: .semibold))
-                                .foregroundColor(.white)
-                                .frame(maxWidth: .infinity)
-                                .padding(.vertical, 12)
-                                .background(FamilyAppStyle.accent)
-                                .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
-                        }
-                        .padding(.horizontal)
-                        .navigationDestination(isPresented: $navigateToStats) {
-                            TrackerStatsView()
-                        }
+                        Rectangle()
+                            .fill(FamilyAppStyle.hairline)
+                            .frame(width: 1, height: 40)
+                        trackerHeroColumn(
+                            title: "ЭПИЗОДОВ",
+                            systemImage: "repeat",
+                            value: episodesHero
+                        )
+                        Rectangle()
+                            .fill(FamilyAppStyle.hairline)
+                            .frame(width: 1, height: 40)
+                        trackerHeroColumn(
+                            title: "ПРОБУЖДЕНИЕ",
+                            systemImage: "sun.max.fill",
+                            value: firstWakeClockHero
+                        )
                     }
-                    .background(Color.clear)
+                    .frame(maxWidth: .infinity)
+                    .padding(20)
+                    .pvlPixsoHeroPanel()
+                    .padding(.horizontal)
+                    
+                    Button(action: { navigateToStats = true }) {
+                        Text("Аналитика")
+                            .font(.system(size: 15, weight: .semibold))
+                            .foregroundColor(.white)
+                            .frame(maxWidth: .infinity)
+                            .padding(.vertical, 12)
+                            .background(FamilyAppStyle.accent)
+                            .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+                    }
+                    .padding(.horizontal)
+                    .navigationDestination(isPresented: $navigateToStats) {
+                        TrackerStatsView()
+                    }
                 }
-                .frame(height: 220)
                 
                 // === СПИСОК ===
                 Group {
@@ -99,29 +186,71 @@ struct TrackerView: View {
                         ContentUnavailableView("Нет записей", systemImage: "clock.badge.exclamationmark", description: Text("Нажмите +, чтобы добавить"))
                     } else {
                         List {
-                            ForEach(logs.sorted(by: { $0.start_time > $1.start_time })) { log in
-                                LogCard(log: log)
-                                    .listRowInsets(EdgeInsets(top: 4, leading: 16, bottom: 4, trailing: 16))
-                                    .listRowSeparator(.hidden)
+                            ForEach(groupedLogs.indices, id: \.self) { sectionIndex in
+                                let section = groupedLogs[sectionIndex]
+                                let n = section.items.count
+                                Section {
+                                    ForEach(Array(section.items.enumerated()), id: \.element.id) { index, log in
+                                        LogCard(log: log, isLastInGroup: index == n - 1)
+                                            .listRowInsets(EdgeInsets(top: 0, leading: 16, bottom: 0, trailing: 16))
+                                            .listRowSeparator(.hidden, edges: .all)
+                                            .listRowBackground(
+                                                PVLGroupedRowBackground(
+                                                    isFirst: index == 0,
+                                                    isLast: index == n - 1,
+                                                    isSingle: n == 1
+                                                )
+                                            )
+                                            .contentShape(Rectangle())
+                                            .onTapGesture {
+                                                selectedLog = log
+                                                showingAddSheet = true
+                                            }
+                                            .swipeActions(edge: .trailing, allowsFullSwipe: false) {
+                                                Button(role: .destructive) { deleteLog(id: log.id) } label: { Label("Удалить", systemImage: "trash") }
+                                                Button { selectedLog = log; showingAddSheet = true } label: { Label("Изменить", systemImage: "pencil") }.tint(FamilyAppStyle.accent)
+                                            }
+                                    }
+                                } header: {
+                                    HStack {
+                                        Text(section.title)
+                                            .font(.system(size: 13, weight: .semibold))
+                                            .foregroundColor(Color(red: 109 / 255, green: 108 / 255, blue: 106 / 255))
+                                        Spacer()
+                                        Text("\(n) \(PVLDateParsing.eventWord(n))")
+                                            .font(.system(size: 12, weight: .medium))
+                                            .foregroundColor(FamilyAppStyle.captionMuted)
+                                    }
+                                    .textCase(nil)
+                                }
+                            }
+                            if hasMoreLogs {
+                                Section {
+                                    HStack {
+                                        Spacer()
+                                        if isLoadingMoreLogs {
+                                            ProgressView()
+                                        } else {
+                                            Color.clear
+                                                .frame(height: 1)
+                                                .onAppear { loadMoreLogsIfNeeded() }
+                                        }
+                                        Spacer()
+                                    }
                                     .listRowBackground(Color.clear)
-                                    .contentShape(Rectangle())
-                                    .onTapGesture {
-                                        selectedLog = log
-                                        showingAddSheet = true
-                                    }
-                                    .swipeActions(edge: .trailing, allowsFullSwipe: false) {
-                                        Button(role: .destructive) { deleteLog(id: log.id) } label: { Label("Удалить", systemImage: "trash") }
-                                        Button { selectedLog = log; showingAddSheet = true } label: { Label("Изменить", systemImage: "pencil") }.tint(.blue)
-                                    }
+                                }
                             }
                         }
                         .listStyle(.plain)
+                        .listRowSpacing(0)
+                        .listSectionSpacing(8)
                         .scrollContentBackground(.hidden)
                     }
                 }
             }
             .background(FamilyAppStyle.screenBackground)
             .navigationTitle("")
+            .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .principal) {
                     HStack(spacing: 4) {
@@ -183,18 +312,44 @@ struct TrackerView: View {
         }
     }
     
-    func loadLogs() {
+    private static let logsPageLimit = 100
+    
+    private func logsListURL(appendPage: Bool) -> URL? {
+        guard var c = URLComponents(string: "\(authManager.baseURL)/tracker/logs") else { return nil }
+        var q: [URLQueryItem] = [URLQueryItem(name: "limit", value: "\(Self.logsPageLimit)")]
+        if appendPage, let cur = nextLogsCursor {
+            q.append(URLQueryItem(name: "after_start_time", value: cur.startISO))
+            q.append(URLQueryItem(name: "after_id", value: "\(cur.id)"))
+        }
+        c.queryItems = q
+        return c.url
+    }
+    
+    func loadLogs(reset: Bool = true) {
         guard let token = authManager.token else {
             errorMessage = "Нет авторизации"; showErrorAlert = true; return
         }
-        isLoading = true
+        if reset {
+            isLoading = true
+            hasMoreLogs = false
+            nextLogsCursor = nil
+            isLoadingMoreLogs = false
+        } else {
+            isLoadingMoreLogs = true
+        }
         
-        var req = URLRequest(url: URL(string: "\(authManager.baseURL)/tracker/logs")!)
+        let append = !reset
+        guard let url = logsListURL(appendPage: append) else { return }
+        var req = URLRequest(url: url)
         req.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
         
         URLSession.shared.dataTask(with: req) { data, response, error in
             DispatchQueue.main.async {
-                isLoading = false
+                if reset {
+                    isLoading = false
+                } else {
+                    isLoadingMoreLogs = false
+                }
                 if let error = error {
                     errorMessage = error.localizedDescription; showErrorAlert = true; return
                 }
@@ -204,17 +359,31 @@ struct TrackerView: View {
                 }
                 
                 do {
-                    let list = try JSONDecoder().decode([BabyLog].self, from: data)
-                    print("✅ Загружено записей: \(list.count)")
-                    self.logs = list
-                    // Пересчет для текущей даты после загрузки
-                    self.loadDailyStats(for: self.selectedDate, from: list)
+                    let page = try JSONDecoder().decode(LogsListPage.self, from: data)
+                    if append {
+                        self.logs.append(contentsOf: page.items)
+                    } else {
+                        self.logs = page.items
+                    }
+                    self.hasMoreLogs = page.has_more
+                    if let last = page.items.last {
+                        self.nextLogsCursor = (last.start_time, last.id)
+                    } else {
+                        self.nextLogsCursor = nil
+                    }
+                    print("✅ Логов на странице: \(page.items.count), has_more: \(page.has_more)")
+                    self.loadDailyStats(for: self.selectedDate, from: self.logs)
                 } catch {
                     errorMessage = "Ошибка данных: \(error.localizedDescription)"
                     showErrorAlert = true
                 }
             }
         }.resume()
+    }
+    
+    private func loadMoreLogsIfNeeded() {
+        guard hasMoreLogs, !isLoadingMoreLogs, !isLoading else { return }
+        loadLogs(reset: false)
     }
     
     func loadDailyStats(for date: Date, from allLogs: [BabyLog]) {
@@ -313,121 +482,97 @@ struct TrackerView: View {
         }.resume()
     }
     
-    func formatMinutes(_ mins: Int) -> String {
-        let h = mins / 60; let m = mins % 60
-        return String(format: "%02d:%02d", h, m)
-    }
-    
     func formatDateShort(_ date: Date) -> String {
         let f = DateFormatter(); f.dateStyle = .short; f.locale = Locale(identifier: "ru_RU")
         return f.string(from: date)
     }
     
     func parseDate(_ string: String) -> Date? {
-        let iso = ISO8601DateFormatter()
-        iso.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
-        if let d = iso.date(from: string) { return d }
-        iso.formatOptions = [.withInternetDateTime]
-        if let d = iso.date(from: string) { return d }
-        let df = DateFormatter(); df.dateFormat = "yyyy-MM-dd'T'HH:mm:ss"; df.locale = Locale(identifier: "en_US_POSIX")
-        return df.date(from: string)
+        PVLDateParsing.parse(string)
     }
 }
 
-// LogCard - полностью восстановлен стиль как в TransactionCard
 struct LogCard: View {
     let log: TrackerView.BabyLog
-    
+    /// Склейка строк в одном дне: линия между «подкарточками».
+    var isLastInGroup: Bool = true
+
     var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            // Верхняя часть: Название и длительность
-            HStack(alignment: .top, spacing: 12) {
-                VStack(alignment: .leading, spacing: 4) {
-                    Text(log.event_type == "sleep" ? "Сон" : "Кормление")
-                        .font(.headline)
-                        .fontWeight(.semibold)
-                        .lineLimit(1)
-                    
-                    if let note = log.note, !note.isEmpty {
-                        Text(note)
-                            .font(.caption)
-                            .foregroundColor(.secondary)
-                            .lineLimit(2)
+        HStack(alignment: .center, spacing: 12) {
+            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                .fill(iconBackground)
+                .frame(width: 36, height: 36)
+                .overlay {
+                    Image(systemName: typeIcon)
+                        .font(.system(size: 18, weight: .medium))
+                        .foregroundStyle(typeTint)
+                }
+
+            VStack(alignment: .leading, spacing: 3) {
+                HStack(spacing: 8) {
+                    Text(typeTitle)
+                        .font(.system(size: 15, weight: .semibold))
+                    if log.is_active {
+                        Text("активно")
+                            .font(.system(size: 10, weight: .semibold))
+                            .foregroundColor(Color(red: 61 / 255, green: 138 / 255, blue: 90 / 255))
+                            .padding(.horizontal, 7)
+                            .padding(.vertical, 2)
+                            .background(Color(red: 200 / 255, green: 240 / 255, blue: 216 / 255))
+                            .clipShape(RoundedRectangle(cornerRadius: 4, style: .continuous))
                     }
                 }
-                
-                Spacer()
-                
-                // Длительность справа сверху
-                if let dur = log.duration_minutes, dur > 0 {
-                    Text("\(dur) мин")
-                        .font(.title3)
-                        .fontWeight(.bold)
-                        .foregroundColor(log.event_type == "sleep" ? FamilyAppStyle.accent : .orange)
-                } else if log.is_active {
-                    Text("Идет...")
-                        .font(.caption)
-                        .fontWeight(.bold)
-                        .foregroundColor(.orange)
-                }
+
+                Text(timeRangeText)
+                    .font(.system(size: 12))
+                    .italic()
+                    .foregroundColor(Color(red: 156 / 255, green: 155 / 255, blue: 153 / 255))
+                    .lineLimit(2)
             }
-            
-            Divider().background(Color.gray.opacity(0.2))
-            
-            // Нижняя часть: Время начала и конца (как в транзакциях)
-            HStack(alignment: .center) {
-                VStack(alignment: .leading, spacing: 2) {
-                    Text("Начало").font(.caption2).foregroundColor(.secondary).textCase(.uppercase)
-                    Text(formatDateTime(log.start_time)).font(.title3).fontWeight(.medium)
-                }
-                
-                Spacer()
-                
-                VStack(alignment: .trailing, spacing: 1) {
-                    if let end = log.end_time {
-                        Text("Окончание").font(.caption2).foregroundColor(.secondary).textCase(.uppercase)
-                        Text(formatDateTime(end)).font(.title3)
-                    } else {
-                        Text("Активно").font(.caption2).foregroundColor(.orange).textCase(.uppercase)
-                        Text("—").font(.title3)
-                    }
-                }
-            }
-            .foregroundColor(.gray)
+
+            Spacer()
         }
-        .padding(14)
-        .background(FamilyAppStyle.listCardFill)
-        .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
-        .overlay(
-            RoundedRectangle(cornerRadius: 16, style: .continuous)
-                .strokeBorder((log.event_type == "sleep" ? FamilyAppStyle.accent : Color.orange).opacity(0.25), lineWidth: 1)
-        )
+        .frame(maxWidth: .infinity, minHeight: 64, alignment: .center)
+        .padding(.vertical, 10)
+        .overlay(alignment: .bottom) {
+            if !isLastInGroup {
+                Rectangle()
+                    .fill(Color(red: 240 / 255, green: 239 / 255, blue: 236 / 255))
+                    .frame(height: 1)
+            }
+        }
     }
-    
-    // Форматирование даты как в транзакциях (ДД.ММ.ГГ, ЧЧ:ММ)
-    func formatDateTime(_ string: String) -> String {
-        let iso = ISO8601DateFormatter()
-        iso.formatOptions = [.withInternetDateTime]
-        
-        if let d = iso.date(from: string) {
-            let f = DateFormatter()
-            f.locale = Locale(identifier: "ru_RU")
-            f.dateStyle = .short
-            f.timeStyle = .short
-            return f.string(from: d)
+
+    private var typeTint: Color {
+        log.event_type == "sleep" ? FamilyAppStyle.accent : .orange
+    }
+
+    private var typeIcon: String {
+        log.event_type == "sleep" ? "moon.fill" : "drop.fill"
+    }
+
+    private var typeTitle: String {
+        log.event_type == "sleep" ? "Сон" : "Кормление"
+    }
+
+    private var iconBackground: Color {
+        log.event_type == "sleep"
+            ? Color(red: 237 / 255, green: 233 / 255, blue: 254 / 255)
+            : Color(red: 1.0, green: 0.97, blue: 0.93)
+    }
+
+    private var timeRangeText: String {
+        let start = PVLDateParsing.timeHHmm(from: log.start_time)
+        let end: String
+        if let endS = log.end_time {
+            end = PVLDateParsing.timeHHmm(from: endS)
+        } else {
+            end = log.is_active ? "сейчас" : "—"
         }
-        
-        // Fallback для старых форматов
-        if let tIndex = string.firstIndex(of: "T") {
-            let datePart = String(string[..<tIndex])
-            let timePart = String(string[string.index(after: tIndex)...]).prefix(5)
-            let parts = datePart.split(separator: "-")
-            if parts.count == 3 {
-                return "\(parts[2]).\(parts[1]).\(String(parts[0].suffix(2))), \(timePart)"
-            }
-            return datePart
+        if let dur = log.duration_minutes, dur > 0 {
+            return "\(start) — \(end) · \(dur) мин"
         }
-        return string
+        return "\(start) — \(end)"
     }
 }
 struct QuickActionHandler: View {

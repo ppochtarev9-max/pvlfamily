@@ -20,6 +20,15 @@ struct BudgetView: View {
     // Для баланса
     @State private var summary: DashboardSummary?
     @State private var isLoadingBalance = false
+
+    /// Кэш групп дней — не пересчитывать O(n) на каждый кадр SwiftUI (см. `groupedTransactions` раньше).
+    @State private var transactionDaySections: [TransactionDaySection] = []
+    @State private var didRunInitialBudgetLoad = false
+    
+    /// Пагинация ленты операций (keyset, без смещения offset).
+    @State private var hasMoreTransactions = false
+    @State private var isLoadingMoreTransactions = false
+    @State private var nextTransactionCursor: (dateISO: String, id: Int)? = nil
     
     // Фильтр по пользователю
     @State private var selectedUserId: Int? = nil
@@ -50,13 +59,12 @@ struct BudgetView: View {
         categoryGroups.flatMap { $0.subcategories }.filter { !$0.is_hidden }
     }
 
-    // Итоговый отфильтрованный список транзакций
-    var filteredTransactions: [Transaction] {
+    /// Снимок в памяти, без пересчёта при каждом `body` (нужен для 10⁴–10⁵ операций).
+    private func computeFilteredTransactions() -> [Transaction] {
         var result = allTransactions
         let calendar = Calendar.current
         let now = Date()
         
-        // 1. Фильтр по дате
         switch selectedDateFilter {
         case .all: break
         case .today: result = result.filter { isSameDay(dateString: $0.date, to: now) }
@@ -67,30 +75,27 @@ struct BudgetView: View {
         case .week:
             if let startOfWeek = calendar.date(from: calendar.dateComponents([.yearForWeekOfYear, .weekOfYear], from: now)) {
                 result = result.filter {
-                    guard let d = parseDate($0.date) else { return false }
+                    guard let d = PVLDateParsing.parse($0.date) else { return false }
                     return d >= startOfWeek && d <= now
                 }
             }
         case .month:
             if let startOfMonth = calendar.date(from: calendar.dateComponents([.year, .month], from: now)) {
                 result = result.filter {
-                    guard let d = parseDate($0.date) else { return false }
+                    guard let d = PVLDateParsing.parse($0.date) else { return false }
                     return d >= startOfMonth && d <= now
                 }
             }
         case .custom:
             result = result.filter {
-                guard let d = parseDate($0.date) else { return false }
+                guard let d = PVLDateParsing.parse($0.date) else { return false }
                 return d >= customStartDate && d <= customEndDate
             }
         }
         
-        // 2. Фильтр по категории (Группа + Подкатегория)
         if let subId = selectedSubcategoryId {
-            // Если выбрана конкретная подкатегория
             result = result.filter { $0.category_id == subId }
         } else if let groupId = selectedGroupId {
-            // Если выбрана только группа, берем все её подкатегории
             let subIds = categoryGroups
                 .first(where: { $0.id == groupId })?
                 .subcategories.map { $0.id } ?? []
@@ -98,6 +103,38 @@ struct BudgetView: View {
         }
         
         return result
+    }
+
+    private func refreshTransactionDaySections() {
+        let filtered = computeFilteredTransactions()
+        let cal = Calendar.current
+        let grouped = Dictionary(grouping: filtered) { tx in
+            PVLDateParsing.parse(tx.date).map { cal.startOfDay(for: $0) } ?? .distantPast
+        }
+        let sortedKeys = grouped.keys.sorted(by: >)
+        let dayTitleFormatter: DateFormatter = {
+            let f = DateFormatter()
+            f.locale = Locale(identifier: "ru_RU")
+            f.dateFormat = "dd.MM"
+            return f
+        }()
+        transactionDaySections = sortedKeys.map { day in
+            let items = (grouped[day] ?? []).sorted { $0.date > $1.date }
+            let total = items.reduce(0.0) { $0 + $1.amount }
+            let title: String
+            if cal.isDateInToday(day) { title = "Сегодня" }
+            else if cal.isDateInYesterday(day) { title = "Вчера" }
+            else { title = dayTitleFormatter.string(from: day) }
+            let prefix = total >= 0 ? "+₽ " : "−₽ "
+            let summary = prefix + String(format: "%.0f", abs(total))
+            return TransactionDaySection(
+                id: "\(day.timeIntervalSince1970)",
+                title: title,
+                summary: summary,
+                summaryHasIncome: total >= 0,
+                items: items
+            )
+        }
     }
     
     enum DateFilter: String, CaseIterable {
@@ -110,6 +147,12 @@ struct BudgetView: View {
     }
     
     // --- МОДЕЛИ ДАННЫХ (Обновленные) ---
+    fileprivate struct TransactionListPage: Codable {
+        let items: [Transaction]
+        let has_more: Bool
+        let total: Int
+    }
+    
     struct Transaction: Identifiable, Codable {
         let id: Int
         let amount: Double
@@ -120,6 +163,14 @@ struct BudgetView: View {
         let creator_name: String?
         let full_category_path: String? // "Группа / Подкатегория"
         let balance: Double?
+    }
+
+    fileprivate struct TransactionDaySection: Identifiable {
+        let id: String
+        let title: String
+        let summary: String
+        let summaryHasIncome: Bool
+        let items: [Transaction]
     }
     
     // --- МОДЕЛИ ДАННЫХ (Обновленные с Hashable и Equatable) ---
@@ -163,65 +214,54 @@ struct BudgetView: View {
     var body: some View {
         NavigationStack {
             VStack(spacing: 0) {
-                // БЛОК 1: БАЛАНС
-                ScrollView {
-                    VStack(spacing: 16) {
-                        VStack(spacing: 16) {
-                            if let s = summary {
-                                Text(formatCurrency(s.balance))
-                                    .font(.system(size: 48, weight: .bold))
-                                    .foregroundColor(s.balance >= 0 ? FamilyAppStyle.accent : .red)
-                                HStack(spacing: 30) {
-                                    VStack {
-                                        Text("Доходы").font(.caption).foregroundColor(.secondary)
-                                        Text(formatCurrency(s.total_income)).foregroundColor(.green).fontWeight(.semibold)
-                                    }
-                                    Divider().frame(height: 30)
-                                    VStack {
-                                        Text("Расходы").font(.caption).foregroundColor(.secondary)
-                                        Text(formatCurrency(s.total_expense)).foregroundColor(.red).fontWeight(.semibold)
-                                    }
-                                }
-                            } else if isLoadingBalance {
-                                ProgressView()
-                            } else {
-                                Text("Нет данных").foregroundColor(.secondary)
+                // БЛОК 1: баланс + кнопка (без фикс. высоты — иначе под ScrollView с «хвостом» остаётся пустой зазор)
+                VStack(spacing: 8) {
+                    Group {
+                        if let s = summary {
+                            VStack(alignment: .center, spacing: 6) {
+                                Text(formatBalancePixso(s.balance))
+                                    .font(.system(size: 34, weight: .bold))
+                                    .kerning(-0.5)
+                                    .foregroundColor(s.balance >= 0 ? FamilyAppStyle.pixsoInk : .red)
+                                    .multilineTextAlignment(.center)
                             }
-                        }
-                        .frame(maxWidth: .infinity)
-                        .padding(24)
-                        .background(FamilyAppStyle.heroCardFill)
-                        .clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
-                        .overlay(
-                            RoundedRectangle(cornerRadius: 20, style: .continuous)
-                                .strokeBorder(FamilyAppStyle.cardStroke, lineWidth: 1.5)
-                        )
-                        .padding(.horizontal)
-                        
-                        Button(action: { navigateToDetails = true }) {
-                            Text("Детализация")
-                                .font(.system(size: 15, weight: .semibold))
-                                .foregroundColor(.white)
-                                .frame(maxWidth: .infinity)
-                                .padding(.vertical, 12)
-                                .background(FamilyAppStyle.accent)
-                                .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
-                        }
-                        .padding(.horizontal)
-                        .navigationDestination(isPresented: $navigateToDetails) {
-                            BudgetDetailsView(
-                                selectedUserId: $selectedUserId,
-                                selectedDateFilter: $selectedDateFilter,
-                                customStartDate: $customStartDate,
-                                customEndDate: $customEndDate,
-                                selectedGroupId: $selectedGroupId,       // Обновлено
-                                selectedSubcategoryId: $selectedSubcategoryId // Обновлено
-                            )
+                            .frame(maxWidth: .infinity)
+                        } else if isLoadingBalance {
+                            ProgressView()
+                                .frame(maxWidth: .infinity, minHeight: 44, alignment: .center)
+                        } else {
+                            Text("Нет данных")
+                                .font(.subheadline)
+                                .foregroundColor(FamilyAppStyle.captionMuted)
+                                .frame(maxWidth: .infinity, alignment: .center)
                         }
                     }
-                    .background(Color.clear)
+                    .frame(maxWidth: .infinity)
+                    .padding(20)
+                    .pvlPixsoHeroPanel()
+                    .padding(.horizontal)
+                    
+                    Button(action: { navigateToDetails = true }) {
+                        Text("Детализация")
+                            .font(.system(size: 15, weight: .semibold))
+                            .foregroundColor(.white)
+                            .frame(maxWidth: .infinity)
+                            .padding(.vertical, 12)
+                            .background(FamilyAppStyle.accent)
+                            .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+                    }
+                    .padding(.horizontal)
+                    .navigationDestination(isPresented: $navigateToDetails) {
+                        BudgetDetailsView(
+                            selectedUserId: $selectedUserId,
+                            selectedDateFilter: $selectedDateFilter,
+                            customStartDate: $customStartDate,
+                            customEndDate: $customEndDate,
+                            selectedGroupId: $selectedGroupId,
+                            selectedSubcategoryId: $selectedSubcategoryId
+                        )
+                    }
                 }
-                .frame(height: 280)
                 
                 Text("Операции")
                     .font(.system(size: 14, weight: .semibold))
@@ -229,33 +269,74 @@ struct BudgetView: View {
                     .foregroundColor(Color(.secondaryLabel))
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .padding(.horizontal)
-                    .padding(.top, 12)
-                    .padding(.bottom, 8)
+                    .padding(.top, 4)
+                    .padding(.bottom, 4)
                 
                 // БЛОК 2: СПИСОК
                 Group {
-                    if filteredTransactions.isEmpty {
+                    if transactionDaySections.isEmpty {
                         ContentUnavailableView("Нет записей", systemImage: "list.bullet.rectangle", description: Text("Измените фильтры или добавьте операцию"))
                     } else {
                         List {
-                            ForEach(filteredTransactions) { t in
-                                TransactionCard(t: t)
-                                    .listRowInsets(EdgeInsets(top: 4, leading: 0, bottom: 4, trailing: 0))
-                                    .listRowSeparator(.hidden)
-                                    .listRowBackground(Color.clear)
-                                    .swipeActions {
-                                        Button(role: .destructive) { deleteTransaction(id: t.id) } label: { Label("Удалить", systemImage: "trash") }
-                                        Button { editTransaction(t) } label: { Label("Изменить", systemImage: "pencil") }.tint(FamilyAppStyle.accent)
+                            ForEach(transactionDaySections) { section in
+                                let n = section.items.count
+                                Section {
+                                    ForEach(Array(section.items.enumerated()), id: \.element.id) { index, t in
+                                        TransactionCard(t: t, isLastInGroup: index == n - 1)
+                                            .listRowInsets(EdgeInsets(top: 0, leading: 16, bottom: 0, trailing: 16))
+                                            .listRowSeparator(.hidden, edges: .all)
+                                            .listRowBackground(
+                                                PVLGroupedRowBackground(
+                                                    isFirst: index == 0,
+                                                    isLast: index == n - 1,
+                                                    isSingle: n == 1
+                                                )
+                                            )
+                                            .swipeActions {
+                                                Button(role: .destructive) { deleteTransaction(id: t.id) } label: { Label("Удалить", systemImage: "trash") }
+                                                Button { editTransaction(t) } label: { Label("Изменить", systemImage: "pencil") }.tint(FamilyAppStyle.accent)
+                                            }
                                     }
+                                } header: {
+                                    HStack {
+                                        Text(section.title)
+                                            .font(.system(size: 13, weight: .semibold))
+                                            .foregroundColor(Color(red: 109 / 255, green: 108 / 255, blue: 106 / 255))
+                                        Spacer()
+                                        Text(section.summary)
+                                            .font(.system(size: 12, weight: .medium))
+                                            .foregroundColor(section.summaryHasIncome ? Color(red: 61 / 255, green: 138 / 255, blue: 90 / 255) : Color(red: 208 / 255, green: 128 / 255, blue: 104 / 255))
+                                    }
+                                    .textCase(nil)
+                                }
+                            }
+                            if hasMoreTransactions {
+                                Section {
+                                    HStack {
+                                        Spacer()
+                                        if isLoadingMoreTransactions {
+                                            ProgressView()
+                                        } else {
+                                            Color.clear
+                                                .frame(height: 1)
+                                                .onAppear { loadMoreTransactionsIfNeeded() }
+                                        }
+                                        Spacer()
+                                    }
+                                    .listRowBackground(Color.clear)
+                                }
                             }
                         }
                         .listStyle(.plain)
+                        .listRowSpacing(0)
+                        .listSectionSpacing(8)
                         .scrollContentBackground(.hidden)
                     }
                 }
             }
             .background(FamilyAppStyle.screenBackground)
             .navigationTitle("")
+            .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .principal) {
                     HStack(spacing: 4) {
@@ -312,7 +393,10 @@ struct BudgetView: View {
                     groups: availableGroups,                 // Обновлено
                     subcategories: availableSubcategories,   // Обновлено
                     isPresented: $showingFilterSheet,
-                    onUpdate: loadData
+                    onUpdate: {
+                        loadTransactions(reset: true)
+                        loadBalance()
+                    }
                 )
             }
             .sheet(isPresented: $showingAddSheet) {
@@ -332,7 +416,24 @@ struct BudgetView: View {
             } message: {
                 Text(errorMessage ?? "Неизвестная ошибка")
             }
-            .onAppear(perform: loadData)
+            .onAppear {
+                if !didRunInitialBudgetLoad {
+                    didRunInitialBudgetLoad = true
+                    loadData()
+                } else {
+                    loadBalance()
+                }
+            }
+            .onChange(of: selectedDateFilter) { _, _ in loadTransactions(reset: true) }
+            .onChange(of: selectedGroupId) { _, _ in loadTransactions(reset: true) }
+            .onChange(of: selectedSubcategoryId) { _, _ in loadTransactions(reset: true) }
+            .onChange(of: customStartDate) { _, _ in
+                if selectedDateFilter == .custom { loadTransactions(reset: true) }
+            }
+            .onChange(of: customEndDate) { _, _ in
+                if selectedDateFilter == .custom { loadTransactions(reset: true) }
+            }
+            .onChange(of: categoryGroups.count) { _, _ in refreshTransactionDaySections() }
             .refreshable {
                 await withCheckedContinuation { continuation in
                     loadData()
@@ -385,18 +486,12 @@ struct BudgetView: View {
     }
     
     func isSameDay(dateString: String, to date: Date) -> Bool {
-        guard let d = parseDate(dateString) else { return false }
+        guard let d = PVLDateParsing.parse(dateString) else { return false }
         return Calendar.current.isDate(d, inSameDayAs: date)
     }
     
     func parseDate(_ string: String) -> Date? {
-        let iso = ISO8601DateFormatter()
-        iso.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
-        if let d = iso.date(from: string) { return d }
-        let df = DateFormatter()
-        df.dateFormat = "yyyy-MM-dd'T'HH:mm:ss"
-        df.locale = Locale(identifier: "en_US_POSIX")
-        return df.date(from: string)
+        PVLDateParsing.parse(string)
     }
     
     func formatCurrency(_ value: Double) -> String {
@@ -405,6 +500,17 @@ struct BudgetView: View {
         formatter.minimumFractionDigits = 2
         formatter.maximumFractionDigits = 2
         return "\(formatter.string(from: NSNumber(value: abs(value))) ?? "0") ₽"
+    }
+
+    /// Верхняя карта: как в Pixso — «₽ 48 320» с разрядным пробелом, без копеек.
+    func formatBalancePixso(_ value: Double) -> String {
+        let formatter = NumberFormatter()
+        formatter.numberStyle = .decimal
+        formatter.groupingSeparator = " "
+        formatter.maximumFractionDigits = 0
+        formatter.minimumFractionDigits = 0
+        let num = formatter.string(from: NSNumber(value: abs(value.rounded()))) ?? "0"
+        return "₽ \(num)"
     }
     
     func loadData() {
@@ -431,37 +537,135 @@ struct BudgetView: View {
         }
     }
     
-    func loadTransactions() {
+    private static let budgetTransactionPageLimit = 100
+    
+    /// Границы дат для query API (тот же смысл, что и в фильтре по памяти, но на сервере).
+    /// Как `make_tx_resp` на сервере: `yyyy-MM-dd'T'HH:mm:ss` (локальные сутки, без `Z`), чтобы `fromisoformat` сравнивал с `Transaction.date` в БД.
+    private func serverDateQueryBounds() -> (String, String)? {
+        let cal = Calendar.current
+        let now = Date()
+        let f = DateFormatter()
+        f.dateFormat = "yyyy-MM-dd'T'HH:mm:ss"
+        f.locale = Locale(identifier: "en_US_POSIX")
+        f.timeZone = .current
+        func endOfDay(_ d: Date) -> Date {
+            var c = cal.dateComponents([.year, .month, .day], from: d)
+            c.hour = 23
+            c.minute = 59
+            c.second = 59
+            return cal.date(from: c) ?? d
+        }
+        switch selectedDateFilter {
+        case .all: return nil
+        case .today:
+            let s = cal.startOfDay(for: now)
+            return (f.string(from: s), f.string(from: endOfDay(now)))
+        case .yesterday:
+            guard let y = cal.date(byAdding: .day, value: -1, to: now) else { return nil }
+            return (f.string(from: cal.startOfDay(for: y)), f.string(from: endOfDay(y)))
+        case .week:
+            guard let w0 = cal.date(from: cal.dateComponents([.yearForWeekOfYear, .weekOfYear], from: now)) else { return nil }
+            return (f.string(from: w0), f.string(from: endOfDay(now)))
+        case .month:
+            guard let m0 = cal.date(from: cal.dateComponents([.year, .month], from: now)) else { return nil }
+            return (f.string(from: m0), f.string(from: endOfDay(now)))
+        case .custom:
+            let a = min(customStartDate, customEndDate)
+            let b = max(customStartDate, customEndDate)
+            return (f.string(from: cal.startOfDay(for: a)), f.string(from: endOfDay(b)))
+        }
+    }
+    
+    private func budgetTransactionListURL(appendPage: Bool) -> URL? {
+        guard var c = URLComponents(string: "\(authManager.baseURL)/budget/transactions") else { return nil }
+        var q: [URLQueryItem] = [
+            URLQueryItem(name: "limit", value: "\(Self.budgetTransactionPageLimit)")
+        ]
+        if appendPage, let cur = nextTransactionCursor {
+            q.append(URLQueryItem(name: "after_date", value: cur.dateISO))
+            q.append(URLQueryItem(name: "after_id", value: "\(cur.id)"))
+        }
+        if let s = serverDateQueryBounds() {
+            q.append(URLQueryItem(name: "date_from", value: s.0))
+            q.append(URLQueryItem(name: "date_to", value: s.1))
+        }
+        if let sc = selectedSubcategoryId {
+            q.append(URLQueryItem(name: "category_id", value: "\(sc)"))
+        } else if let g = selectedGroupId {
+            q.append(URLQueryItem(name: "group_id", value: "\(g)"))
+        }
+        c.queryItems = q
+        return c.url
+    }
+    
+    /// Первая страница или сброс при смене фильтра.
+    func loadTransactions(reset: Bool = true) {
+        if reset {
+            hasMoreTransactions = false
+            nextTransactionCursor = nil
+            isLoadingMoreTransactions = false
+            allTransactions = []
+        }
+        guard let url = budgetTransactionListURL(appendPage: false) else { return }
+        runBudgetTransactionRequest(url: url, append: false, isLoadMore: false)
+    }
+    
+    private func loadMoreTransactionsIfNeeded() {
+        guard hasMoreTransactions, !isLoadingMoreTransactions else { return }
+        guard let url = budgetTransactionListURL(appendPage: true) else { return }
+        runBudgetTransactionRequest(url: url, append: true, isLoadMore: true)
+    }
+    
+    private func runBudgetTransactionRequest(url: URL, append: Bool, isLoadMore: Bool) {
         guard let token = authManager.token else {
             errorMessage = "Требуется авторизация"
             showErrorAlert = true
             return
         }
+        if isLoadMore { isLoadingMoreTransactions = true } else if !append { isLoadingMoreTransactions = false }
         
-        var req = URLRequest(url: URL(string: "\(authManager.baseURL)/budget/transactions")!)
+        var req = URLRequest(url: url)
         req.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
         req.cachePolicy = .reloadIgnoringLocalCacheData
         
         URLSession.shared.dataTask(with: req) { data, response, error in
             DispatchQueue.main.async {
+                if isLoadMore { self.isLoadingMoreTransactions = false }
                 if let error = error {
-                    errorMessage = "Нет соединения с сервером"
-                    showErrorAlert = true
+                    if !isLoadMore {
+                        self.errorMessage = "Нет соединения с сервером"
+                        self.showErrorAlert = true
+                    }
                     return
                 }
                 guard let httpResponse = response as? HTTPURLResponse, (200...299).contains(httpResponse.statusCode) else {
-                    errorMessage = "Ошибка сервера"
-                    showErrorAlert = true
+                    if !isLoadMore {
+                        self.errorMessage = "Ошибка сервера"
+                        self.showErrorAlert = true
+                    }
                     return
                 }
                 guard let data = data else { return }
                 
                 do {
-                    let list = try JSONDecoder().decode([Transaction].self, from: data)
-                    self.allTransactions = list
+                    let page = try JSONDecoder().decode(TransactionListPage.self, from: data)
+                    if append {
+                        self.allTransactions.append(contentsOf: page.items)
+                    } else {
+                        self.allTransactions = page.items
+                    }
+                    self.hasMoreTransactions = page.has_more
+                    if let last = page.items.last {
+                        self.nextTransactionCursor = (last.date, last.id)
+                    } else {
+                        self.nextTransactionCursor = nil
+                    }
+                    self.refreshTransactionDaySections()
                 } catch {
-                    errorMessage = "Неверный формат данных"
-                    showErrorAlert = true
+                    if !isLoadMore {
+                        self.errorMessage = "Неверный формат данных"
+                        self.showErrorAlert = true
+                    }
                 }
             }
         }.resume()
@@ -562,6 +766,7 @@ struct BudgetView: View {
         }
         let originalTransactions = allTransactions
         allTransactions.removeAll { $0.id == id }
+        refreshTransactionDaySections()
         
         var req = URLRequest(url: URL(string: "\(authManager.baseURL)/budget/transactions/\(id)")!)
         req.httpMethod = "DELETE"
@@ -571,12 +776,14 @@ struct BudgetView: View {
             DispatchQueue.main.async {
                 if let error = error {
                     self.allTransactions = originalTransactions
+                    self.refreshTransactionDaySections()
                     errorMessage = "Не удалось удалить: \(error.localizedDescription)"
                     showErrorAlert = true
                     return
                 }
                 guard let httpResponse = response as? HTTPURLResponse, (200...299).contains(httpResponse.statusCode) else {
                     self.allTransactions = originalTransactions
+                    self.refreshTransactionDaySections()
                     errorMessage = "Ошибка сервера"
                     showErrorAlert = true
                     return
@@ -590,49 +797,92 @@ struct BudgetView: View {
 // --- КАРТОЧКА ТРАНЗАКЦИИ ---
 struct TransactionCard: View {
     let t: BudgetView.Transaction
+    var isLastInGroup: Bool = true
+
     var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            HStack(alignment: .top, spacing: 12) {
-                VStack(alignment: .leading, spacing: 4) {
-                    Text(t.full_category_path ?? "Без категории").font(.headline).fontWeight(.semibold).lineLimit(1)
-                    if let desc = t.description, !desc.isEmpty {
-                        Text(desc).font(.caption).foregroundColor(.secondary).lineLimit(2)
-                    }
+        HStack(alignment: .center, spacing: 12) {
+            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                .fill(Color(red: 237 / 255, green: 236 / 255, blue: 234 / 255))
+                .frame(width: 36, height: 36)
+                .overlay {
+                    Image(systemName: typeIcon)
+                        .font(.system(size: 18, weight: .medium))
+                        .foregroundStyle(typeTint)
                 }
-                Spacer()
-                Text(TransactionCard.formatAmountStatic(t.amount, type: t.transaction_type))
-                    .font(.title2).fontWeight(.bold)
-                    .foregroundColor(t.transaction_type == "income" ? .green : .red)
+
+            VStack(alignment: .leading, spacing: 2) {
+                Text(t.full_category_path ?? "Без категории")
+                    .font(.system(size: 15, weight: .semibold))
+                    .lineLimit(1)
+
+                Text((t.description?.isEmpty == false ? t.description! : defaultSubtitle))
+                    .font(.system(size: 12))
+                    .italic()
+                    .foregroundColor(Color(red: 156 / 255, green: 155 / 255, blue: 153 / 255))
+                    .lineLimit(1)
             }
-            
-            Divider().background(Color.gray.opacity(0.2))
-            HStack {
-                if let bal = t.balance {
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text("Остаток").font(.caption2).foregroundColor(.secondary).textCase(.uppercase)
-                        Text(String(format: "%.0f ₽", bal)).font(.title).fontWeight(.heavy)
-                            .foregroundColor(bal >= 0 ? FamilyAppStyle.accent : .orange)
-                    }
+
+            Spacer()
+
+            VStack(alignment: .trailing, spacing: 2) {
+                Text(TransactionCard.formatAmountStatic(t.amount, type: t.transaction_type))
+                    .font(.system(size: 15, weight: .semibold))
+                    .foregroundStyle(typeTint)
+                if let b = t.balance {
+                    Text(TransactionCard.formatBalanceOnCard(b))
+                        .font(.system(size: 12, weight: .semibold))
+                        .foregroundColor(FamilyAppStyle.pixsoInk)
                 }
-                Spacer()
-                VStack(alignment: .trailing, spacing: 1) {
-                    Text(TransactionCard.formatDateStatic(t.date)).font(.title3).foregroundColor(.gray)
-                    Text(t.creator_name ?? "Неизвестно").font(.title3).foregroundColor(.gray)
-                }
+                Text(timeText)
+                    .font(.system(size: 11))
+                    .italic()
+                    .foregroundColor(Color(red: 156 / 255, green: 155 / 255, blue: 153 / 255))
             }
         }
-        .padding(14)
-        .background(FamilyAppStyle.listCardFill)
-        .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
-        .overlay(
-            RoundedRectangle(cornerRadius: 16, style: .continuous)
-                .strokeBorder((t.transaction_type == "income" ? Color.green : Color.red).opacity(0.22), lineWidth: 1)
-        )
+        .frame(maxWidth: .infinity, minHeight: 62, alignment: .center)
+        .padding(.vertical, 8)
+        .overlay(alignment: .bottom) {
+            if !isLastInGroup {
+                Rectangle()
+                    .fill(Color(red: 240 / 255, green: 239 / 255, blue: 236 / 255))
+                    .frame(height: 1)
+            }
+        }
+    }
+
+    private var typeTint: Color {
+        t.transaction_type == "income"
+            ? Color(red: 61 / 255, green: 138 / 255, blue: 90 / 255)
+            : Color(red: 208 / 255, green: 128 / 255, blue: 104 / 255)
+    }
+
+    private var typeIcon: String {
+        t.transaction_type == "income" ? "arrow.down.left" : "basket.fill"
+    }
+
+    private var defaultSubtitle: String {
+        t.transaction_type == "income" ? "Поступление" : "Трата"
+    }
+
+    private var timeText: String {
+        PVLDateParsing.timeHHmm(from: t.date)
     }
     
     static func formatAmountStatic(_ amount: Double, type: String) -> String {
-        let sign = ""
-        return "\(sign)\(String(format: "%.2f", amount)) ₽"
+        let absValue = abs(amount)
+        let prefix = type == "income" ? "+₽ " : "−₽ "
+        return prefix + String(format: "%.0f", absValue)
+    }
+    
+    /// Накопленный баланс после этой операции (как на сервере: порядок date ↑, id ↑).
+    static func formatBalanceOnCard(_ value: Double) -> String {
+        let formatter = NumberFormatter()
+        formatter.numberStyle = .decimal
+        formatter.groupingSeparator = " "
+        formatter.maximumFractionDigits = 0
+        formatter.minimumFractionDigits = 0
+        let n = formatter.string(from: NSNumber(value: value.rounded())) ?? "0"
+        return "₽ \(n)"
     }
     
     static func formatDateStatic(_ string: String) -> String {
@@ -676,7 +926,7 @@ struct FilterSheet: View {
     var body: some View {
         NavigationStack {
             Form {
-                Section("Пользователь") {
+                Section {
                     Button(action: { selectedUserId = nil; onUpdate() }) {
                         HStack { Text("Все пользователи"); Spacer(); if selectedUserId == nil { Image(systemName: "checkmark").foregroundStyle(FamilyAppStyle.accent) } }
                     }
@@ -688,6 +938,10 @@ struct FilterSheet: View {
                             }
                         }
                     }
+                } header: { Text("Пользователь") } footer: {
+                    Text("Только баланс в шапке. Ленту видят все; по дате и категориям — отдельно.")
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
                 }
                 
                 Section("Период") {

@@ -160,3 +160,27 @@ class BabyLogPageOut(BaseModel):
     items: List[BabyLogOut]
     has_more: bool
     total: int
+
+
+# --- Insights (LLM) Schemas ---
+class InsightPayload(BaseModel):
+    report_type: str
+    period: str
+    metrics: dict = {}
+    trend_flags: List[str] = []
+    anomalies: List[dict] = []
+    notes: Optional[str] = None
+
+
+class InsightRequest(BaseModel):
+    payload: InsightPayload
+    provider: Optional[str] = None  # openai|anthropic|deepseek|gigachat|qwen|auto
+
+
+class InsightResponse(BaseModel):
+    provider: str
+    summary_today: str
+    summary_month: str
+    bullets: List[str] = []
+    risk_flags: List[str] = []
+    confidence: float = 0.5

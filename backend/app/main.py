@@ -16,6 +16,7 @@ from .budget import router as budget_router
 from .calendar import router as calendar_router
 from .stats import router as stats_router
 from .tracker import router as tracker_router
+from .insights import router as insights_router
 
 # Настройка логирования
 logging.basicConfig(level=logging.INFO)
@@ -112,6 +113,7 @@ app.include_router(budget_router, prefix="/budget", tags=["Budget"])
 app.include_router(calendar_router, prefix="/calendar", tags=["Calendar"])
 app.include_router(stats_router, prefix="/dashboard", tags=["Dashboard"])
 app.include_router(tracker_router, prefix="/tracker", tags=["Tracker"])
+app.include_router(insights_router, prefix="/insights", tags=["Insights"])
 
 @app.get("/health")
 def health():

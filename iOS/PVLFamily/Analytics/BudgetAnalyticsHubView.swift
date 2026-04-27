@@ -16,6 +16,9 @@ struct BudgetAnalyticsHubView: View {
     @State private var todaySummary: DashboardSummary?
     @State private var monthStats: MonthlyStats?
     @State private var previousMonthStats: MonthlyStats?
+    @State private var llmTodaySummary: String?
+    @State private var llmMonthSummary: String?
+    @State private var llmProviderLabel: String?
     @State private var isLoading = true
     @State private var loadError: String?
 
@@ -107,7 +110,7 @@ struct BudgetAnalyticsHubView: View {
                     title: "На сегодня",
                     primary: formatMoney(s.balance),
                     secondary: nil,
-                    caption: BudgetInsightBuilder.todayLine(balance: s.balance),
+                    caption: llmTodaySummary ?? BudgetInsightBuilder.todayLine(balance: s.balance),
                     aiPlaceholder: true
                 )
             }
@@ -117,9 +120,14 @@ struct BudgetAnalyticsHubView: View {
                     title: monthTitle(m),
                     primary: "Расходы \(formatMoney(abs(m.total_expense)))",
                     secondary: "Доходы \(formatMoney(m.total_income))",
-                    caption: BudgetInsightBuilder.monthLine(current: m, previous: previousMonthStats),
+                    caption: llmMonthSummary ?? BudgetInsightBuilder.monthLine(current: m, previous: previousMonthStats),
                     aiPlaceholder: true
                 )
+            }
+            if let llmProviderLabel {
+                Text("LLM: \(llmProviderLabel)")
+                    .font(.caption2)
+                    .foregroundStyle(.tertiary)
             }
         }
     }
@@ -232,6 +240,41 @@ struct BudgetAnalyticsHubView: View {
             todaySummary = today
             monthStats = curMonth
             previousMonthStats = prevMonth
+            requestBudgetInsight(today: today, month: curMonth, previous: prevMonth)
+        }
+    }
+
+    private func requestBudgetInsight(today: DashboardSummary?, month: MonthlyStats?, previous: MonthlyStats?) {
+        guard let today, let month else { return }
+        let deltaExpensePct: Double
+        if let previous, abs(previous.total_expense) > 0 {
+            deltaExpensePct = (abs(month.total_expense) - abs(previous.total_expense)) / abs(previous.total_expense) * 100
+        } else {
+            deltaExpensePct = 0
+        }
+        let payload = InsightPayload(
+            report_type: "budget",
+            period: "current_month",
+            metrics: [
+                "balance_today": today.balance,
+                "income_month": month.total_income,
+                "expense_month": abs(month.total_expense),
+                "expense_delta_vs_prev_pct": deltaExpensePct
+            ],
+            trend_flags: [
+                today.balance >= 0 ? "balance_positive" : "balance_negative",
+                deltaExpensePct > 5 ? "expense_up" : "expense_stable"
+            ],
+            anomalies: [],
+            notes: "safe_payload_only"
+        )
+        authManager.getInsight(kind: "budget", payload: payload, provider: nil) { result in
+            DispatchQueue.main.async {
+                guard case .success(let insight) = result else { return }
+                llmTodaySummary = insight.summary_today
+                llmMonthSummary = insight.summary_month
+                llmProviderLabel = insight.provider
+            }
         }
     }
 }

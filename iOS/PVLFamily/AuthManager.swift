@@ -478,6 +478,29 @@ struct MonthlyStats: Codable {
     let year: Int; let month: Int; let total_income: Double; let total_expense: Double; let balance: Double; let details: [MonthlyStatDetail]
 }
 
+struct InsightPayload: Codable {
+    let report_type: String
+    let period: String
+    let metrics: [String: Double]
+    let trend_flags: [String]
+    let anomalies: [[String: Double]]
+    let notes: String?
+}
+
+struct InsightRequest: Codable {
+    let payload: InsightPayload
+    let provider: String?
+}
+
+struct InsightResponse: Codable {
+    let provider: String
+    let summary_today: String
+    let summary_month: String
+    let bullets: [String]
+    let risk_flags: [String]
+    let confidence: Double
+}
+
 // MARK: - Tracker Models (НОВЫЕ)
 struct TrackerStatus: Codable {
     let is_sleeping: Bool
@@ -622,6 +645,44 @@ extension AuthManager {
             guard let data = data else { completion(.failure(APIError.noData)); return }
             do {
                 let decoded = try JSONDecoder().decode(TrackerStats.self, from: data)
+                completion(.success(decoded))
+            } catch {
+                completion(.failure(APIError.decodingError(error)))
+            }
+        }.resume()
+    }
+
+    /// Генерация инсайта через backend `/insights/{kind}`.
+    func getInsight(
+        kind: String,
+        payload: InsightPayload,
+        provider: String? = nil,
+        completion: @escaping (Result<InsightResponse, Error>) -> Void
+    ) {
+        let safeKind = (kind == "tracker") ? "tracker" : "budget"
+        let reqBody = InsightRequest(payload: payload, provider: provider)
+        guard let token = token else { completion(.failure(APIError.unauthorized)); return }
+        guard let url = URL(string: "\(baseURL)/insights/\(safeKind)") else { completion(.failure(APIError.invalidURL)); return }
+        var req = URLRequest(url: url)
+        req.httpMethod = "POST"
+        req.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        req.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        req.timeoutInterval = 20
+        do {
+            req.httpBody = try JSONEncoder().encode(reqBody)
+        } catch {
+            completion(.failure(APIError.decodingError(error)))
+            return
+        }
+        session.dataTask(with: req) { data, resp, err in
+            if let err = err { completion(.failure(APIError.networkError(err))); return }
+            if let h = resp as? HTTPURLResponse, !(200...299).contains(h.statusCode) {
+                completion(.failure(APIError.httpError(statusCode: h.statusCode, message: "insights/\(safeKind)")))
+                return
+            }
+            guard let data else { completion(.failure(APIError.noData)); return }
+            do {
+                let decoded = try JSONDecoder().decode(InsightResponse.self, from: data)
                 completion(.success(decoded))
             } catch {
                 completion(.failure(APIError.decodingError(error)))

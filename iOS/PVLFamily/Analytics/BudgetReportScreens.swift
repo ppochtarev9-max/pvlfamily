@@ -1,4 +1,5 @@
 import SwiftUI
+import Charts
 
 // MARK: - Топ категорий расхода (текущий месяц)
 
@@ -19,17 +20,31 @@ struct BudgetTopExpenseCategoriesView: View {
                     .filter { $0.type == "expense" }
                     .sorted { abs($0.amount) > abs($1.amount) }
                     .prefix(8)
-                List {
-                    Section("Текущий месяц: \(s.month).\(s.year)") {
-                        ForEach(Array(rows.enumerated()), id: \.offset) { _, row in
-                            HStack {
-                                Text(row.category_name)
-                                Spacer()
-                                Text(AnalyticsFormatters.moneyRU(abs(row.amount)))
-                                    .foregroundStyle(FamilyAppStyle.expenseCoral)
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 14) {
+                        if #available(iOS 17.0, *) {
+                            Chart(Array(rows.enumerated()), id: \.offset) { _, row in
+                                BarMark(
+                                    x: .value("Сумма", abs(row.amount)),
+                                    y: .value("Категория", row.category_name)
+                                )
+                                .foregroundStyle(FamilyAppStyle.expenseCoral.gradient)
+                            }
+                            .frame(height: 280)
+                        }
+                        VStack(spacing: 8) {
+                            ForEach(Array(rows.enumerated()), id: \.offset) { _, row in
+                                HStack {
+                                    Text(row.category_name)
+                                        .lineLimit(1)
+                                    Spacer()
+                                    Text(AnalyticsFormatters.moneyRU(abs(row.amount)))
+                                        .foregroundStyle(FamilyAppStyle.expenseCoral)
+                                }
                             }
                         }
                     }
+                    .padding()
                 }
             }
         }
@@ -70,27 +85,38 @@ struct BudgetMonthOverMonthView: View {
             if isLoading { ProgressView() }
             else if let error { ContentUnavailableView("Ошибка", systemImage: "exclamationmark.triangle", description: Text(error)) }
             else if let c = cur, let p = prev {
-                List {
-                    Section("Доходы") {
-                        compareRow("Текущий", c.total_income)
-                        compareRow("Прошлый", p.total_income)
-                    }
-                    Section("Расходы (по модулю)") {
-                        compareRow("Текущий", abs(c.total_expense))
-                        compareRow("Прошлый", abs(p.total_expense))
-                    }
-                    Section("Сальдо") {
-                        compareRow("Текущий", c.balance)
-                        compareRow("Прошлый", p.balance)
-                    }
-                    if abs(c.total_expense) > 0, abs(p.total_expense) > 0 {
-                        let ch = (abs(c.total_expense) - abs(p.total_expense)) / abs(p.total_expense) * 100
-                        Section("Вывод") {
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 14) {
+                        if #available(iOS 17.0, *) {
+                            Chart(comparisonRows(c: c, p: p), id: \.id) { row in
+                                BarMark(
+                                    x: .value("Метка", row.label),
+                                    y: .value("Сумма", row.value)
+                                )
+                                .foregroundStyle(by: .value("Период", row.period))
+                            }
+                            .chartForegroundStyleScale([
+                                "Текущий": FamilyAppStyle.accent,
+                                "Прошлый": FamilyAppStyle.captionMuted
+                            ])
+                            .frame(height: 250)
+                        }
+                        VStack(spacing: 8) {
+                            compareRow("Доходы · текущий", c.total_income)
+                            compareRow("Доходы · прошлый", p.total_income)
+                            compareRow("Расходы · текущий", abs(c.total_expense))
+                            compareRow("Расходы · прошлый", abs(p.total_expense))
+                            compareRow("Сальдо · текущий", c.balance)
+                            compareRow("Сальдо · прошлый", p.balance)
+                        }
+                        if abs(c.total_expense) > 0, abs(p.total_expense) > 0 {
+                            let ch = (abs(c.total_expense) - abs(p.total_expense)) / abs(p.total_expense) * 100
                             Text("Расходы относительно прошлого месяца: \(String(format: "%.0f", ch))%")
                                 .font(.footnote)
                                 .foregroundStyle(FamilyAppStyle.captionMuted)
                         }
                     }
+                    .padding()
                 }
             }
         }
@@ -104,6 +130,24 @@ struct BudgetMonthOverMonthView: View {
             Spacer()
             Text(AnalyticsFormatters.moneyRU(v))
         }
+    }
+
+    private struct ComparisonRow: Identifiable {
+        let id: String
+        let label: String
+        let period: String
+        let value: Double
+    }
+
+    private func comparisonRows(c: MonthlyStats, p: MonthlyStats) -> [ComparisonRow] {
+        [
+            ComparisonRow(id: "income-current", label: "Доходы", period: "Текущий", value: c.total_income),
+            ComparisonRow(id: "income-prev", label: "Доходы", period: "Прошлый", value: p.total_income),
+            ComparisonRow(id: "expense-current", label: "Расходы", period: "Текущий", value: abs(c.total_expense)),
+            ComparisonRow(id: "expense-prev", label: "Расходы", period: "Прошлый", value: abs(p.total_expense)),
+            ComparisonRow(id: "balance-current", label: "Сальдо", period: "Текущий", value: c.balance),
+            ComparisonRow(id: "balance-prev", label: "Сальдо", period: "Прошлый", value: p.balance)
+        ]
     }
 
     private func load() {
@@ -211,24 +255,39 @@ struct BudgetSixMonthStripView: View {
     @State private var error: String?
 
     var body: some View {
-        List {
-            Section {
-                if rows.isEmpty && !isLoading { Text("Нет данных") }
-                ForEach(rows, id: \.0) { r in
-                    HStack {
-                        Text(r.0)
-                        Spacer()
-                        Text(AnalyticsFormatters.moneyRU(r.1))
-                            .font(.caption)
+        ScrollView {
+            VStack(alignment: .leading, spacing: 14) {
+                if #available(iOS 17.0, *) {
+                    Chart(rows, id: \.0) { row in
+                        LineMark(
+                            x: .value("Месяц", row.0),
+                            y: .value("Сальдо", row.1)
+                        )
+                        .foregroundStyle(FamilyAppStyle.accent)
+                        PointMark(
+                            x: .value("Месяц", row.0),
+                            y: .value("Сальдо", row.1)
+                        )
+                        .foregroundStyle(FamilyAppStyle.accent)
+                    }
+                    .frame(height: 220)
+                }
+                VStack(spacing: 8) {
+                    if rows.isEmpty && !isLoading { Text("Нет данных") }
+                    ForEach(rows, id: \.0) { r in
+                        HStack {
+                            Text(r.0)
+                            Spacer()
+                            Text(AnalyticsFormatters.moneyRU(r.1))
+                                .font(.caption)
+                        }
                     }
                 }
-            } header: {
-                Text("Сальдо по месяцам (6 мес, всё кроме кастомного сравнения — данные с сервера)")
-            } footer: {
-                Text("Для кривой тренда и прогноза добавим агрегат API; сейчас — таблица сальдо.")
+                Text("Линия показывает тренд сальдо по месяцам; для прогноза добавим агрегат API.")
                     .font(.caption2)
                     .foregroundStyle(FamilyAppStyle.captionMuted)
             }
+            .padding()
         }
         .navigationTitle("6 месяцев: сальдо")
         .onAppear(perform: load)

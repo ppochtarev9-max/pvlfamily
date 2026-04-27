@@ -1,5 +1,6 @@
 import SwiftUI
 import Foundation
+import Charts
 
 // MARK: - Сравнение двух последних недель
 
@@ -34,6 +35,16 @@ struct TrackerCompareWeeksReportView: View {
                     weekColumn(title: "Раньше (ранние 7 в окне 14д)", minutes: parts.0, days: 7)
                     weekColumn(title: "Позже (последние 7)", minutes: parts.1, days: 7)
                 }
+                if #available(iOS 17.0, *) {
+                    Chart(weekBars(parts: parts), id: \.label) { item in
+                        BarMark(
+                            x: .value("Неделя", item.label),
+                            y: .value("Минуты", item.minutes)
+                        )
+                        .foregroundStyle(FamilyAppStyle.accent.gradient)
+                    }
+                    .frame(height: 180)
+                }
                 Text(diff >= 0 ? "Во второй неделе суммарно на \(AnalyticsFormatters.sleepDuration(abs(diff))) дольше." : "Во второй неделе суммарно на \(AnalyticsFormatters.sleepDuration(abs(diff))) меньше.")
                     .font(.footnote)
                     .foregroundStyle(FamilyAppStyle.captionMuted)
@@ -61,6 +72,10 @@ struct TrackerCompareWeeksReportView: View {
                 .foregroundStyle(FamilyAppStyle.captionMuted)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private func weekBars(parts: (Int, Int)) -> [(label: String, minutes: Int)] {
+        [("Раньше", parts.0), ("Позже", parts.1)]
     }
 
     private func reportScroll<Content: View>(@ViewBuilder content: () -> Content) -> some View {
@@ -100,6 +115,16 @@ struct TrackerAveragesReportView: View {
             else {
                 ScrollView {
                     VStack(alignment: .leading, spacing: 16) {
+                        if #available(iOS 17.0, *) {
+                            Chart(avgBars(), id: \.period) { item in
+                                BarMark(
+                                    x: .value("Период", item.period),
+                                    y: .value("Минуты", item.perDay)
+                                )
+                                .foregroundStyle(item.period == "7д" ? FamilyAppStyle.accent : FamilyAppStyle.captionMuted)
+                            }
+                            .frame(height: 180)
+                        }
                         if let a = s7, a.total_sessions > 0 {
                             row("7 дней", avg: a.total_sleep_minutes / a.total_sessions, perDay: a.total_sleep_minutes / 7)
                         }
@@ -130,6 +155,13 @@ struct TrackerAveragesReportView: View {
         .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
     }
 
+    private func avgBars() -> [(period: String, perDay: Int)] {
+        var rows: [(String, Int)] = []
+        if let a = s7 { rows.append(("7д", a.total_sleep_minutes / max(1, 7))) }
+        if let b = s30 { rows.append(("30д", b.total_sleep_minutes / max(1, 30))) }
+        return rows
+    }
+
     private func load() {
         isLoading = true
         let g = DispatchGroup()
@@ -157,27 +189,40 @@ struct TrackerOutlierDaysReportView: View {
             else if let error { ContentUnavailableView("Ошибка", systemImage: "exclamationmark.triangle", description: Text(error)) }
             else if let s = stats {
                 let out = Self.outliers(from: s.daily_breakdown)
-                List {
-                    Section("Сильно выше нормы") {
-                        if out.high.isEmpty { Text("—").foregroundStyle(.secondary) }
-                        ForEach(out.high, id: \.date) { d in
-                            HStack {
-                                Text(formatDay(d.date))
-                                Spacer()
-                                Text(AnalyticsFormatters.sleepDuration(d.sleep_minutes))
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 12) {
+                        if #available(iOS 17.0, *) {
+                            Chart(s.daily_breakdown, id: \.date) { d in
+                                LineMark(
+                                    x: .value("Дата", formatDay(d.date)),
+                                    y: .value("Минуты", d.sleep_minutes)
+                                )
+                                .foregroundStyle(FamilyAppStyle.accent)
+                            }
+                            .frame(height: 220)
+                        }
+                        GroupBox("Сильно выше нормы") {
+                            if out.high.isEmpty { Text("—").foregroundStyle(.secondary) }
+                            ForEach(out.high, id: \.date) { d in
+                                HStack {
+                                    Text(formatDay(d.date))
+                                    Spacer()
+                                    Text(AnalyticsFormatters.sleepDuration(d.sleep_minutes))
+                                }
+                            }
+                        }
+                        GroupBox("Сильно ниже нормы") {
+                            if out.low.isEmpty { Text("—").foregroundStyle(.secondary) }
+                            ForEach(out.low, id: \.date) { d in
+                                HStack {
+                                    Text(formatDay(d.date))
+                                    Spacer()
+                                    Text(AnalyticsFormatters.sleepDuration(d.sleep_minutes))
+                                }
                             }
                         }
                     }
-                    Section("Сильно ниже нормы") {
-                        if out.low.isEmpty { Text("—").foregroundStyle(.secondary) }
-                        ForEach(out.low, id: \.date) { d in
-                            HStack {
-                                Text(formatDay(d.date))
-                                Spacer()
-                                Text(AnalyticsFormatters.sleepDuration(d.sleep_minutes))
-                            }
-                        }
-                    }
+                    .padding()
                 }
             }
         }

@@ -35,6 +35,8 @@
 	<true/>
 	<key>NSSupportsLiveActivitiesFrequentUpdates</key>
 	<true/>
+	<key>NSFaceIDUsageDescription</key>
+	<string>Face ID используется для быстрого и безопасного входа в PVLFamily без ввода пароля.</string>
 	
 	<!-- Фоновые режимы (опционально, но полезно) -->
 	<key>UIBackgroundModes</key>

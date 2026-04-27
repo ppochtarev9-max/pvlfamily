@@ -1,8 +1,10 @@
 #!!!
 *.db
 *.sqlite3
-COMMANDS_full.md
 *TestResults*
+
+# Внутренняя документация — только локально, не в репозитории и не на сервере
+insidedocs/
 
 # Logs and temp files
 *.log

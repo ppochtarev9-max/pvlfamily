@@ -72,7 +72,7 @@ struct TrackerAnalyticsHubView: View {
                     primary: AnalyticsFormatters.sleepDuration(m),
                     secondary: "Эпизодов: \(ses)",
                     caption: llmTodaySummary ?? TrackerSleepInsightBuilder.todayLine(sleepMinutes: m, sessions: ses),
-                    aiPlaceholder: true
+                    aiPlaceholder: shouldShowAIPlaceholder
                 )
             }
 
@@ -87,7 +87,7 @@ struct TrackerAnalyticsHubView: View {
                         daysWithData: slice.days,
                         averagePerSession: avgSession
                     ),
-                    aiPlaceholder: true
+                    aiPlaceholder: shouldShowAIPlaceholder
                 )
             }
             if let llmProviderLabel {
@@ -96,6 +96,11 @@ struct TrackerAnalyticsHubView: View {
                     .foregroundStyle(.tertiary)
             }
         }
+    }
+
+    private var shouldShowAIPlaceholder: Bool {
+        guard let provider = llmProviderLabel?.lowercased(), !provider.isEmpty else { return true }
+        return provider.contains("fallback")
     }
 
     private var thisMonthSlice: (minutes: Int, days: Int, sessions: Int)? {

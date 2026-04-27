@@ -24,6 +24,8 @@ iOS/**/*.xcuserdatad/
 node_modules/
 .venv/
 venv/
+backend/venv_py39_backup_*/
+backend/venv*_backup_*/
 __pycache__/
 .mypy_cache/
 .pytest_cache/

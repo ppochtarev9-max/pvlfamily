@@ -111,7 +111,7 @@ struct BudgetAnalyticsHubView: View {
                     primary: formatMoney(s.balance),
                     secondary: nil,
                     caption: llmTodaySummary ?? BudgetInsightBuilder.todayLine(balance: s.balance),
-                    aiPlaceholder: true
+                    aiPlaceholder: shouldShowAIPlaceholder
                 )
             }
 
@@ -121,7 +121,7 @@ struct BudgetAnalyticsHubView: View {
                     primary: "Расходы \(formatMoney(abs(m.total_expense)))",
                     secondary: "Доходы \(formatMoney(m.total_income))",
                     caption: llmMonthSummary ?? BudgetInsightBuilder.monthLine(current: m, previous: previousMonthStats),
-                    aiPlaceholder: true
+                    aiPlaceholder: shouldShowAIPlaceholder
                 )
             }
             if let llmProviderLabel {
@@ -130,6 +130,11 @@ struct BudgetAnalyticsHubView: View {
                     .foregroundStyle(.tertiary)
             }
         }
+    }
+
+    private var shouldShowAIPlaceholder: Bool {
+        guard let provider = llmProviderLabel?.lowercased(), !provider.isEmpty else { return true }
+        return provider.contains("fallback")
     }
 
     private func monthTitle(_ m: MonthlyStats) -> String {

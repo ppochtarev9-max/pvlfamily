@@ -16,8 +16,13 @@ struct BudgetAnalyticsHubView: View {
     @State private var todaySummary: DashboardSummary?
     @State private var monthStats: MonthlyStats?
     @State private var previousMonthStats: MonthlyStats?
+    @State private var isAIExpanded = false
+    @State private var isAILoading = false
+    @State private var hasAttemptedLLM = false
+    @State private var llmError: String?
     @State private var llmTodaySummary: String?
     @State private var llmMonthSummary: String?
+    @State private var llmBullets: [String] = []
     @State private var llmProviderLabel: String?
     @State private var isLoading = true
     @State private var loadError: String?
@@ -36,6 +41,16 @@ struct BudgetAnalyticsHubView: View {
                     }
                     .listRowInsets(EdgeInsets(top: 12, leading: 16, bottom: 12, trailing: 16))
                     .listRowBackground(Color.clear)
+
+                    if isAIExpanded {
+                        Section {
+                            aiInsightPanel
+                        } header: {
+                            Text("Рекомендация ИИ")
+                        }
+                        .listRowInsets(EdgeInsets(top: 8, leading: 16, bottom: 12, trailing: 16))
+                        .listRowBackground(Color.clear)
+                    }
 
                     Section {
                         NavigationLink {
@@ -93,6 +108,21 @@ struct BudgetAnalyticsHubView: View {
         .background(FamilyAppStyle.screenBackground)
         .navigationTitle("Аналитика")
         .navigationBarTitleDisplayMode(.inline)
+        .toolbar {
+            ToolbarItem(placement: .topBarTrailing) {
+                Button {
+                    if isAIExpanded {
+                        isAIExpanded = false
+                    } else {
+                        isAIExpanded = true
+                        if !hasAttemptedLLM { runBudgetLLMRequest() }
+                    }
+                } label: {
+                    Label("ИИ-вывод", systemImage: isAIExpanded ? "chevron.up" : "sparkles")
+                }
+                .disabled(isLoading || loadError != nil)
+            }
+        }
         .onAppear {
             if selectedUserId == nil { selectedUserId = initialUserId }
             loadSnapshot()
@@ -110,8 +140,7 @@ struct BudgetAnalyticsHubView: View {
                     title: "На сегодня",
                     primary: formatMoney(s.balance),
                     secondary: nil,
-                    caption: llmTodaySummary ?? BudgetInsightBuilder.todayLine(balance: s.balance),
-                    aiPlaceholder: shouldShowAIPlaceholder
+                    caption: BudgetInsightBuilder.todayLine(balance: s.balance)
                 )
             }
 
@@ -120,21 +149,80 @@ struct BudgetAnalyticsHubView: View {
                     title: monthTitle(m),
                     primary: "Расходы \(formatMoney(abs(m.total_expense)))",
                     secondary: "Доходы \(formatMoney(m.total_income))",
-                    caption: llmMonthSummary ?? BudgetInsightBuilder.monthLine(current: m, previous: previousMonthStats),
-                    aiPlaceholder: shouldShowAIPlaceholder
+                    caption: BudgetInsightBuilder.monthLine(current: m, previous: previousMonthStats)
                 )
             }
-            if let llmProviderLabel {
-                Text("LLM: \(llmProviderLabel)")
-                    .font(.caption2)
-                    .foregroundStyle(.tertiary)
-            }
+            Text("ИИ: нажмите «ИИ-вывод» вверху, чтобы получить развёрнутый анализ без лишних запросов.")
+                .font(.caption2)
+                .foregroundStyle(.tertiary)
         }
     }
 
-    private var shouldShowAIPlaceholder: Bool {
-        guard let provider = llmProviderLabel?.lowercased(), !provider.isEmpty else { return true }
-        return provider.contains("fallback")
+    private var aiInsightPanel: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            if isAILoading {
+                HStack(spacing: 8) {
+                    ProgressView()
+                    Text("Запрос к ИИ…")
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                }
+            } else if let err = llmError {
+                Text(err)
+                    .font(.footnote)
+                    .foregroundStyle(.red)
+            } else if hasAttemptedLLM {
+                if let t = llmTodaySummary, !t.isEmpty {
+                    Text("Сегодня")
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(FamilyAppStyle.captionMuted)
+                    Text(t)
+                        .font(.body)
+                        .foregroundStyle(.primary)
+                }
+                if let m = llmMonthSummary, !m.isEmpty {
+                    Text("Месяц")
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(FamilyAppStyle.captionMuted)
+                        .padding(.top, 4)
+                    Text(m)
+                        .font(.body)
+                        .foregroundStyle(.primary)
+                }
+                if !llmBullets.isEmpty {
+                    VStack(alignment: .leading, spacing: 4) {
+                        ForEach(Array(llmBullets.enumerated()), id: \.offset) { _, line in
+                            Text("• \(line)")
+                                .font(.footnote)
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+                    .padding(.top, 4)
+                }
+                if let p = llmProviderLabel, !p.isEmpty {
+                    Text("Источник: \(p)\(p.lowercased().contains("fallback") ? " (резервные правила)" : "")")
+                        .font(.caption2)
+                        .foregroundStyle(.tertiary)
+                        .padding(.top, 4)
+                }
+            }
+
+            if hasAttemptedLLM, !isAILoading {
+                Button("Обновить ответ ИИ") {
+                    runBudgetLLMRequest(force: true)
+                }
+                .font(.subheadline)
+                .buttonStyle(.borderless)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(16)
+        .background(FamilyAppStyle.listCardFill)
+        .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: 16, style: .continuous)
+                .stroke(FamilyAppStyle.cardStroke, lineWidth: 1)
+        )
     }
 
     private func monthTitle(_ m: MonthlyStats) -> String {
@@ -143,7 +231,7 @@ struct BudgetAnalyticsHubView: View {
         return "Месяц: \(name) \(m.year)"
     }
 
-    private func snapshotCard(title: String, primary: String, secondary: String? = nil, caption: String, aiPlaceholder: Bool = false) -> some View {
+    private func snapshotCard(title: String, primary: String, secondary: String? = nil, caption: String) -> some View {
         VStack(alignment: .leading, spacing: 8) {
             Text(title)
                 .font(.subheadline.weight(.semibold))
@@ -160,12 +248,6 @@ struct BudgetAnalyticsHubView: View {
                 .font(.footnote)
                 .foregroundStyle(FamilyAppStyle.captionMuted)
                 .fixedSize(horizontal: false, vertical: true)
-            if aiPlaceholder {
-                Text("— место для рекомендации ИИ —")
-                    .font(.caption2)
-                    .italic()
-                    .foregroundStyle(.tertiary)
-            }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(16)
@@ -245,14 +327,18 @@ struct BudgetAnalyticsHubView: View {
             todaySummary = today
             monthStats = curMonth
             previousMonthStats = prevMonth
-            requestBudgetInsight(today: today, month: curMonth, previous: prevMonth)
         }
     }
 
-    private func requestBudgetInsight(today: DashboardSummary?, month: MonthlyStats?, previous: MonthlyStats?) {
-        guard let today, let month else { return }
+    private func runBudgetLLMRequest(force: Bool = false) {
+        guard let today = todaySummary, let month = monthStats else { return }
+        if isAILoading { return }
+        if !force, hasAttemptedLLM { return }
+        isAILoading = true
+        if force { llmError = nil }
+        let prev = previousMonthStats
         let deltaExpensePct: Double
-        if let previous, abs(previous.total_expense) > 0 {
+        if let previous = prev, abs(previous.total_expense) > 0 {
             deltaExpensePct = (abs(month.total_expense) - abs(previous.total_expense)) / abs(previous.total_expense) * 100
         } else {
             deltaExpensePct = 0
@@ -275,10 +361,18 @@ struct BudgetAnalyticsHubView: View {
         )
         authManager.getInsight(kind: "budget", payload: payload, provider: nil) { result in
             DispatchQueue.main.async {
-                guard case .success(let insight) = result else { return }
-                llmTodaySummary = insight.summary_today
-                llmMonthSummary = insight.summary_month
-                llmProviderLabel = insight.provider
+                isAILoading = false
+                hasAttemptedLLM = true
+                switch result {
+                case .success(let insight):
+                    llmError = nil
+                    llmTodaySummary = insight.summary_today
+                    llmMonthSummary = insight.summary_month
+                    llmBullets = insight.bullets
+                    llmProviderLabel = insight.provider
+                case .failure(let err):
+                    llmError = err.localizedDescription
+                }
             }
         }
     }

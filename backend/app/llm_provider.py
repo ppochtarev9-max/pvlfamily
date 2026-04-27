@@ -241,6 +241,12 @@ class GigaChatProvider:
                 )
         except Exception as e:
             logger.error("[LLM] gigachat response error: %s", e)
+            err = str(e).lower()
+            if "certificate_verify_failed" in err or "ssl" in err or "self-signed" in err:
+                logger.error(
+                    "[LLM] GigaChat TLS: нельзя проверить цепочку (часто на Linux/облаке). "
+                    "Проверьте CA/время на сервере, либо укажите GIGACHAT_VERIFY_SSL=false в .env (как у себя на Mac) и перезапустите."
+                )
             fallback = _fallback_rule_based(payload, provider="gigachat-fallback")
             fallback.summary_month = "GigaChat временно недоступен. Использован локальный fallback."
             fallback.bullets = [f"Ошибка провайдера: {type(e).__name__}"]

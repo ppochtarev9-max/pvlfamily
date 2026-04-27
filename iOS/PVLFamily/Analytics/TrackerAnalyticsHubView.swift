@@ -7,8 +7,13 @@ struct TrackerAnalyticsHubView: View {
 
     @State private var todayStats: TrackerStats?
     @State private var longStats: TrackerStats?
+    @State private var isAIExpanded = false
+    @State private var isAILoading = false
+    @State private var hasAttemptedLLM = false
+    @State private var llmError: String?
     @State private var llmTodaySummary: String?
     @State private var llmMonthSummary: String?
+    @State private var llmBullets: [String] = []
     @State private var llmProviderLabel: String?
     @State private var isLoading = true
     @State private var loadError: String?
@@ -27,6 +32,16 @@ struct TrackerAnalyticsHubView: View {
                     }
                     .listRowInsets(EdgeInsets(top: 12, leading: 16, bottom: 12, trailing: 16))
                     .listRowBackground(Color.clear)
+
+                    if isAIExpanded {
+                        Section {
+                            aiInsightPanel
+                        } header: {
+                            Text("Рекомендация ИИ")
+                        }
+                        .listRowInsets(EdgeInsets(top: 8, leading: 16, bottom: 12, trailing: 16))
+                        .listRowBackground(Color.clear)
+                    }
 
                     Section {
                         NavigationLink {
@@ -55,6 +70,21 @@ struct TrackerAnalyticsHubView: View {
         .background(FamilyAppStyle.screenBackground)
         .navigationTitle("Аналитика")
         .navigationBarTitleDisplayMode(.inline)
+        .toolbar {
+            ToolbarItem(placement: .topBarTrailing) {
+                Button {
+                    if isAIExpanded {
+                        isAIExpanded = false
+                    } else {
+                        isAIExpanded = true
+                        if !hasAttemptedLLM { runTrackerLLMRequest() }
+                    }
+                } label: {
+                    Label("ИИ-вывод", systemImage: isAIExpanded ? "chevron.up" : "sparkles")
+                }
+                .disabled(isLoading || loadError != nil)
+            }
+        }
         .onAppear(perform: loadSnapshot)
     }
 
@@ -71,8 +101,7 @@ struct TrackerAnalyticsHubView: View {
                     title: "На сегодня (завершённый сон)",
                     primary: AnalyticsFormatters.sleepDuration(m),
                     secondary: "Эпизодов: \(ses)",
-                    caption: llmTodaySummary ?? TrackerSleepInsightBuilder.todayLine(sleepMinutes: m, sessions: ses),
-                    aiPlaceholder: shouldShowAIPlaceholder
+                    caption: TrackerSleepInsightBuilder.todayLine(sleepMinutes: m, sessions: ses)
                 )
             }
 
@@ -82,25 +111,84 @@ struct TrackerAnalyticsHubView: View {
                     title: "В этом месяце",
                     primary: "Всего \(AnalyticsFormatters.sleepDuration(slice.minutes))",
                     secondary: "Дней с данными: \(slice.days) · эпизодов \(slice.sessions)",
-                    caption: llmMonthSummary ?? TrackerSleepInsightBuilder.monthLine(
+                    caption: TrackerSleepInsightBuilder.monthLine(
                         totalMinutes: slice.minutes,
                         daysWithData: slice.days,
                         averagePerSession: avgSession
-                    ),
-                    aiPlaceholder: shouldShowAIPlaceholder
+                    )
                 )
             }
-            if let llmProviderLabel {
-                Text("LLM: \(llmProviderLabel)")
-                    .font(.caption2)
-                    .foregroundStyle(.tertiary)
-            }
+            Text("ИИ: нажмите «ИИ-вывод» вверху, чтобы получить развёрнутый анализ.")
+                .font(.caption2)
+                .foregroundStyle(.tertiary)
         }
     }
 
-    private var shouldShowAIPlaceholder: Bool {
-        guard let provider = llmProviderLabel?.lowercased(), !provider.isEmpty else { return true }
-        return provider.contains("fallback")
+    private var aiInsightPanel: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            if isAILoading {
+                HStack(spacing: 8) {
+                    ProgressView()
+                    Text("Запрос к ИИ…")
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                }
+            } else if let err = llmError {
+                Text(err)
+                    .font(.footnote)
+                    .foregroundStyle(.red)
+            } else if hasAttemptedLLM {
+                if let t = llmTodaySummary, !t.isEmpty {
+                    Text("Сегодня")
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(FamilyAppStyle.captionMuted)
+                    Text(t)
+                        .font(.body)
+                        .foregroundStyle(.primary)
+                }
+                if let m = llmMonthSummary, !m.isEmpty {
+                    Text("В этом месяце")
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(FamilyAppStyle.captionMuted)
+                        .padding(.top, 4)
+                    Text(m)
+                        .font(.body)
+                        .foregroundStyle(.primary)
+                }
+                if !llmBullets.isEmpty {
+                    VStack(alignment: .leading, spacing: 4) {
+                        ForEach(Array(llmBullets.enumerated()), id: \.offset) { _, line in
+                            Text("• \(line)")
+                                .font(.footnote)
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+                    .padding(.top, 4)
+                }
+                if let p = llmProviderLabel, !p.isEmpty {
+                    Text("Источник: \(p)\(p.lowercased().contains("fallback") ? " (резервные правила)" : "")")
+                        .font(.caption2)
+                        .foregroundStyle(.tertiary)
+                        .padding(.top, 4)
+                }
+            }
+
+            if hasAttemptedLLM, !isAILoading {
+                Button("Обновить ответ ИИ") {
+                    runTrackerLLMRequest(force: true)
+                }
+                .font(.subheadline)
+                .buttonStyle(.borderless)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(16)
+        .background(FamilyAppStyle.listCardFill)
+        .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: 16, style: .continuous)
+                .stroke(FamilyAppStyle.cardStroke, lineWidth: 1)
+        )
     }
 
     private var thisMonthSlice: (minutes: Int, days: Int, sessions: Int)? {
@@ -123,7 +211,7 @@ struct TrackerAnalyticsHubView: View {
         return (min, days, ses)
     }
 
-    private func snapshotCard(title: String, primary: String, secondary: String? = nil, caption: String, aiPlaceholder: Bool) -> some View {
+    private func snapshotCard(title: String, primary: String, secondary: String? = nil, caption: String) -> some View {
         VStack(alignment: .leading, spacing: 8) {
             Text(title)
                 .font(.subheadline.weight(.semibold))
@@ -139,12 +227,6 @@ struct TrackerAnalyticsHubView: View {
             Text(caption)
                 .font(.footnote)
                 .foregroundStyle(FamilyAppStyle.captionMuted)
-            if aiPlaceholder {
-                Text("— место для рекомендации ИИ —")
-                    .font(.caption2)
-                    .italic()
-                    .foregroundStyle(.tertiary)
-            }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(16)
@@ -188,12 +270,15 @@ struct TrackerAnalyticsHubView: View {
             }
             todayStats = t1
             longStats = t60
-            requestTrackerInsight(today: t1, longWindow: t60)
         }
     }
 
-    private func requestTrackerInsight(today: TrackerStats?, longWindow: TrackerStats?) {
-        guard let today, let longWindow else { return }
+    private func runTrackerLLMRequest(force: Bool = false) {
+        guard let today = todayStats, let longWindow = longStats else { return }
+        if isAILoading { return }
+        if !force, hasAttemptedLLM { return }
+        isAILoading = true
+        if force { llmError = nil }
         let month = thisMonthSlice
         let payload = InsightPayload(
             report_type: "tracker",
@@ -213,10 +298,18 @@ struct TrackerAnalyticsHubView: View {
         )
         authManager.getInsight(kind: "tracker", payload: payload, provider: nil) { result in
             DispatchQueue.main.async {
-                guard case .success(let insight) = result else { return }
-                llmTodaySummary = insight.summary_today
-                llmMonthSummary = insight.summary_month
-                llmProviderLabel = insight.provider
+                isAILoading = false
+                hasAttemptedLLM = true
+                switch result {
+                case .success(let insight):
+                    llmError = nil
+                    llmTodaySummary = insight.summary_today
+                    llmMonthSummary = insight.summary_month
+                    llmBullets = insight.bullets
+                    llmProviderLabel = insight.provider
+                case .failure(let err):
+                    llmError = err.localizedDescription
+                }
             }
         }
     }

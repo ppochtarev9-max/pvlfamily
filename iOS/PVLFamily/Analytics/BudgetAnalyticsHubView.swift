@@ -17,15 +17,6 @@ struct BudgetAnalyticsHubView: View {
     @State private var todaySummary: DashboardSummary?
     @State private var monthStats: MonthlyStats?
     @State private var previousMonthStats: MonthlyStats?
-    @State private var isAIExpanded = false
-    @State private var isAILoading = false
-    @State private var hasAttemptedLLM = false
-    @State private var llmError: String?
-    @State private var llmTodaySummary: String?
-    @State private var llmMonthSummary: String?
-    @State private var llmBullets: [String] = []
-    @State private var llmProviderLabel: String?
-    @State private var aiQuestion: String = ""
     @State private var isLoading = true
     @State private var loadError: String?
 
@@ -43,16 +34,6 @@ struct BudgetAnalyticsHubView: View {
                     }
                     .listRowInsets(EdgeInsets(top: 12, leading: 16, bottom: 12, trailing: 16))
                     .listRowBackground(Color.clear)
-
-                    if isAIExpanded {
-                        Section {
-                            aiInsightPanel
-                        } header: {
-                            Text("Рекомендация ИИ")
-                        }
-                        .listRowInsets(EdgeInsets(top: 8, leading: 16, bottom: 12, trailing: 16))
-                        .listRowBackground(Color.clear)
-                    }
 
                     Section {
                         NavigationLink {
@@ -129,15 +110,11 @@ struct BudgetAnalyticsHubView: View {
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
             ToolbarItem(placement: .topBarTrailing) {
-                Button {
-                    if isAIExpanded {
-                        isAIExpanded = false
-                    } else {
-                        isAIExpanded = true
-                        if !hasAttemptedLLM { runBudgetLLMRequest() }
-                    }
+                NavigationLink {
+                    BudgetAIChatView(selectedUserId: selectedUserId, anchorMonth: anchorMonth)
+                        .environmentObject(authManager)
                 } label: {
-                    Label("ИИ-вывод", systemImage: isAIExpanded ? "chevron.up" : "sparkles")
+                    Label("ИИ", systemImage: "sparkles")
                 }
                 .disabled(isLoading || loadError != nil)
             }
@@ -159,7 +136,7 @@ struct BudgetAnalyticsHubView: View {
                     caption: BudgetInsightBuilder.monthLine(current: m, previous: previousMonthStats)
                 )
             }
-            Text("ИИ: нажмите «ИИ-вывод» вверху, чтобы получить развёрнутый анализ без лишних запросов.")
+            Text("ИИ: нажмите «ИИ» вверху, чтобы открыть чат и задать вопрос по бюджету.")
                 .font(.caption2)
                 .foregroundStyle(.tertiary)
         }
@@ -186,126 +163,6 @@ struct BudgetAnalyticsHubView: View {
             .buttonStyle(.borderless)
         }
         .frame(maxWidth: .infinity, alignment: .center)
-    }
-
-    private var aiInsightPanel: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            aiQuestionBlock
-
-            if isAILoading {
-                HStack(spacing: 8) {
-                    ProgressView()
-                    Text("Запрос к ИИ…")
-                        .font(.subheadline)
-                        .foregroundStyle(.secondary)
-                }
-            } else if let err = llmError {
-                Text(err)
-                    .font(.footnote)
-                    .foregroundStyle(.red)
-            } else if hasAttemptedLLM {
-                if let t = llmTodaySummary, !t.isEmpty {
-                    Text("Сегодня")
-                        .font(.caption.weight(.semibold))
-                        .foregroundStyle(FamilyAppStyle.captionMuted)
-                    Text(t)
-                        .font(.body)
-                        .foregroundStyle(.primary)
-                }
-                if let m = llmMonthSummary, !m.isEmpty {
-                    Text("Месяц")
-                        .font(.caption.weight(.semibold))
-                        .foregroundStyle(FamilyAppStyle.captionMuted)
-                        .padding(.top, 4)
-                    Text(m)
-                        .font(.body)
-                        .foregroundStyle(.primary)
-                }
-                if !llmBullets.isEmpty {
-                    VStack(alignment: .leading, spacing: 4) {
-                        ForEach(Array(llmBullets.enumerated()), id: \.offset) { _, line in
-                            Text("• \(line)")
-                                .font(.footnote)
-                                .foregroundStyle(.secondary)
-                        }
-                    }
-                    .padding(.top, 4)
-                }
-                if let p = llmProviderLabel, !p.isEmpty {
-                    Text("Источник: \(p)\(p.lowercased().contains("fallback") ? " (резервные правила)" : "")")
-                        .font(.caption2)
-                        .foregroundStyle(.tertiary)
-                        .padding(.top, 4)
-                }
-            }
-
-            if hasAttemptedLLM, !isAILoading {
-                Button("Обновить ответ ИИ") {
-                    runBudgetLLMRequest(force: true)
-                }
-                .font(.subheadline)
-                .buttonStyle(.borderless)
-            }
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(16)
-        .background(FamilyAppStyle.listCardFill)
-        .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
-        .overlay(
-            RoundedRectangle(cornerRadius: 16, style: .continuous)
-                .stroke(FamilyAppStyle.cardStroke, lineWidth: 1)
-        )
-    }
-
-    private var aiQuestionBlock: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            Text("Вопрос к ИИ")
-                .font(.caption.weight(.semibold))
-                .foregroundStyle(FamilyAppStyle.captionMuted)
-
-            TextField("Например: «Как изменились расходы на квартиру за 12 месяцев?»", text: $aiQuestion, axis: .vertical)
-                .textFieldStyle(.roundedBorder)
-                .lineLimit(1...4)
-
-            ScrollView(.horizontal, showsIndicators: false) {
-                HStack(spacing: 8) {
-                    ForEach(budgetQuestionChips, id: \.self) { chip in
-                        Button(chip) {
-                            aiQuestion = chip
-                            runBudgetLLMRequest(force: true, question: chip)
-                        }
-                        .font(.caption)
-                        .buttonStyle(.bordered)
-                    }
-                }
-            }
-
-            HStack(spacing: 10) {
-                Button {
-                    runBudgetLLMRequest(force: true, question: aiQuestion)
-                } label: {
-                    Label("Спросить", systemImage: "paperplane.fill")
-                }
-                .buttonStyle(.borderedProminent)
-                .disabled(aiQuestion.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || isAILoading)
-
-                Button("Очистить") {
-                    aiQuestion = ""
-                }
-                .buttonStyle(.bordered)
-                .disabled(isAILoading)
-            }
-        }
-    }
-
-    private var budgetQuestionChips: [String] {
-        [
-            "Какие 3 категории сильнее всего выросли по расходам за последние 12 месяцев?",
-            "Насколько выросли расходы на квартиру за последние 12 месяцев?",
-            "Как меняется доход год к году?",
-            "Есть ли заметные регулярные платежи и как они влияют на бюджет?",
-            "Какие самые крупные операции за последние 12 месяцев и почему?"
-        ]
     }
 
     private func monthTitle(_ m: MonthlyStats) -> String {
@@ -373,14 +230,6 @@ struct BudgetAnalyticsHubView: View {
         let next = cal.date(byAdding: .month, value: delta, to: anchorMonth) ?? anchorMonth
         anchorMonth = monthStart(next)
 
-        // При смене периода считаем, что ИИ-ответ неактуален
-        hasAttemptedLLM = false
-        llmError = nil
-        llmTodaySummary = nil
-        llmMonthSummary = nil
-        llmBullets = []
-        llmProviderLabel = nil
-
         loadSnapshot()
     }
 
@@ -444,144 +293,7 @@ struct BudgetAnalyticsHubView: View {
         }
     }
 
-    private func runBudgetLLMRequest(force: Bool = false, question: String? = nil) {
-        guard monthStats != nil else { return }
-        if isAILoading { return }
-        if !force, hasAttemptedLLM { return }
-        isAILoading = true
-        if force { llmError = nil }
-        let anchor = String(format: "%04d-%02d", Calendar.current.component(.year, from: anchorMonth), Calendar.current.component(.month, from: anchorMonth))
-        let q = question?.trimmingCharacters(in: .whitespacesAndNewlines)
 
-        // Просим backend построить safe_payload из БД (богатые агрегаты за 5+ лет),
-        // а также (опционально) ответить на вопрос.
-        let payload = InsightPayload(
-            report_type: "budget",
-            period: "anchor_month",
-            metrics: [:],
-            trend_flags: [],
-            anomalies: [],
-            series: nil,
-            breakdowns: nil,
-            comparisons: nil,
-            notes: "server_build"
-        )
-
-        authManager.getInsight(
-            kind: "budget",
-            payload: payload,
-            provider: nil,
-            question: (q?.isEmpty == true) ? nil : q,
-            anchorMonth: anchor,
-            windowMonths: 72,
-            userId: selectedUserId
-        ) { result in
-            DispatchQueue.main.async {
-                isAILoading = false
-                hasAttemptedLLM = true
-                switch result {
-                case .success(let insight):
-                    llmError = nil
-                    llmTodaySummary = insight.summary_today
-                    llmMonthSummary = insight.summary_month
-                    llmBullets = insight.bullets
-                    llmProviderLabel = insight.provider
-                case .failure(let err):
-                    llmError = err.localizedDescription
-                }
-            }
-        }
-    }
-
-    private func fetchRecentMonthlyStats(monthsBack: Int, baseDate: Date, userId: Int?, completion: @escaping ([MonthlyStats]) -> Void) {
-        let cal = Calendar.current
-        var d = baseDate
-        var targets: [(y: Int, m: Int)] = []
-        for _ in 0..<max(1, monthsBack) {
-            let y = cal.component(.year, from: d)
-            let m = cal.component(.month, from: d)
-            targets.append((y, m))
-            d = cal.date(byAdding: .month, value: -1, to: d) ?? d
-        }
-        let g = DispatchGroup()
-        var out: [MonthlyStats] = []
-        for t in targets {
-            g.enter()
-            authManager.getMonthlyStats(year: t.y, month: t.m, userId: userId) { r in
-                defer { g.leave() }
-                if case .success(let s) = r { out.append(s) }
-            }
-        }
-        g.notify(queue: .main) {
-            // Сортируем по времени по возрастанию (для графика/серий)
-            let sorted = out.sorted { a, b in
-                if a.year != b.year { return a.year < b.year }
-                return a.month < b.month
-            }
-            completion(sorted)
-        }
-    }
-
-    private func buildBudgetSeries(from months: [MonthlyStats]) -> [InsightSeries] {
-        guard !months.isEmpty else { return [] }
-        let pointsBalance = months.map { m in
-            InsightPoint(t: String(format: "%04d-%02d", m.year, m.month), v: m.balance)
-        }
-        let pointsExpense = months.map { m in
-            InsightPoint(t: String(format: "%04d-%02d", m.year, m.month), v: abs(m.total_expense))
-        }
-        return [
-            InsightSeries(name: "Сальдо по месяцам", points: pointsBalance, unit: "RUB"),
-            InsightSeries(name: "Расходы по месяцам", points: pointsExpense, unit: "RUB"),
-        ]
-    }
-
-    private func buildBudgetBreakdowns(currentMonth: MonthlyStats) -> [InsightBreakdown] {
-        let rows = currentMonth.details
-            .filter { $0.type == "expense" }
-            .sorted { abs($0.amount) > abs($1.amount) }
-        let top = rows.prefix(8)
-        let total = max(1.0, rows.map { abs($0.amount) }.reduce(0, +))
-        let items = top.map { row in
-            let v = abs(row.amount)
-            return InsightBreakdownItem(name: row.category_name, value: v, share: v / total)
-        }
-        if items.isEmpty { return [] }
-        return [
-            InsightBreakdown(name: "Топ расходов по категориям (месяц)", items: items, unit: "RUB")
-        ]
-    }
-
-    private func buildBudgetComparisons(current: MonthlyStats, previous: MonthlyStats?) -> [InsightComparison] {
-        guard let previous else { return [] }
-        let curExp = abs(current.total_expense)
-        let prevExp = abs(previous.total_expense)
-        let expDelta = curExp - prevExp
-        let expDeltaPct = prevExp > 0 ? (expDelta / prevExp) * 100 : nil
-
-        return [
-            InsightComparison(
-                name: "Расходы: текущий vs прошлый",
-                a_label: "текущий",
-                a_value: curExp,
-                b_label: "прошлый",
-                b_value: prevExp,
-                delta: expDelta,
-                delta_pct: expDeltaPct,
-                unit: "RUB"
-            ),
-            InsightComparison(
-                name: "Сальдо: текущий vs прошлый",
-                a_label: "текущий",
-                a_value: current.balance,
-                b_label: "прошлый",
-                b_value: previous.balance,
-                delta: current.balance - previous.balance,
-                delta_pct: nil,
-                unit: "RUB"
-            ),
-        ]
-    }
 }
 
 #Preview {

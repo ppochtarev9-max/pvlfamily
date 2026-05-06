@@ -25,6 +25,7 @@ struct BudgetAnalyticsHubView: View {
     @State private var llmMonthSummary: String?
     @State private var llmBullets: [String] = []
     @State private var llmProviderLabel: String?
+    @State private var aiQuestion: String = ""
     @State private var isLoading = true
     @State private var loadError: String?
 
@@ -189,6 +190,8 @@ struct BudgetAnalyticsHubView: View {
 
     private var aiInsightPanel: some View {
         VStack(alignment: .leading, spacing: 12) {
+            aiQuestionBlock
+
             if isAILoading {
                 HStack(spacing: 8) {
                     ProgressView()
@@ -252,6 +255,57 @@ struct BudgetAnalyticsHubView: View {
             RoundedRectangle(cornerRadius: 16, style: .continuous)
                 .stroke(FamilyAppStyle.cardStroke, lineWidth: 1)
         )
+    }
+
+    private var aiQuestionBlock: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text("Вопрос к ИИ")
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(FamilyAppStyle.captionMuted)
+
+            TextField("Например: «Как изменились расходы на квартиру за 12 месяцев?»", text: $aiQuestion, axis: .vertical)
+                .textFieldStyle(.roundedBorder)
+                .lineLimit(1...4)
+
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 8) {
+                    ForEach(budgetQuestionChips, id: \.self) { chip in
+                        Button(chip) {
+                            aiQuestion = chip
+                            runBudgetLLMRequest(force: true, question: chip)
+                        }
+                        .font(.caption)
+                        .buttonStyle(.bordered)
+                    }
+                }
+            }
+
+            HStack(spacing: 10) {
+                Button {
+                    runBudgetLLMRequest(force: true, question: aiQuestion)
+                } label: {
+                    Label("Спросить", systemImage: "paperplane.fill")
+                }
+                .buttonStyle(.borderedProminent)
+                .disabled(aiQuestion.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || isAILoading)
+
+                Button("Очистить") {
+                    aiQuestion = ""
+                }
+                .buttonStyle(.bordered)
+                .disabled(isAILoading)
+            }
+        }
+    }
+
+    private var budgetQuestionChips: [String] {
+        [
+            "Какие 3 категории сильнее всего выросли по расходам за последние 12 месяцев?",
+            "Насколько выросли расходы на квартиру за последние 12 месяцев?",
+            "Как меняется доход год к году?",
+            "Есть ли заметные регулярные платежи и как они влияют на бюджет?",
+            "Какие самые крупные операции за последние 12 месяцев и почему?"
+        ]
     }
 
     private func monthTitle(_ m: MonthlyStats) -> String {
@@ -390,61 +444,50 @@ struct BudgetAnalyticsHubView: View {
         }
     }
 
-    private func runBudgetLLMRequest(force: Bool = false) {
-        guard let month = monthStats else { return }
+    private func runBudgetLLMRequest(force: Bool = false, question: String? = nil) {
+        guard monthStats != nil else { return }
         if isAILoading { return }
         if !force, hasAttemptedLLM { return }
         isAILoading = true
         if force { llmError = nil }
-        let prev = previousMonthStats
-        let todayBalance = todaySummary?.balance ?? 0
+        let anchor = String(format: "%04d-%02d", Calendar.current.component(.year, from: anchorMonth), Calendar.current.component(.month, from: anchorMonth))
+        let q = question?.trimmingCharacters(in: .whitespacesAndNewlines)
 
-        // На запрос ИИ подгружаем ещё 6 месяцев агрегатов (safe, без транзакций).
-        fetchRecentMonthlyStats(monthsBack: 6, baseDate: anchorMonth, userId: selectedUserId) { recent in
-            let deltaExpensePct: Double
-            if let previous = prev, abs(previous.total_expense) > 0 {
-                deltaExpensePct = (abs(month.total_expense) - abs(previous.total_expense)) / abs(previous.total_expense) * 100
-            } else {
-                deltaExpensePct = 0
-            }
+        // Просим backend построить safe_payload из БД (богатые агрегаты за 5+ лет),
+        // а также (опционально) ответить на вопрос.
+        let payload = InsightPayload(
+            report_type: "budget",
+            period: "anchor_month",
+            metrics: [:],
+            trend_flags: [],
+            anomalies: [],
+            series: nil,
+            breakdowns: nil,
+            comparisons: nil,
+            notes: "server_build"
+        )
 
-            let series = buildBudgetSeries(from: recent)
-            let breakdowns = buildBudgetBreakdowns(currentMonth: month)
-            let comparisons = buildBudgetComparisons(current: month, previous: prev)
-
-            let payload = InsightPayload(
-                report_type: "budget",
-                period: "current_month",
-                metrics: [
-                    "balance_today": todayBalance,
-                    "income_month": month.total_income,
-                    "expense_month": abs(month.total_expense),
-                    "expense_delta_vs_prev_pct": deltaExpensePct
-                ],
-                trend_flags: [
-                    todayBalance >= 0 ? "balance_positive" : "balance_negative",
-                    deltaExpensePct > 5 ? "expense_up" : "expense_stable"
-                ],
-                anomalies: [],
-                series: series.isEmpty ? nil : series,
-                breakdowns: breakdowns.isEmpty ? nil : breakdowns,
-                comparisons: comparisons.isEmpty ? nil : comparisons,
-                notes: "safe_payload_only"
-            )
-            authManager.getInsight(kind: "budget", payload: payload, provider: nil) { result in
-                DispatchQueue.main.async {
-                    isAILoading = false
-                    hasAttemptedLLM = true
-                    switch result {
-                    case .success(let insight):
-                        llmError = nil
-                        llmTodaySummary = insight.summary_today
-                        llmMonthSummary = insight.summary_month
-                        llmBullets = insight.bullets
-                        llmProviderLabel = insight.provider
-                    case .failure(let err):
-                        llmError = err.localizedDescription
-                    }
+        authManager.getInsight(
+            kind: "budget",
+            payload: payload,
+            provider: nil,
+            question: (q?.isEmpty == true) ? nil : q,
+            anchorMonth: anchor,
+            windowMonths: 72,
+            userId: selectedUserId
+        ) { result in
+            DispatchQueue.main.async {
+                isAILoading = false
+                hasAttemptedLLM = true
+                switch result {
+                case .success(let insight):
+                    llmError = nil
+                    llmTodaySummary = insight.summary_today
+                    llmMonthSummary = insight.summary_month
+                    llmBullets = insight.bullets
+                    llmProviderLabel = insight.provider
+                case .failure(let err):
+                    llmError = err.localizedDescription
                 }
             }
         }

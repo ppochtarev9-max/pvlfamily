@@ -89,6 +89,7 @@ class OpenAICompatibleProvider:
         system_prompt = (
             "Ты аналитик финансов/режима сна. Верни СТРОГО JSON без markdown и без лишнего текста. "
             "Тебе придёт агрегированный safe_payload (metrics, trend_flags, anomalies, а также возможно series/breakdowns/comparisons). "
+            "Если внутри payload есть поле question, ответь на него, опираясь на агрегаты; если данных недостаточно — скажи, каких агрегатов не хватает. "
             "Поля ответа: summary_today (string), summary_month (string), bullets (string[]), "
             "risk_flags (string[]), confidence (number 0..1)."
         )
@@ -186,6 +187,7 @@ class GigaChatProvider:
             system_prompt = (
                 "Ты аналитик финансов/режима сна. Верни СТРОГО JSON без markdown и без лишнего текста. "
                 "Тебе придёт агрегированный safe_payload (metrics, trend_flags, anomalies, а также возможно series/breakdowns/comparisons). "
+                "Если внутри payload есть поле question, ответь на него, опираясь на агрегаты; если данных недостаточно — скажи, каких агрегатов не хватает. "
                 "Поля ответа: summary_today (string), summary_month (string), bullets (string[]), "
                 "risk_flags (string[]), confidence (number 0..1)."
             )

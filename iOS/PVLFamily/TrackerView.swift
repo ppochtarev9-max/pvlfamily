@@ -12,6 +12,11 @@ struct TrackerView: View {
     @State private var nextLogsCursor: (startISO: String, id: Int)? = nil
     @State private var errorMessage: String?
     @State private var showErrorAlert = false
+
+    /// Кэш секций дней — не пересчитывать O(n) на каждый кадр SwiftUI.
+    @State private var logDaySections: [LogDaySection] = []
+    @State private var didRunInitialTrackerLoad = false
+    @State private var lastLogsLoadedAt: Date? = nil
     
     // Фильтры и навигация
     @State private var selectedDate: Date = Date()
@@ -39,6 +44,13 @@ struct TrackerView: View {
         let total_wake_minutes: Int
         let sessions_count: Int
     }
+
+    fileprivate struct LogDaySection: Identifiable {
+        let id: String
+        let day: Date
+        let title: String
+        let items: [BabyLog]
+    }
     
     fileprivate struct LogsListPage: Codable {
         let items: [BabyLog]
@@ -62,31 +74,28 @@ struct TrackerView: View {
     /// Время первого пробуждения в этот день (ранний `end_time` сна), «08:14».
     private var firstWakeClockHero: String {
         guard let d = firstWakeTime(on: selectedDate, logs: logs) else { return "—" }
-        let f = DateFormatter()
-        f.locale = Locale(identifier: "ru_RU")
-        f.dateFormat = "HH:mm"
-        return f.string(from: d)
+        return Self.hhmmFormatterRU.string(from: d)
     }
     
-    private var groupedLogs: [(title: String, items: [BabyLog])] {
-        let sortedLogs = logs.sorted(by: { $0.start_time > $1.start_time })
+    private func refreshLogDaySections(from allLogs: [BabyLog]) {
+        let cal = Calendar.current
+        // keyset пагинация от API уже даёт порядок по времени, но на всякий случай держим стабильную сортировку.
+        let sortedLogs = allLogs.sorted(by: { $0.start_time > $1.start_time })
         let grouped = Dictionary(grouping: sortedLogs) { log in
-            parseDate(log.start_time).map { Calendar.current.startOfDay(for: $0) } ?? .distantPast
+            parseDate(log.start_time).map { cal.startOfDay(for: $0) } ?? .distantPast
         }
         let sortedKeys = grouped.keys.sorted(by: >)
-        return sortedKeys.map { day in
+        logDaySections = sortedKeys.map { day in
             let title: String
-            if Calendar.current.isDateInToday(day) {
-                title = "Сегодня"
-            } else if Calendar.current.isDateInYesterday(day) {
-                title = "Вчера"
-            } else {
-                let f = DateFormatter()
-                f.locale = Locale(identifier: "ru_RU")
-                f.dateFormat = "dd.MM"
-                title = f.string(from: day)
-            }
-            return (title, grouped[day] ?? [])
+            if cal.isDateInToday(day) { title = "Сегодня" }
+            else if cal.isDateInYesterday(day) { title = "Вчера" }
+            else { title = Self.dayTitleFormatterRU.string(from: day) }
+            return LogDaySection(
+                id: "\(day.timeIntervalSince1970)",
+                day: day,
+                title: title,
+                items: grouped[day] ?? []
+            )
         }
     }
 
@@ -187,8 +196,7 @@ struct TrackerView: View {
                         ContentUnavailableView("Нет записей", systemImage: "clock.badge.exclamationmark", description: Text("Нажмите +, чтобы добавить"))
                     } else {
                         List {
-                            ForEach(groupedLogs.indices, id: \.self) { sectionIndex in
-                                let section = groupedLogs[sectionIndex]
+                            ForEach(logDaySections) { section in
                                 let n = section.items.count
                                 Section {
                                     ForEach(Array(section.items.enumerated()), id: \.element.id) { index, log in
@@ -305,7 +313,13 @@ struct TrackerView: View {
                 Button("OK", role: .cancel) { errorMessage = nil }
             } message: { Text(errorMessage ?? "Ошибка") }
             .onAppear {
-                loadLogs()
+                // Не перезагружаем данные при каждом открытии/возврате.
+                if !didRunInitialTrackerLoad {
+                    didRunInitialTrackerLoad = true
+                    loadLogs()
+                } else if shouldReloadLogsOnAppear() {
+                    loadLogs()
+                }
             }
             .refreshable {
                 loadLogs()
@@ -314,6 +328,31 @@ struct TrackerView: View {
     }
     
     private static let logsPageLimit = 100
+    private static let logsReloadTTL: TimeInterval = 30
+    private static let hhmmFormatterRU: DateFormatter = {
+        let f = DateFormatter()
+        f.locale = Locale(identifier: "ru_RU")
+        f.dateFormat = "HH:mm"
+        return f
+    }()
+    private static let dayTitleFormatterRU: DateFormatter = {
+        let f = DateFormatter()
+        f.locale = Locale(identifier: "ru_RU")
+        f.dateFormat = "dd.MM"
+        return f
+    }()
+    private static let shortDateFormatterRU: DateFormatter = {
+        let f = DateFormatter()
+        f.dateStyle = .short
+        f.locale = Locale(identifier: "ru_RU")
+        return f
+    }()
+
+    private func shouldReloadLogsOnAppear() -> Bool {
+        guard !isLoading, !isLoadingMoreLogs else { return false }
+        guard let last = lastLogsLoadedAt else { return true }
+        return Date().timeIntervalSince(last) > Self.logsReloadTTL
+    }
     
     private func logsListURL(appendPage: Bool) -> URL? {
         guard var c = URLComponents(string: "\(authManager.baseURL)/tracker/logs") else { return nil }
@@ -374,6 +413,8 @@ struct TrackerView: View {
                     }
                     print("✅ Логов на странице: \(page.items.count), has_more: \(page.has_more)")
                     self.loadDailyStats(for: self.selectedDate, from: self.logs)
+                    self.refreshLogDaySections(from: self.logs)
+                    if reset { self.lastLogsLoadedAt = Date() }
                 } catch {
                     errorMessage = "Ошибка данных: \(error.localizedDescription)"
                     showErrorAlert = true
@@ -484,8 +525,7 @@ struct TrackerView: View {
     }
     
     func formatDateShort(_ date: Date) -> String {
-        let f = DateFormatter(); f.dateStyle = .short; f.locale = Locale(identifier: "ru_RU")
-        return f.string(from: date)
+        Self.shortDateFormatterRU.string(from: date)
     }
     
     func parseDate(_ string: String) -> Date? {

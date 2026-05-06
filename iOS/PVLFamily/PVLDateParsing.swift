@@ -2,29 +2,91 @@ import Foundation
 
 /// Парсинг дат с API: без `Z`, с пробелом вместо `T`, с долями секунд — `ISO8601DateFormatter` часто даёт `nil`, из‑за этого в UI оказываются «— — —».
 enum PVLDateParsing {
+    // DateFormatter/ISO8601DateFormatter создаются дорого; держим статически.
+    // Примечание: DateFormatter не thread-safe, но в нашем UI-потоке это ок.
+    private static let isoWithFractionalSeconds: ISO8601DateFormatter = {
+        let f = ISO8601DateFormatter()
+        f.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        return f
+    }()
+    private static let isoNoFractionalSeconds: ISO8601DateFormatter = {
+        let f = ISO8601DateFormatter()
+        f.formatOptions = [.withInternetDateTime]
+        return f
+    }()
+    private static let isoWithZAndFractionalSeconds: ISO8601DateFormatter = {
+        let f = ISO8601DateFormatter()
+        f.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        return f
+    }()
+    private static let isoWithZNoFractionalSeconds: ISO8601DateFormatter = {
+        let f = ISO8601DateFormatter()
+        f.formatOptions = [.withInternetDateTime]
+        return f
+    }()
+    private static let posixDateFormatter: DateFormatter = {
+        let f = DateFormatter()
+        f.locale = Locale(identifier: "en_US_POSIX")
+        f.timeZone = TimeZone.current
+        return f
+    }()
+    private static let posixDateFormatterGMT: DateFormatter = {
+        let f = DateFormatter()
+        f.locale = Locale(identifier: "en_US_POSIX")
+        f.timeZone = TimeZone(secondsFromGMT: 0)
+        return f
+    }()
+    private static let hhmmFormatterRU: DateFormatter = {
+        let f = DateFormatter()
+        f.locale = Locale(identifier: "ru_RU")
+        f.dateFormat = "HH:mm"
+        return f
+    }()
+
+    /// Кэш успешных парсингов (ускоряет повторные рендеры списков).
+    private static var parseCache: [String: Date] = [:]
+    private static var parseCacheOrder: [String] = []
+    private static let parseCacheLimit = 500
+
+    private static func cachePut(_ key: String, _ value: Date) {
+        if parseCache[key] == nil {
+            parseCacheOrder.append(key)
+            if parseCacheOrder.count > parseCacheLimit, let oldest = parseCacheOrder.first {
+                parseCacheOrder.removeFirst()
+                parseCache.removeValue(forKey: oldest)
+            }
+        }
+        parseCache[key] = value
+    }
+
     static func parse(_ string: String) -> Date? {
         let s0 = string.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !s0.isEmpty else { return nil }
-        let iso = ISO8601DateFormatter()
-        iso.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
-        if let d = iso.date(from: s0) { return d }
-        iso.formatOptions = [.withInternetDateTime]
-        if let d = iso.date(from: s0) { return d }
+        if let cached = parseCache[s0] { return cached }
+
+        if let d = isoWithFractionalSeconds.date(from: s0) {
+            cachePut(s0, d)
+            return d
+        }
+        if let d = isoNoFractionalSeconds.date(from: s0) {
+            cachePut(s0, d)
+            return d
+        }
         if s0.contains("T") {
             let hasTz = s0.contains("Z")
                 || s0.range(of: #"[+-]\d{2}:\d{2}$"#, options: .regularExpression) != nil
             if !hasTz {
                 let withZ = s0 + "Z"
-                let z1 = ISO8601DateFormatter()
-                z1.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
-                if let d = z1.date(from: withZ) { return d }
-                z1.formatOptions = [.withInternetDateTime]
-                if let d = z1.date(from: withZ) { return d }
+                if let d = isoWithZAndFractionalSeconds.date(from: withZ) {
+                    cachePut(s0, d)
+                    return d
+                }
+                if let d = isoWithZNoFractionalSeconds.date(from: withZ) {
+                    cachePut(s0, d)
+                    return d
+                }
             }
         }
-        let f = DateFormatter()
-        f.locale = Locale(identifier: "en_US_POSIX")
-        f.timeZone = TimeZone.current
         for fmt in [
             "yyyy-MM-dd'T'HH:mm:ss.SSSSSS",
             "yyyy-MM-dd'T'HH:mm:ss.SSS",
@@ -32,23 +94,25 @@ enum PVLDateParsing {
             "yyyy-MM-dd HH:mm:ss.SSS",
             "yyyy-MM-dd HH:mm:ss"
         ] {
-            f.dateFormat = fmt
-            if let d = f.date(from: s0) { return d }
+            posixDateFormatter.dateFormat = fmt
+            if let d = posixDateFormatter.date(from: s0) {
+                cachePut(s0, d)
+                return d
+            }
         }
-        f.timeZone = TimeZone(secondsFromGMT: 0)
         for fmt in ["yyyy-MM-dd'T'HH:mm:ss.SSS", "yyyy-MM-dd'T'HH:mm:ss", "yyyy-MM-dd HH:mm:ss"] {
-            f.dateFormat = fmt
-            if let d = f.date(from: s0) { return d }
+            posixDateFormatterGMT.dateFormat = fmt
+            if let d = posixDateFormatterGMT.date(from: s0) {
+                cachePut(s0, d)
+                return d
+            }
         }
         return nil
     }
 
     static func timeHHmm(from string: String) -> String {
         if let d = parse(string) {
-            let out = DateFormatter()
-            out.locale = Locale(identifier: "ru_RU")
-            out.dateFormat = "HH:mm"
-            return out.string(from: d)
+            return hhmmFormatterRU.string(from: d)
         }
         if let t = timeSubstringLenient(string) { return t }
         return "—"

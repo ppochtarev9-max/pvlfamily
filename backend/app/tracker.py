@@ -15,11 +15,8 @@ from .schemas import BabyLogCreate, BabyLogOut, BabyLogUpdate, BabyLogPageOut
 from .auth import get_current_user
 
 from fastapi import Request
-from slowapi import Limiter
-from slowapi.util import get_remote_address
-from .models import User
+from .rate_limit import limiter
 
-limiter = Limiter(key_func=get_remote_address)
 router = APIRouter()
 
 def get_utc_now():
@@ -300,10 +297,8 @@ def export_tracker_excel(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
-    query = db.query(BabyLog).filter(
-        BabyLog.user_id == current_user.id,
-        BabyLog.end_time.isnot(None) # Только завершенные сны
-    )
+    _ = current_user
+    query = db.query(BabyLog)
     
     if start_date:
         try:

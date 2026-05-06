@@ -42,7 +42,11 @@ class AuthManager: ObservableObject {
     @Published var users: [[String: Any]] = []
     @Published var loginUsers: [[String: Any]] = []
     @Published var requiresPasswordReset: Bool = false
-    
+    /// Роль после логина / ответа GET /auth/me (управление пользователями — только при true).
+    @Published var isAdmin: Bool = false
+
+    private let userIsAdminKey = "userIsAdmin"
+
     @Published var selectedServer: ServerMode {
          didSet {
              // Сохраняем выбор сразу при изменении
@@ -94,7 +98,6 @@ class AuthManager: ObservableObject {
         updateBaseURL()
         biometricEnabled = defaults.bool(forKey: biometricEnabledKey)
         loadStoredUser()
-        loadUsers()
         loadPublicUsers()
     }
 
@@ -122,6 +125,11 @@ class AuthManager: ObservableObject {
     func updateBaseURL() {
         self.baseURL = Self.resolvedBaseURL(for: selectedServer)
         print("🌐 Сервер: \(baseURL)")
+        if isLoggedIn {
+            syncSessionProfile()
+        } else {
+            loadPublicUsers()
+        }
     }
 
     func setBiometricEnabled(_ enabled: Bool) {
@@ -168,6 +176,10 @@ class AuthManager: ObservableObject {
                 self.userId = savedId
                 self.isLoggedIn = true
                 print("✅ [AUTH] Сессия восстановлена успешно: \(name)")
+                if defaults.object(forKey: userIsAdminKey) != nil {
+                    isAdmin = defaults.bool(forKey: userIsAdminKey)
+                }
+                syncSessionProfile()
             } else {
                 print("⚠️ [AUTH] Сессия неполная (нет ID или ID=0). Выполняем выход.")
                 logout() // Здесь и происходит сброс, если ID потерян
@@ -176,24 +188,64 @@ class AuthManager: ObservableObject {
             print("ℹ️ [AUTH] Данные не найдены. Пользователь гость.")
         }
     }
-    
+
+    /// Синхронизирует признак админа с сервером после восстановления токена, затем подгружает список для UI.
+    func syncSessionProfile() {
+        guard let token = token else { return }
+        guard let url = URL(string: "\(baseURL)/auth/me") else { return }
+        var req = URLRequest(url: url)
+        req.timeoutInterval = 10
+        req.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        session.dataTask(with: req) { [weak self] data, response, error in
+            DispatchQueue.main.async {
+                guard let self = self else { return }
+                if error != nil {
+                    self.loadUsers()
+                    return
+                }
+                guard let httpResponse = response as? HTTPURLResponse,
+                      (200...299).contains(httpResponse.statusCode),
+                      let data = data,
+                      let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+                    self.loadUsers()
+                    return
+                }
+                if let ia = json["is_admin"] as? Bool {
+                    self.isAdmin = ia
+                    self.defaults.set(ia, forKey: self.userIsAdminKey)
+                }
+                self.loadUsers()
+            }
+        }.resume()
+    }
+
     func loadUsers() {
         guard let token = token else {
             self.users = []
             return
         }
-        guard let url = URL(string: "\(baseURL)/auth/users") else { return }
-        var req = URLRequest(url: url); req.timeoutInterval = 10
+        let path = isAdmin ? "/auth/users" : "/auth/users/members"
+        guard let url = URL(string: "\(baseURL)\(path)") else { return }
+        var req = URLRequest(url: url)
+        req.timeoutInterval = 10
         req.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
         session.dataTask(with: req) { data, response, error in
             DispatchQueue.main.async {
-                if let error = error { self.errorMessage = APIError.networkError(error).errorDescription; return }
+                if let error = error {
+                    self.errorMessage = APIError.networkError(error).errorDescription
+                    return
+                }
                 switch self.handleHTTPResponse(response, data: data) {
                 case .success:
                     if let data = data, let json = try? JSONSerialization.jsonObject(with: data) as? [[String: Any]] {
                         self.users = json
                     }
-                case .failure(let apiError): self.errorMessage = apiError.errorDescription
+                case .failure(let apiError):
+                    if !self.isAdmin, let http = response as? HTTPURLResponse, http.statusCode == 403 {
+                        self.users = []
+                    } else {
+                        self.errorMessage = apiError.errorDescription
+                    }
                 }
             }
         }.resume()
@@ -268,6 +320,7 @@ class AuthManager: ObservableObject {
                         throw APIError.decodingError(NSError(domain: "JSON", code: -1, userInfo: [:]))
                     }
                     let mustReset = json["force_password_reset"] as? Bool ?? false
+                    let isAdminResp = json["is_admin"] as? Bool ?? false
                     if mustReset {
                         self.pendingResetToken = accessToken
                         self.requiresPasswordReset = true
@@ -278,6 +331,7 @@ class AuthManager: ObservableObject {
                         self.token = accessToken
                         self.userName = nameResp
                         self.userId = userId
+                        self.isAdmin = isAdminResp
                         self.isLoggedIn = true
                         self.requiresPasswordReset = false
                         self.pendingResetToken = nil
@@ -285,6 +339,7 @@ class AuthManager: ObservableObject {
                         UserDefaults.standard.set(accessToken, forKey: "userToken")
                         UserDefaults.standard.set(nameResp, forKey: "userName")
                         UserDefaults.standard.set(userId, forKey: "userId")
+                        self.defaults.set(isAdminResp, forKey: self.userIsAdminKey)
                         self.defaults.set(nameResp, forKey: self.lastLoginNameKey)
                         if self.biometricEnabled {
                             _ = self.savePasswordToKeychain(password, account: nameResp)
@@ -362,7 +417,15 @@ class AuthManager: ObservableObject {
     }
     
     func logout() {
-        isLoggedIn = false; userName = nil; userId = nil; token = nil; pendingResetToken = nil; requiresPasswordReset = false
+        isLoggedIn = false
+        userName = nil
+        userId = nil
+        token = nil
+        pendingResetToken = nil
+        requiresPasswordReset = false
+        isAdmin = false
+        users = []
+        defaults.removeObject(forKey: userIsAdminKey)
         UserDefaults.standard.removeObject(forKey: "userToken")
         UserDefaults.standard.removeObject(forKey: "userName")
         UserDefaults.standard.removeObject(forKey: "userId")

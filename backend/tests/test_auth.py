@@ -1,5 +1,41 @@
 ADMIN_HEADERS = {"X-Admin-Token": "test-admin-token"}
 
+
+def test_get_users_requires_admin(client, test_user):
+    headers = {"Authorization": f"Bearer {test_user['access_token']}"}
+    r = client.get("/auth/users", headers=headers)
+    assert r.status_code == 403
+
+
+def test_get_users_admin_allowed(client, make_user_admin_token):
+    headers = {"Authorization": f"Bearer {make_user_admin_token}"}
+    r = client.get("/auth/users", headers=headers)
+    assert r.status_code == 200
+    body = r.json()
+    assert isinstance(body, list)
+    assert len(body) >= 1
+
+
+def test_get_members_for_any_user(client, test_user):
+    headers = {"Authorization": f"Bearer {test_user['access_token']}"}
+    r = client.get("/auth/users/members", headers=headers)
+    assert r.status_code == 200
+    data = r.json()
+    assert isinstance(data, list)
+    names = {x["name"] for x in data}
+    assert test_user["name"] in names
+
+
+def test_me_endpoint(client, test_user):
+    headers = {"Authorization": f"Bearer {test_user['access_token']}"}
+    r = client.get("/auth/me", headers=headers)
+    assert r.status_code == 200
+    j = r.json()
+    assert j["user_id"]
+    assert j["name"] == test_user["name"]
+    assert "is_admin" in j
+
+
 def test_admin_create_and_login_success(client):
     create_resp = client.post(
         "/auth/admin/users",
@@ -24,7 +60,10 @@ def test_login_success(client, test_user):
         "password": test_user["password"]
     })
     assert response.status_code == 200
-    assert "access_token" in response.json()
+    data = response.json()
+    assert "access_token" in data
+    assert "is_admin" in data
+    assert data["is_admin"] is False
 
 def test_login_empty_name_or_password(client):
     # Проверка на пустое имя (должно быть 400)

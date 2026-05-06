@@ -6,12 +6,11 @@ from sqlalchemy.orm import Session
 from typing import List, Optional
 from jose import jwt, JWTError
 from datetime import datetime, timedelta, timezone
-from slowapi import Limiter
-from slowapi.util import get_remote_address
 from passlib.context import CryptContext
 
 from . import models, schemas
 from .database import get_db
+from .rate_limit import limiter
 
 # Загрузка переменных окружения:
 # 1) приоритетно backend/.env
@@ -22,9 +21,6 @@ load_dotenv(dotenv_path=backend_env_path)
 
 router = APIRouter()
 
-# Инициализация лимитера (должен быть тем же экземпляром, что и в main.py, 
-# но для простоты создаем здесь новый с той же логикой)
-limiter = Limiter(key_func=get_remote_address)
 
 # Чтение SECRET_KEY из переменной окружения
 SECRET_KEY = os.getenv("SECRET_KEY")
@@ -146,16 +142,49 @@ def login(request: Request, user_data: schemas.UserLogin, db: Session = Depends(
         "user_id": user.id,
         "name": user.name,
         "force_password_reset": bool(user.must_reset_password),
+        "is_admin": bool(user.is_admin),
     }
 
+
+@router.get("/me", response_model=schemas.SessionUserOut)
+def get_me(current_user: models.User = Depends(get_current_user)):
+    return schemas.SessionUserOut(
+        user_id=current_user.id,
+        name=current_user.name,
+        is_admin=bool(current_user.is_admin),
+    )
+
+
 @router.get("/users", response_model=List[schemas.UserOut])
-def get_users(db: Session = Depends(get_db), current_user: models.User = Depends(get_current_user)):
-    users = db.query(models.User).all()
+def get_users(
+    db: Session = Depends(get_db),
+    current_admin: models.User = Depends(require_admin),
+):
+    _ = current_admin
+    users = db.query(models.User).order_by(models.User.name.asc()).all()
+    return users
+
+
+@router.get("/users/members", response_model=List[schemas.PublicUserOut])
+def get_users_members_for_family(
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(get_current_user),
+):
+    """Список активных членов семьи (без признаков админа и служебных полей)."""
+    _ = current_user
+    users = (
+        db.query(models.User)
+        .filter(models.User.is_active == True)
+        .order_by(models.User.name.asc())
+        .all()
+    )
     return users
 
 
 @router.get("/users/public", response_model=List[schemas.PublicUserOut])
-def get_public_users(db: Session = Depends(get_db)):
+@limiter.limit("60/minute")
+def get_public_users(request: Request, db: Session = Depends(get_db)):
+    """Экран входа: активные имена (без токена). Ограничение по IP."""
     users = (
         db.query(models.User)
         .filter(models.User.is_active == True)

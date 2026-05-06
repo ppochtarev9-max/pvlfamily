@@ -12,7 +12,7 @@ os.environ.setdefault("ADMIN_NAME", "Паша")
 os.environ.setdefault("ADMIN_INITIAL_PASSWORD", "Temporary123")
 
 from app.main import app
-from app import auth, budget, tracker
+from app import rate_limit, models as app_models
 
 # Создаем временный файл для БД в системе (избегаем проблем с правами)
 db_fd, db_path = tempfile.mkstemp(suffix=".db")
@@ -32,14 +32,10 @@ app.dependency_overrides[get_db] = override_get_db
 
 @pytest.fixture(scope="session", autouse=True)
 def disable_rate_limits_for_tests():
-    auth.limiter.enabled = False
-    budget.limiter.enabled = False
-    tracker.limiter.enabled = False
+    rate_limit.limiter.enabled = False
     app.state.limiter.enabled = False
     yield
-    auth.limiter.enabled = True
-    budget.limiter.enabled = True
-    tracker.limiter.enabled = True
+    rate_limit.limiter.enabled = True
     app.state.limiter.enabled = True
 
 @pytest.fixture(scope="function", autouse=True)
@@ -54,6 +50,23 @@ def setup_database():
 def client():
     with TestClient(app) as c:
         yield c
+
+@pytest.fixture
+def make_user_admin_token(client, test_user):
+    """Повышение TestUser до админа в тестовой БД и новый Bearer."""
+    db = TestingSessionLocal()
+    try:
+        usr = db.query(app_models.User).filter(app_models.User.name == test_user["name"]).first()
+        assert usr is not None
+        usr.is_admin = True
+        db.commit()
+    finally:
+        db.close()
+
+    lg = client.post("/auth/login", json={"name": test_user["name"], "password": test_user["password"]})
+    assert lg.status_code == 200
+    return lg.json()["access_token"]
+
 
 @pytest.fixture
 def test_user(client):

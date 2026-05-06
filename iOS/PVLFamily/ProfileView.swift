@@ -15,18 +15,9 @@ struct ProfileView: View {
     @State private var isLoadingCategories = false
     @State private var categoryLoadError: String?
     
-    var currentUserId: Int? {
-        if let name = authManager.userName,
-           let user = authManager.users.first(where: { $0["name"] as? String == name }) {
-            return user["id"] as? Int
-        }
-        return nil
-    }
+    private var currentUserId: Int? { authManager.userId }
 
-    var isCurrentUserAdmin: Bool {
-        guard let uid = authManager.userId else { return false }
-        return authManager.users.first(where: { ($0["id"] as? Int) == uid })?["is_admin"] as? Bool ?? false
-    }
+    private var isCurrentUserAdmin: Bool { authManager.isAdmin }
 
     var body: some View {
         NavigationStack {
@@ -186,7 +177,9 @@ struct ProfileView: View {
                 Text("Вы уверены? Это действие нельзя отменить.")
             }
             .onAppear {
-                authManager.loadUsers()
+                if authManager.isLoggedIn {
+                    authManager.loadUsers()
+                }
             }
         }
     }

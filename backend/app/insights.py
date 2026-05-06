@@ -1,9 +1,10 @@
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Request
 import logging
 
 from . import models, schemas
 from .auth import get_current_user
 from .insights_service import InsightsService
+from .rate_limit import limiter
 
 router = APIRouter()
 service = InsightsService()
@@ -11,7 +12,9 @@ logger = logging.getLogger("PVLFamily.Insights")
 
 
 @router.post("/budget", response_model=schemas.InsightResponse)
+@limiter.limit("15/minute")
 def budget_insight(
+    request: Request,
     req: schemas.InsightRequest,
     current_user: models.User = Depends(get_current_user),
 ):
@@ -38,7 +41,9 @@ def budget_insight(
 
 
 @router.post("/tracker", response_model=schemas.InsightResponse)
+@limiter.limit("15/minute")
 def tracker_insight(
+    request: Request,
     req: schemas.InsightRequest,
     current_user: models.User = Depends(get_current_user),
 ):

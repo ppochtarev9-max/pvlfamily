@@ -22,12 +22,22 @@ class AdminUserCreate(BaseModel):
 class PasswordChangeRequest(BaseModel):
     new_password: str
 
+class SessionUserOut(BaseModel):
+    """Краткая карточка текущего пользователя (после логина / для восстановления сессии)."""
+
+    user_id: int
+    name: str
+    is_admin: bool
+    model_config = ConfigDict(from_attributes=True)
+
+
 class LoginResponse(BaseModel):
     access_token: str
     token_type: str
     user_id: int
     name: str
     force_password_reset: bool = False
+    is_admin: bool = False
 
 class UserOut(UserBase):
     id: int

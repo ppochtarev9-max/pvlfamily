@@ -15,10 +15,8 @@ from .database import get_db
 from .models import User
 
 from fastapi import Request
-from slowapi import Limiter
-from slowapi.util import get_remote_address
+from .rate_limit import limiter
 
-limiter = Limiter(key_func=get_remote_address)
 router = APIRouter()
 
 # ==========================================
@@ -487,8 +485,11 @@ def export_budget_excel(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
-    query = db.query(models.Transaction).filter(models.Transaction.created_by_user_id == current_user.id)
-    
+    _ = current_user
+    query = db.query(models.Transaction).options(
+        joinedload(models.Transaction.category).joinedload(models.Category.group),
+    )
+
     if start_date:
         try:
             sd = datetime.fromisoformat(start_date.replace('Z', '+00:00'))

@@ -330,6 +330,7 @@ struct TrackerView: View {
                     }, onError: { err in errorMessage = err; showErrorAlert = true })
                 } else {
                     TrackerFormView(isPresented: $showingAddSheet, existingLog: selectedLog, onSave: saveLog, onDelete: deleteLog)
+                        .id(selectedLog?.id ?? -1)
                 }
             }
             .alert("Ошибка", isPresented: $showErrorAlert) {

@@ -231,23 +231,24 @@ def make_tx_resp(t, current_balance=None):
         group_name = t.category.group.name if t.category.group else "Без категории"
         path = f"{group_name} / {sub_name}"
     
-    date_str = t.date.strftime("%Y-%m-%dT%H:%M:%S") if isinstance(t.date, datetime) else str(t.date)
-    
     creator_display_name = "Неизвестно"
     if t.creator_name_snapshot:
         creator_display_name = t.creator_name_snapshot
     elif t.creator:
         creator_display_name = t.creator.name
     
+    tx_date = t.date
+    if not isinstance(tx_date, datetime):
+        tx_date = datetime.fromisoformat(str(tx_date).replace("Z", "+00:00"))
     resp = schemas.TransactionOut(
-        id=t.id, 
-        amount=t.amount, 
+        id=t.id,
+        amount=t.amount,
         transaction_type=t.transaction_type,
-        category_id=t.category_id, 
+        category_id=t.category_id,
         description=t.description,
-        date=date_str,
+        date=tx_date,
         creator_name=creator_display_name,
-        full_category_path=path
+        full_category_path=path,
     )
     if current_balance is not None:
         resp.balance = current_balance

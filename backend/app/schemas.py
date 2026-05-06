@@ -1,6 +1,8 @@
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, field_serializer
 from typing import Optional, List
 from datetime import datetime
+
+from .api_datetime import format_db_datetime_as_utc_z
 
 # --- User Schemas ---
 class UserBase(BaseModel):
@@ -120,6 +122,10 @@ class TransactionOut(TransactionBase):
     creator_name: Optional[str] = None
     model_config = ConfigDict(from_attributes=True)
 
+    @field_serializer("date")
+    def serialize_transaction_date(self, v: datetime) -> str:
+        return format_db_datetime_as_utc_z(v)
+
 
 class TransactionPageOut(BaseModel):
     items: List[TransactionOut]
@@ -142,6 +148,10 @@ class EventResponse(EventBase):
     creator_name: Optional[str] = None
     model_config = ConfigDict(from_attributes=True)
 
+    @field_serializer("event_date")
+    def serialize_event_date(self, v: datetime) -> str:
+        return format_db_datetime_as_utc_z(v)
+
 class BabyLogBase(BaseModel):
     event_type: str
     start_time: datetime
@@ -152,6 +162,7 @@ class BabyLogCreate(BabyLogBase):
     pass
 
 class BabyLogUpdate(BaseModel):
+    start_time: Optional[datetime] = None
     end_time: Optional[datetime] = None
     note: Optional[str] = None
     duration_minutes: Optional[int] = None
@@ -164,6 +175,10 @@ class BabyLogOut(BabyLogBase):
     creator_name: Optional[str] = None
     is_active: bool = False    
     model_config = ConfigDict(from_attributes=True)
+
+    @field_serializer("start_time", "end_time", "created_at")
+    def serialize_baby_log_datetimes(self, v: Optional[datetime]) -> Optional[str]:
+        return format_db_datetime_as_utc_z(v)
 
 
 class BabyLogPageOut(BaseModel):

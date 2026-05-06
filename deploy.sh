@@ -172,10 +172,11 @@ else
 fi
 
 # 3. Обновление на сервере
+REMOTE_CODE_DIR="${REMOTE_APP_ROOT:-$REMOTE_APP_DIR}"
 echo "☁️ 3. Обновление кода на сервере $REMOTE_IP..."
 ssh -i "$REMOTE_SSH_KEY" "$REMOTE_USER@$REMOTE_IP" << ENDSSH
 set -e
-cd $REMOTE_APP_ROOT
+cd $REMOTE_CODE_DIR
 git pull origin main
 
 SERVER_VENV=""

@@ -4,24 +4,78 @@ struct TrackerFormView: View {
     @EnvironmentObject var authManager: AuthManager
     @Binding var isPresented: Bool
     
-    // Входные данные
     let existingLog: TrackerView.BabyLog?
     let onSave: (String, Date, Date?, String) -> Void
     let onDelete: (Int) -> Void
     
-    // Состояния данных
-    @State private var selectedType: String = "sleep"
-    @State private var startTime: Date = Date()
-    @State private var endTime: Date? = nil
-    @State private var isOngoing: Bool = true
-    @State private var note: String = ""
+    @State private var selectedType: String
+    @State private var startTime: Date
+    @State private var endTime: Date?
+    @State private var isOngoing: Bool
+    @State private var note: String
     
-    // Состояния UI
     @State private var isSaving = false
     @State private var errorMessage: String?
     @State private var showErrorAlert = false
     
-    // Доступные типы событий
+    init(
+        isPresented: Binding<Bool>,
+        existingLog: TrackerView.BabyLog?,
+        onSave: @escaping (String, Date, Date?, String) -> Void,
+        onDelete: @escaping (Int) -> Void
+    ) {
+        self._isPresented = isPresented
+        self.existingLog = existingLog
+        self.onSave = onSave
+        self.onDelete = onDelete
+        let s = Self.snapshot(from: existingLog)
+        _selectedType = State(initialValue: s.selectedType)
+        _startTime = State(initialValue: s.startTime)
+        _endTime = State(initialValue: s.endTime)
+        _isOngoing = State(initialValue: s.isOngoing)
+        _note = State(initialValue: s.note)
+    }
+    
+    private struct FormSnapshot {
+        let selectedType: String
+        let startTime: Date
+        let endTime: Date?
+        let isOngoing: Bool
+        let note: String
+    }
+    
+    /// Снимок состояния из лога или дефолт для новой записи (`PVLDateParsing` — те же строки API, что в списке).
+    private static func snapshot(from log: TrackerView.BabyLog?) -> FormSnapshot {
+        guard let log else {
+            return FormSnapshot(selectedType: "sleep", startTime: Date(), endTime: nil, isOngoing: true, note: "")
+        }
+        let noteStr = log.note ?? ""
+        let parsedStart = PVLDateParsing.parse(log.start_time)
+        
+        switch log.event_type {
+        case "feed":
+            let instant: Date
+            if let endStr = log.end_time, let e = PVLDateParsing.parse(endStr) {
+                instant = e
+            } else if let s = parsedStart {
+                instant = s
+            } else {
+                instant = Date()
+            }
+            return FormSnapshot(selectedType: log.event_type, startTime: instant, endTime: instant, isOngoing: false, note: noteStr)
+            
+        default:
+            let start = parsedStart ?? Date()
+            if let endStr = log.end_time {
+                if let end = PVLDateParsing.parse(endStr) {
+                    return FormSnapshot(selectedType: log.event_type, startTime: start, endTime: end, isOngoing: false, note: noteStr)
+                }
+                return FormSnapshot(selectedType: log.event_type, startTime: start, endTime: start, isOngoing: false, note: noteStr)
+            }
+            return FormSnapshot(selectedType: log.event_type, startTime: start, endTime: nil, isOngoing: true, note: noteStr)
+        }
+    }
+    
     let types: [(id: String, name: String, icon: String)] = [
         ("sleep", "Сон", "moon.fill"),
         ("feed", "Кормление", "drop.fill")
@@ -30,18 +84,16 @@ struct TrackerFormView: View {
     var body: some View {
         NavigationStack {
             Form {
-                // 1. Выбор типа события
                 Section("Тип события") {
                     LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 12) {
                         ForEach(types, id: \.id) { type in
                             Button(action: {
-                                // Если меняем тип, сбрасываем логику "идет/не идет" для нового типа
                                 if selectedType != type.id {
                                     if type.id == "feed" {
-                                        isOngoing = false // Кормление всегда завершено
+                                        isOngoing = false
                                         endTime = Date()
                                     } else {
-                                        isOngoing = (existingLog?.end_time == nil) // Для сна смотрим исходное состояние
+                                        isOngoing = (existingLog?.end_time == nil)
                                     }
                                 }
                                 selectedType = type.id
@@ -60,33 +112,30 @@ struct TrackerFormView: View {
                                 .background(selectedType == type.id ? FamilyAppStyle.accent : Color(.secondarySystemFill))
                                 .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
                             }
-                            .disabled(isSaving || (existingLog != nil)) // Нельзя менять тип при редактировании существующего
+                            .disabled(isSaving || (existingLog != nil))
                         }
                     }
                     .buttonStyle(PlainButtonStyle())
                 }
                 
-                // 2. Настройки времени
                 Section("Время") {
                     DatePicker("Начало", selection: $startTime, displayedComponents: [.date, .hourAndMinute])
                         .disabled(isSaving)
                     
-                    // Показываем тумблер ТОЛЬКО для сна
                     if selectedType == "sleep" {
                         Toggle("Событие еще идет", isOn: $isOngoing)
                             .disabled(isSaving)
                         
                         if !isOngoing {
                             DatePicker("Окончание", selection: Binding(
-                                get: { endTime ?? Date() },
+                                get: { endTime ?? startTime },
                                 set: { endTime = $0; isOngoing = false }
                             ), displayedComponents: [.date, .hourAndMinute])
                             .disabled(isSaving)
                         }
                     } else {
-                        // Для кормлений всегда показываем время окончания (оно же начало)
                         DatePicker("Время", selection: Binding(
-                            get: { startTime }, // Для простоты кормление = старт
+                            get: { startTime },
                             set: { startTime = $0; endTime = $0 }
                         ), displayedComponents: [.date, .hourAndMinute])
                         .disabled(isSaving)
@@ -96,13 +145,11 @@ struct TrackerFormView: View {
                     }
                 }
                 
-                // 3. Заметка
                 Section("Заметка") {
                     TextField("Например: плохо засыпал", text: $note)
                         .disabled(isSaving)
                 }
                 
-                // 4. Удаление (только для существующих)
                 if let log = existingLog {
                     Section {
                         Button(role: .destructive, action: {
@@ -124,7 +171,6 @@ struct TrackerFormView: View {
                     }
                 }
                 
-                // 5. Кнопка сохранения
                 Section {
                     Button(action: submit) {
                         HStack {
@@ -156,74 +202,26 @@ struct TrackerFormView: View {
             } message: {
                 Text(errorMessage ?? "Неизвестная ошибка")
             }
-            .onAppear {
-                loadDataFromLog()
-            }
+            .onAppear { applySnapshot(from: existingLog) }
+            .onChange(of: existingLog?.id) { _, _ in applySnapshot(from: existingLog) }
         }
     }
     
-    // --- ЛОГИКА ---
-    
     var formTitle: String {
-        if let log = existingLog {
+        if existingLog != nil {
             return selectedType == "sleep" ? "Редактирование сна" : "Редактирование кормления"
         } else {
             return selectedType == "sleep" ? "Новый сон" : "Новое кормление"
         }
     }
     
-    func loadDataFromLog() {
-        guard let log = existingLog else {
-            // Новый элемент: сброс по умолчанию
-            selectedType = "sleep"
-            startTime = Date()
-            endTime = nil
-            isOngoing = true
-            note = ""
-            return
-        }
-        
-        // Загрузка существующего
-        selectedType = log.event_type
-        note = log.note ?? ""
-        
-        let iso = ISO8601DateFormatter()
-        iso.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
-        
-        // Парсим время начала
-        if let start = iso.date(from: log.start_time) {
-            startTime = start
-        } else {
-            // Пробуем без миллисекунд, если формат другой
-            iso.formatOptions = [.withInternetDateTime]
-            if let start = iso.date(from: log.start_time) {
-                startTime = start
-            }
-        }
-        
-        // ПАРСИМ ВРЕМЯ ОКОНЧАНИЯ И СТАВИМ ФЛАГ
-        if let endStr = log.end_time {
-            // Есть время окончания -> событие ЗАВЕРШЕНО
-            var endDate: Date? = nil
-            if let end = iso.date(from: endStr) {
-                endDate = end
-            } else {
-                iso.formatOptions = [.withInternetDateTime]
-                endDate = iso.date(from: endStr)
-            }
-            
-            endTime = endDate ?? Date()
-            isOngoing = false // <-- ГЛАВНОЕ ИСПРАВЛЕНИЕ: явно выключаем
-        } else {
-            // Нет времени окончания -> событие ИДЕТ
-            endTime = nil
-            isOngoing = true
-        }
-        
-        // Защита: если это кормление, оно не может быть "ongoing" в нашем понимании длинного процесса
-        if selectedType == "feed" {
-            isOngoing = false
-        }
+    private func applySnapshot(from log: TrackerView.BabyLog?) {
+        let s = Self.snapshot(from: log)
+        selectedType = s.selectedType
+        startTime = s.startTime
+        endTime = s.endTime
+        isOngoing = s.isOngoing
+        note = s.note
     }
     
     func submit() {
@@ -235,17 +233,13 @@ struct TrackerFormView: View {
         
         isSaving = true
         
-        // Определяем финальное время окончания
         var finalEndTime: Date? = nil
         
         if selectedType == "feed" {
-            // Кормление всегда мгновенное
             finalEndTime = startTime
         } else {
-            // Сон
             if !isOngoing {
                 finalEndTime = endTime ?? Date()
-                // Проверка: конец не раньше начала
                 if finalEndTime! < startTime {
                     errorMessage = "Время окончания не может быть раньше начала"
                     showErrorAlert = true
@@ -253,7 +247,6 @@ struct TrackerFormView: View {
                     return
                 }
             }
-            // Если isOngoing == true, finalEndTime останется nil
         }
         
         onSave(selectedType, startTime, finalEndTime, note)

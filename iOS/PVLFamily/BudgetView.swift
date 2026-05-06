@@ -392,18 +392,37 @@ struct BudgetView: View {
                     }
                 )
             }
+            // Создание новой операции
             .sheet(isPresented: $showingAddSheet) {
                 TransactionFormView(
                     isPresented: $showingAddSheet,
-                    categoryGroups: categoryGroups,          // Обновлено
-                    transactionToEdit: editingTransactionId != nil ? editingTransaction : nil,
+                    categoryGroups: categoryGroups,
+                    transactionToEdit: nil,
                     onSave: { id, amount, type, catId, desc, date in
                         let finalCategoryId = catId ?? 17
                         saveTransaction(id: id, amount: amount, type: type, categoryId: finalCategoryId, description: desc, date: date)
                     },
                     onDelete: deleteTransaction
                 )
-                .id(editingTransactionId ?? -1)
+            }
+            // Редактирование существующей операции (устойчиво: без бага "открылось как новая")
+            .sheet(item: $editingTransaction) { tx in
+                TransactionFormView(
+                    isPresented: Binding(
+                        get: { true },
+                        set: { newValue in
+                            if !newValue { editingTransaction = nil }
+                        }
+                    ),
+                    categoryGroups: categoryGroups,
+                    transactionToEdit: tx,
+                    onSave: { id, amount, type, catId, desc, date in
+                        let finalCategoryId = catId ?? 17
+                        saveTransaction(id: id, amount: amount, type: type, categoryId: finalCategoryId, description: desc, date: date)
+                    },
+                    onDelete: deleteTransaction
+                )
+                .id(tx.id)
             }
             .alert("Ошибка", isPresented: $showErrorAlert) {
                 Button("OK", role: .cancel) { }
@@ -442,7 +461,6 @@ struct BudgetView: View {
     }
     
     @State private var showingAddSheet = false
-    @State private var editingTransactionId: Int? = nil
     @State private var editingTransaction: Transaction? = nil
     
     func colorForType(_ type: String) -> Color {
@@ -696,15 +714,12 @@ struct BudgetView: View {
     }
     
     func startNewTransaction() {
-        editingTransactionId = nil
         editingTransaction = nil
         showingAddSheet = true
     }
 
     func editTransaction(_ t: Transaction) {
-        editingTransactionId = t.id
         editingTransaction = t
-        showingAddSheet = true
     }
     
     func saveTransaction(id: Int?, amount: Double, type: String, categoryId: Int, description: String, date: Date) {
@@ -755,7 +770,7 @@ struct BudgetView: View {
                     return
                 }
                 showingAddSheet = false
-                editingTransactionId = nil
+                editingTransaction = nil
                 loadTransactions()
                 loadBalance()
             }

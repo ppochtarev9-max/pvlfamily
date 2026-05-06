@@ -22,6 +22,9 @@ backups/
 # CSV-история импорта (локальные данные)
 backend/history.csv
 
+# Локальные файлы импорта сна (xlsx)
+backend/sleep.xlsx
+
 # Editors
 .vscode/
 .idea/

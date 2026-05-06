@@ -532,6 +532,14 @@ struct LogCard: View {
             }
 
             Spacer()
+
+            if let durationText {
+                VStack(alignment: .trailing, spacing: 2) {
+                    Text(durationText)
+                        .font(.system(size: 15, weight: .semibold))
+                        .foregroundStyle(durationTint)
+                }
+            }
         }
         .frame(maxWidth: .infinity, minHeight: 64, alignment: .center)
         .padding(.vertical, 10)
@@ -570,10 +578,17 @@ struct LogCard: View {
         } else {
             end = log.is_active ? "сейчас" : "—"
         }
-        if let dur = log.duration_minutes, dur > 0 {
-            return "\(start) — \(end) · \(dur) мин"
-        }
         return "\(start) — \(end)"
+    }
+
+    private var durationText: String? {
+        guard log.event_type == "sleep" else { return nil }
+        guard let dur = log.duration_minutes, dur > 0 else { return nil }
+        return AnalyticsFormatters.sleepDuration(dur)
+    }
+
+    private var durationTint: Color {
+        FamilyAppStyle.accent
     }
 }
 struct QuickActionHandler: View {

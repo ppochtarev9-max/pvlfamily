@@ -31,24 +31,83 @@ def detect_encoding(path: str) -> str:
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Импорт истории транзакций из CSV в новую модель groups/subcategories.")
     parser.add_argument("--user", default=DEFAULT_USER_NAME, help="Имя пользователя, от имени которого создаются транзакции.")
+    parser.add_argument("--user-id", type=int, default=None, help="ID пользователя (если нужно выбрать не по имени).")
     parser.add_argument("--csv", default=DEFAULT_CSV_FILE, help="Путь к CSV-файлу истории.")
     parser.add_argument("--dry-run", action="store_true", help="Проверка без записи в БД.")
     parser.add_argument(
+        "--wipe-transactions",
+        action="store_true",
+        help="Удалить существующие транзакции выбранного пользователя перед импортом.",
+    )
+    parser.add_argument(
+        "--wipe-all-budget",
+        action="store_true",
+        help="Удалить транзакции пользователя и очистить сиротские категории/группы (чтобы не оставался мусор).",
+    )
+    # Backward compatibility (старые флаги)
+    parser.add_argument(
         "--replace-user-transactions",
         action="store_true",
-        help="Удалить существующие транзакции пользователя перед импортом.",
+        help=argparse.SUPPRESS,
     )
     parser.add_argument(
         "--wipe-all-transactions",
         action="store_true",
-        help="ОПАСНО: удалить ВСЕ транзакции ВСЕХ пользователей перед импортом (требует --yes, если не dry-run).",
+        help=argparse.SUPPRESS,
     )
     parser.add_argument(
         "--yes",
         action="store_true",
-        help="Подтверждение опасных операций (нужно для --wipe-all-transactions в режиме записи).",
+        help="Подтверждение опасных операций wipe (нужно в режиме записи).",
     )
     return parser.parse_args()
+
+
+def _get_user(db, models, user_name: str, user_id: int | None):
+    if user_id is not None:
+        return db.query(models.User).filter(models.User.id == user_id).first()
+    return db.query(models.User).filter(models.User.name == user_name).first()
+
+
+def _wipe_user_transactions(db, models, user_id: int, dry_run: bool) -> int:
+    q = db.query(models.Transaction).filter(models.Transaction.created_by_user_id == user_id)
+    n = q.count()
+    print(f"🧹 Удаление транзакций пользователя: {n}")
+    if n and (not dry_run):
+        q.delete(synchronize_session=False)
+        db.commit()
+    return n
+
+
+def _cleanup_orphan_budget_entities(db, models, dry_run: bool) -> tuple[int, int]:
+    """
+    Удаляет:
+    - Category без транзакций
+    - CategoryGroup без подкатегорий
+
+    Это безопасно при многопользовательской БД: удаляются только «сироты».
+    """
+    orphan_categories_q = db.query(models.Category).filter(
+        ~db.query(models.Transaction.id).filter(models.Transaction.category_id == models.Category.id).exists()
+    )
+    orphan_categories = orphan_categories_q.count()
+
+    orphan_groups_q = db.query(models.CategoryGroup).filter(
+        ~db.query(models.Category.id).filter(models.Category.group_id == models.CategoryGroup.id).exists()
+    )
+    orphan_groups = orphan_groups_q.count()
+
+    print(f"🧹 Сиротских подкатегорий (Category) к удалению: {orphan_categories}")
+    print(f"🧹 Сиротских групп (CategoryGroup) к удалению: {orphan_groups}")
+
+    if not dry_run:
+        if orphan_categories:
+            orphan_categories_q.delete(synchronize_session=False)
+        if orphan_groups:
+            orphan_groups_q.delete(synchronize_session=False)
+        db.commit()
+
+    return orphan_categories, orphan_groups
 
 
 def main() -> None:
@@ -68,33 +127,32 @@ def main() -> None:
 
     db = SessionLocal()
     try:
-        user = db.query(models.User).filter(models.User.name == args.user).first()
+        # Legacy-флаги → новые (чтобы старые инструкции/алиасы не ломались).
+        if getattr(args, "replace_user_transactions", False):
+            args.wipe_transactions = True
+        if getattr(args, "wipe_all_transactions", False):
+            args.wipe_all_budget = True
+
+        user = _get_user(db, models, user_name=args.user, user_id=args.user_id)
         if not user:
-            print(f"❌ Пользователь '{args.user}' не найден")
+            who = f"id={args.user_id}" if args.user_id is not None else f"'{args.user}'"
+            print(f"❌ Пользователь {who} не найден")
             return
 
-        if args.wipe_all_transactions and args.replace_user_transactions:
-            print("❌ Нельзя одновременно использовать --wipe-all-transactions и --replace-user-transactions")
+        if args.wipe_all_budget and args.wipe_transactions:
+            print("❌ Нельзя одновременно использовать --wipe-all-budget и --wipe-transactions (wipe-all-budget уже включает wipe-transactions)")
             return
 
-        if args.wipe_all_transactions and (not args.dry_run) and (not args.yes):
-            print("❌ Для удаления ВСЕХ транзакций нужен флаг подтверждения --yes")
-            print("   Пример: python import_history.py --wipe-all-transactions --yes")
+        if (args.wipe_all_budget or args.wipe_transactions) and (not args.dry_run) and (not args.yes):
+            print("❌ Для операций wipe в режиме записи нужен флаг подтверждения --yes")
+            print("   Пример: python import_history.py --wipe-all-budget --yes")
             return
 
-        if args.wipe_all_transactions:
-            total_tx = db.query(models.Transaction).count()
-            print(f"🧨 Удаление ВСЕХ транзакций в БД: {total_tx}")
-            if not args.dry_run:
-                db.query(models.Transaction).delete(synchronize_session=False)
-                db.commit()
-
-        if args.replace_user_transactions:
-            n = db.query(models.Transaction).filter(models.Transaction.created_by_user_id == user.id).count()
-            print(f"🧹 Удаление существующих транзакций пользователя: {n}")
-            db.query(models.Transaction).filter(models.Transaction.created_by_user_id == user.id).delete(synchronize_session=False)
-            if not args.dry_run:
-                db.commit()
+        if args.wipe_all_budget:
+            _wipe_user_transactions(db, models, user.id, dry_run=args.dry_run)
+            _cleanup_orphan_budget_entities(db, models, dry_run=args.dry_run)
+        elif args.wipe_transactions:
+            _wipe_user_transactions(db, models, user.id, dry_run=args.dry_run)
 
         enc = detect_encoding(args.csv)
         print(f"📂 Чтение CSV (кодировка: {enc})...")

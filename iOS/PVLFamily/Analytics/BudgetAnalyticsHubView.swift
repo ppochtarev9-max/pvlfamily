@@ -38,6 +38,12 @@ struct BudgetAnalyticsHubView: View {
             } else {
                 List {
                     Section {
+                        monthSwitcher
+                    }
+                    .listRowInsets(EdgeInsets(top: 6, leading: 16, bottom: 2, trailing: 16))
+                    .listRowBackground(Color.clear)
+
+                    Section {
                         snapshotBlock
                     }
                     .listRowInsets(EdgeInsets(top: 12, leading: 16, bottom: 12, trailing: 16))
@@ -144,12 +150,6 @@ struct BudgetAnalyticsHubView: View {
 
     private var snapshotBlock: some View {
         VStack(alignment: .leading, spacing: 12) {
-            Text("Сводка")
-                .font(.system(size: 13, weight: .semibold))
-                .foregroundStyle(FamilyAppStyle.captionMuted)
-
-            monthSwitcher
-
             if let m = monthStats {
                 snapshotCard(
                     title: monthTitle(m),
@@ -184,9 +184,8 @@ struct BudgetAnalyticsHubView: View {
             }
             .buttonStyle(.borderless)
             .disabled(isAtCurrentMonth)
-
-            Spacer()
         }
+        .frame(maxWidth: .infinity, alignment: .center)
     }
 
     private var aiInsightPanel: some View {

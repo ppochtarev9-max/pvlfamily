@@ -2,27 +2,6 @@ import SwiftUI
 import Foundation
 import Charts
 
-private enum TrackerReportDateFormatters {
-    static let isoDay: DateFormatter = {
-        let f = DateFormatter()
-        f.dateFormat = "yyyy-MM-dd"
-        f.locale = Locale(identifier: "en_US_POSIX")
-        return f
-    }()
-
-    static let dayLabelRU: DateFormatter = {
-        let f = DateFormatter()
-        f.dateFormat = "dd.MM"
-        f.locale = Locale(identifier: "ru_RU")
-        return f
-    }()
-
-    static func dayLabel(from iso: String) -> String {
-        guard let d = isoDay.date(from: iso) else { return iso }
-        return dayLabelRU.string(from: d)
-    }
-}
-
 // MARK: - Сон vs Бодрствование (по дням)
 
 struct TrackerSleepWakeDailyReportView: View {
@@ -31,19 +10,7 @@ struct TrackerSleepWakeDailyReportView: View {
     @State private var isLoading = true
     @State private var error: String?
     @State private var windowDays: Int = 30
-    
-    private static let isoDateFormatter: DateFormatter = {
-        let f = DateFormatter()
-        f.dateFormat = "yyyy-MM-dd"
-        f.locale = Locale(identifier: "en_US_POSIX")
-        return f
-    }()
-    private static let dayLabelFormatterRU: DateFormatter = {
-        let f = DateFormatter()
-        f.dateFormat = "dd.MM"
-        f.locale = Locale(identifier: "ru_RU")
-        return f
-    }()
+    @State private var selectedDayLabel: String?
 
     var body: some View {
         Group {
@@ -53,6 +20,7 @@ struct TrackerSleepWakeDailyReportView: View {
                 let points = Self.lastDays(s.daily_breakdown, count: windowDays)
                 let kpi = Self.kpi(from: points)
                 let chartPoints = Self.toSeriesPoints(points)
+                let groupedByDay = Dictionary(grouping: chartPoints, by: \.dateLabel)
                 reportScroll {
                     VStack(alignment: .leading, spacing: 16) {
                         Picker("Окно", selection: $windowDays) {
@@ -81,12 +49,42 @@ struct TrackerSleepWakeDailyReportView: View {
                                     .symbol(p.series == "Бодрствование" ? .square : .circle)
                                     .symbolSize(p.series == "Бодрствование" ? 38 : 30)
                                 }
+                                if let selectedDayLabel, let rows = groupedByDay[selectedDayLabel] {
+                                    RuleMark(x: .value("Дата", selectedDayLabel))
+                                        .foregroundStyle(.secondary.opacity(0.35))
+                                        .annotation(position: .top, alignment: .leading) {
+                                            TrackerChartCallout(
+                                                title: selectedDayLabel,
+                                                rows: rows
+                                                    .sorted { $0.series < $1.series }
+                                                    .map { ($0.series, AnalyticsFormatters.sleepDurationWithMinutesHint($0.minutes)) }
+                                            )
+                                        }
+                                }
                             }
                             .chartForegroundStyleScale([
                                 "Сон": FamilyAppStyle.accent,
                                 "Бодрствование": FamilyAppStyle.expenseCoral
                             ])
                             .chartLegend(position: .bottom, alignment: .leading)
+                            .chartXSelection(value: $selectedDayLabel)
+                            .chartOverlay { proxy in
+                                GeometryReader { geo in
+                                    Rectangle()
+                                        .fill(.clear)
+                                        .contentShape(Rectangle())
+                                        .gesture(
+                                            DragGesture(minimumDistance: 0)
+                                                .onChanged { value in
+                                                    let origin = geo[proxy.plotAreaFrame].origin
+                                                    let x = value.location.x - origin.x
+                                                    if let label: String = proxy.value(atX: x) {
+                                                        selectedDayLabel = label
+                                                    }
+                                                }
+                                        )
+                                }
+                            }
                             .frame(height: 240)
                         }
 
@@ -126,12 +124,7 @@ struct TrackerSleepWakeDailyReportView: View {
         var out: [ChartPoint] = []
         out.reserveCapacity(days.count * 2)
         for d in days {
-            let dateLabel: String
-            if let date = isoDateFormatter.date(from: d.date) {
-                dateLabel = dayLabelFormatterRU.string(from: date)
-            } else {
-                dateLabel = d.date
-            }
+            let dateLabel = AnalyticsFormatters.dayLabelDDMM(fromISO: d.date)
             let sleep = max(0, d.sleep_minutes)
             let wake = max(0, 1440 - sleep)
             out.append(.init(dateLabel: dateLabel, series: "Сон", minutes: sleep))
@@ -217,6 +210,7 @@ struct TrackerSleepWake7v7ReportView: View {
     @State private var stats: TrackerStats?
     @State private var isLoading = true
     @State private var error: String?
+    @State private var selectedPeriod: String?
 
     var body: some View {
         Group {
@@ -228,6 +222,7 @@ struct TrackerSleepWake7v7ReportView: View {
                 let prev7 = Array(last14.prefix(7))
                 let cur7 = Array(last14.suffix(7))
                 let cmp = compare(prev: prev7, cur: cur7)
+                let grouped = Dictionary(grouping: cmp.bars, by: \.period)
                 reportScroll {
                     VStack(alignment: .leading, spacing: 16) {
                         Text("Сравнение средних значений за последние 7 дней и предыдущие 7 дней.")
@@ -237,18 +232,51 @@ struct TrackerSleepWake7v7ReportView: View {
                         kpiBlock(cmp: cmp)
 
                         if #available(iOS 17.0, *) {
-                            Chart(cmp.bars, id: \.id) { b in
-                                BarMark(
-                                    x: .value("Период", b.period),
-                                    y: .value("Минуты", b.minutes)
-                                )
-                                .foregroundStyle(by: .value("Метрика", b.metric))
-                                .cornerRadius(4)
+                            Chart {
+                                ForEach(cmp.bars, id: \.id) { b in
+                                    BarMark(
+                                        x: .value("Период", b.period),
+                                        y: .value("Минуты", b.minutes)
+                                    )
+                                    .foregroundStyle(by: .value("Метрика", b.metric))
+                                    .cornerRadius(4)
+                                }
+                                if let selectedPeriod, let rows = grouped[selectedPeriod] {
+                                    RuleMark(x: .value("Период", selectedPeriod))
+                                        .foregroundStyle(.secondary.opacity(0.35))
+                                        .annotation(position: .top, alignment: .leading) {
+                                            TrackerChartCallout(
+                                                title: selectedPeriod,
+                                                rows: rows
+                                                    .sorted { $0.metric < $1.metric }
+                                                    .map { ($0.metric, AnalyticsFormatters.sleepDurationWithMinutesHint($0.minutes)) }
+                                            )
+                                        }
+                                }
                             }
                             .chartForegroundStyleScale([
                                 "Сон": FamilyAppStyle.accent,
                                 "Бодрствование": FamilyAppStyle.captionMuted
                             ])
+                            .chartXSelection(value: $selectedPeriod)
+                            .chartOverlay { proxy in
+                                GeometryReader { geo in
+                                    Rectangle()
+                                        .fill(.clear)
+                                        .contentShape(Rectangle())
+                                        .gesture(
+                                            DragGesture(minimumDistance: 0)
+                                                .onChanged { value in
+                                                    let origin = geo[proxy.plotAreaFrame].origin
+                                                    let x = value.location.x - origin.x
+                                                    if let label: String = proxy.value(atX: x) {
+                                                        selectedPeriod = label
+                                                    }
+                                                }
+                                        )
+                                }
+                            }
+                            .chartLegend(position: .bottom, alignment: .leading)
                             .frame(height: 220)
                         }
 
@@ -386,6 +414,7 @@ struct TrackerCompareWeeksReportView: View {
     @State private var isLoading = true
     @State private var error: String?
     @State private var weeks: Int = 2
+    @State private var selectedWeekLabel: String?
 
     var body: some View {
         Group {
@@ -421,12 +450,44 @@ struct TrackerCompareWeeksReportView: View {
                     weekColumn(title: "Позже", minutes: parts.1, days: weeks * 7)
                 }
                 if #available(iOS 17.0, *) {
-                    Chart(weekBars(parts: parts), id: \.label) { item in
-                        BarMark(
-                            x: .value("Неделя", item.label),
-                            y: .value("Минуты", item.minutes)
-                        )
-                        .foregroundStyle(FamilyAppStyle.accent.gradient)
+                    let bars = weekBars(parts: parts)
+                    Chart {
+                        ForEach(bars, id: \.label) { item in
+                            BarMark(
+                                x: .value("Неделя", item.label),
+                                y: .value("Минуты", item.minutes)
+                            )
+                            .foregroundStyle(FamilyAppStyle.accent.gradient)
+                            .cornerRadius(4)
+                        }
+                        if let selectedWeekLabel, let chosen = bars.first(where: { $0.label == selectedWeekLabel }) {
+                            RuleMark(x: .value("Неделя", selectedWeekLabel))
+                                .foregroundStyle(.secondary.opacity(0.35))
+                                .annotation(position: .top, alignment: .leading) {
+                                    TrackerChartCallout(
+                                        title: selectedWeekLabel,
+                                        rows: [("Σ", AnalyticsFormatters.sleepDurationWithMinutesHint(chosen.minutes))]
+                                    )
+                                }
+                        }
+                    }
+                    .chartXSelection(value: $selectedWeekLabel)
+                    .chartOverlay { proxy in
+                        GeometryReader { geo in
+                            Rectangle()
+                                .fill(.clear)
+                                .contentShape(Rectangle())
+                                .gesture(
+                                    DragGesture(minimumDistance: 0)
+                                        .onChanged { value in
+                                            let origin = geo[proxy.plotAreaFrame].origin
+                                            let x = value.location.x - origin.x
+                                            if let label: String = proxy.value(atX: x) {
+                                                selectedWeekLabel = label
+                                            }
+                                        }
+                                )
+                        }
                     }
                     .frame(height: 180)
                 }
@@ -499,6 +560,7 @@ struct TrackerAveragesReportView: View {
     @State private var error: String?
     @State private var shortDays: Int = 7
     @State private var longDays: Int = 30
+    @State private var selectedPeriodLabel: String?
 
     var body: some View {
         Group {
@@ -529,12 +591,44 @@ struct TrackerAveragesReportView: View {
                             .onChange(of: longDays) { _, _ in load() }
                         }
                         if #available(iOS 17.0, *) {
-                            Chart(avgBars(), id: \.period) { item in
-                                BarMark(
-                                    x: .value("Период", item.period),
-                                    y: .value("Минуты", item.perDay)
-                                )
-                                .foregroundStyle(item.period == "\(shortDays)д" ? FamilyAppStyle.accent : FamilyAppStyle.captionMuted)
+                            let bars = avgBars()
+                            Chart {
+                                ForEach(bars, id: \.period) { item in
+                                    BarMark(
+                                        x: .value("Период", item.period),
+                                        y: .value("Минуты", item.perDay)
+                                    )
+                                    .foregroundStyle(item.period == "\(shortDays)д" ? FamilyAppStyle.accent : FamilyAppStyle.captionMuted)
+                                    .cornerRadius(4)
+                                }
+                                if let selectedPeriodLabel, let chosen = bars.first(where: { $0.period == selectedPeriodLabel }) {
+                                    RuleMark(x: .value("Период", selectedPeriodLabel))
+                                        .foregroundStyle(.secondary.opacity(0.35))
+                                        .annotation(position: .top, alignment: .leading) {
+                                            TrackerChartCallout(
+                                                title: selectedPeriodLabel,
+                                                rows: [("Средне/сутки", AnalyticsFormatters.sleepDurationWithMinutesHint(chosen.perDay))]
+                                            )
+                                        }
+                                }
+                            }
+                            .chartXSelection(value: $selectedPeriodLabel)
+                            .chartOverlay { proxy in
+                                GeometryReader { geo in
+                                    Rectangle()
+                                        .fill(.clear)
+                                        .contentShape(Rectangle())
+                                        .gesture(
+                                            DragGesture(minimumDistance: 0)
+                                                .onChanged { value in
+                                                    let origin = geo[proxy.plotAreaFrame].origin
+                                                    let x = value.location.x - origin.x
+                                                    if let label: String = proxy.value(atX: x) {
+                                                        selectedPeriodLabel = label
+                                                    }
+                                                }
+                                        )
+                                }
                             }
                             .frame(height: 180)
                         }
@@ -596,6 +690,7 @@ struct TrackerOutlierDaysReportView: View {
     @State private var isLoading = true
     @State private var error: String?
     @State private var windowDays: Int = 60
+    @State private var selectedDayLabel: String?
 
     var body: some View {
         Group {
@@ -615,12 +710,51 @@ struct TrackerOutlierDaysReportView: View {
                         .pickerStyle(.segmented)
                         .onChange(of: windowDays) { _, _ in load() }
                         if #available(iOS 17.0, *) {
-                            Chart(s.daily_breakdown, id: \.date) { d in
-                                LineMark(
-                                    x: .value("Дата", formatDay(d.date)),
-                                    y: .value("Минуты", d.sleep_minutes)
-                                )
-                                .foregroundStyle(FamilyAppStyle.accent)
+                            let ordered = s.daily_breakdown.sorted { $0.date < $1.date }.filter { $0.sleep_minutes > 0 }
+                            let last = Array(ordered.suffix(max(1, windowDays)))
+                            let points: [(dayLabel: String, minutes: Int)] = last.map { (AnalyticsFormatters.dayLabelDDMM(fromISO: $0.date), $0.sleep_minutes) }
+                            let minutesByDay = Dictionary(uniqueKeysWithValues: points.map { ($0.dayLabel, $0.minutes) })
+                            Chart {
+                                ForEach(points, id: \.dayLabel) { p in
+                                    LineMark(
+                                        x: .value("Дата", p.dayLabel),
+                                        y: .value("Минуты", p.minutes)
+                                    )
+                                    .foregroundStyle(FamilyAppStyle.accent)
+                                    PointMark(
+                                        x: .value("Дата", p.dayLabel),
+                                        y: .value("Минуты", p.minutes)
+                                    )
+                                    .foregroundStyle(FamilyAppStyle.accent.opacity(0.6))
+                                }
+                                if let selectedDayLabel, let v = minutesByDay[selectedDayLabel] {
+                                    RuleMark(x: .value("Дата", selectedDayLabel))
+                                        .foregroundStyle(.secondary.opacity(0.35))
+                                        .annotation(position: .top, alignment: .leading) {
+                                            TrackerChartCallout(
+                                                title: selectedDayLabel,
+                                                rows: [("Сон", AnalyticsFormatters.sleepDurationWithMinutesHint(v))]
+                                            )
+                                        }
+                                }
+                            }
+                            .chartXSelection(value: $selectedDayLabel)
+                            .chartOverlay { proxy in
+                                GeometryReader { geo in
+                                    Rectangle()
+                                        .fill(.clear)
+                                        .contentShape(Rectangle())
+                                        .gesture(
+                                            DragGesture(minimumDistance: 0)
+                                                .onChanged { value in
+                                                    let origin = geo[proxy.plotAreaFrame].origin
+                                                    let x = value.location.x - origin.x
+                                                    if let label: String = proxy.value(atX: x) {
+                                                        selectedDayLabel = label
+                                                    }
+                                                }
+                                        )
+                                }
                             }
                             .frame(height: 220)
                         }
@@ -667,7 +801,7 @@ struct TrackerOutlierDaysReportView: View {
     }
 
     private func formatDay(_ iso: String) -> String {
-        TrackerReportDateFormatters.dayLabel(from: iso)
+        AnalyticsFormatters.dayLabelDDMM(fromISO: iso)
     }
 
     private func load() {
@@ -690,6 +824,7 @@ struct TrackerSleepTrendReportView: View {
     @State private var isLoading = true
     @State private var error: String?
     @State private var windowDays: Int = 60
+    @State private var selectedDayLabel: String?
 
     var body: some View {
         Group {
@@ -710,6 +845,8 @@ struct TrackerSleepTrendReportView: View {
                         .pickerStyle(.segmented)
                         .onChange(of: windowDays) { _, _ in load() }
                         if #available(iOS 17.0, *) {
+                            let minutesByDay = Dictionary(uniqueKeysWithValues: points.map { (formatDay($0.date), $0.sleep_minutes) })
+                            let avgByDay = Dictionary(uniqueKeysWithValues: avg.map { (formatDay($0.date), $0.sleep_minutes) })
                             Chart {
                                 ForEach(points, id: \.date) { d in
                                     LineMark(
@@ -730,6 +867,41 @@ struct TrackerSleepTrendReportView: View {
                                     )
                                     .foregroundStyle(FamilyAppStyle.accent)
                                     .lineStyle(StrokeStyle(lineWidth: 2))
+                                }
+                                if let selectedDayLabel {
+                                    RuleMark(x: .value("Дата", selectedDayLabel))
+                                        .foregroundStyle(.secondary.opacity(0.35))
+                                        .annotation(position: .top, alignment: .leading) {
+                                            let rows: [(String, String)] = {
+                                                var out: [(String, String)] = []
+                                                if let v = minutesByDay[selectedDayLabel] {
+                                                    out.append(("Сон", AnalyticsFormatters.sleepDurationWithMinutesHint(v)))
+                                                }
+                                                if let v = avgByDay[selectedDayLabel] {
+                                                    out.append(("Среднее 7д", AnalyticsFormatters.sleepDurationWithMinutesHint(v)))
+                                                }
+                                                return out
+                                            }()
+                                            TrackerChartCallout(title: selectedDayLabel, rows: rows)
+                                        }
+                                }
+                            }
+                            .chartXSelection(value: $selectedDayLabel)
+                            .chartOverlay { proxy in
+                                GeometryReader { geo in
+                                    Rectangle()
+                                        .fill(.clear)
+                                        .contentShape(Rectangle())
+                                        .gesture(
+                                            DragGesture(minimumDistance: 0)
+                                                .onChanged { value in
+                                                    let origin = geo[proxy.plotAreaFrame].origin
+                                                    let x = value.location.x - origin.x
+                                                    if let label: String = proxy.value(atX: x) {
+                                                        selectedDayLabel = label
+                                                    }
+                                                }
+                                        )
                                 }
                             }
                             .frame(height: 240)
@@ -755,7 +927,7 @@ struct TrackerSleepTrendReportView: View {
     }
 
     private func formatDay(_ iso: String) -> String {
-        TrackerReportDateFormatters.dayLabel(from: iso)
+        AnalyticsFormatters.dayLabelDDMM(fromISO: iso)
     }
 
     private static func lastDays(_ days: [DailyStat], count: Int) -> [DailyStat] {
@@ -799,6 +971,7 @@ struct TrackerSleepDistributionReportView: View {
     @State private var isLoading = true
     @State private var error: String?
     @State private var windowDays: Int = 60
+    @State private var selectedBucket: String?
 
     var body: some View {
         Group {
@@ -818,12 +991,43 @@ struct TrackerSleepDistributionReportView: View {
                         .pickerStyle(.segmented)
                         .onChange(of: windowDays) { _, _ in load() }
                         if #available(iOS 17.0, *) {
-                            Chart(rows, id: \.name) { row in
-                                BarMark(
-                                    x: .value("Диапазон", row.name),
-                                    y: .value("Дней", row.days)
-                                )
-                                .foregroundStyle(FamilyAppStyle.accent.gradient)
+                            Chart {
+                                ForEach(rows, id: \.name) { row in
+                                    BarMark(
+                                        x: .value("Диапазон", row.name),
+                                        y: .value("Дней", row.days)
+                                    )
+                                    .foregroundStyle(FamilyAppStyle.accent.gradient)
+                                    .cornerRadius(4)
+                                }
+                                if let selectedBucket, let chosen = rows.first(where: { $0.name == selectedBucket }) {
+                                    RuleMark(x: .value("Диапазон", selectedBucket))
+                                        .foregroundStyle(.secondary.opacity(0.35))
+                                        .annotation(position: .top, alignment: .leading) {
+                                            TrackerChartCallout(
+                                                title: selectedBucket,
+                                                rows: [("Дней", "\(chosen.days)")]
+                                            )
+                                        }
+                                }
+                            }
+                            .chartXSelection(value: $selectedBucket)
+                            .chartOverlay { proxy in
+                                GeometryReader { geo in
+                                    Rectangle()
+                                        .fill(.clear)
+                                        .contentShape(Rectangle())
+                                        .gesture(
+                                            DragGesture(minimumDistance: 0)
+                                                .onChanged { value in
+                                                    let origin = geo[proxy.plotAreaFrame].origin
+                                                    let x = value.location.x - origin.x
+                                                    if let label: String = proxy.value(atX: x) {
+                                                        selectedBucket = label
+                                                    }
+                                                }
+                                        )
+                                }
                             }
                             .frame(height: 220)
                         }
@@ -893,6 +1097,7 @@ struct TrackerDayNightReportView: View {
     @State private var isLoading = true
     @State private var error: String?
     @State private var windowDays: Int = 60
+    @State private var selectedDayLabel: String?
 
     var body: some View {
         Group {
@@ -922,18 +1127,52 @@ struct TrackerDayNightReportView: View {
                             kpiBlock(total: total)
 
                             if #available(iOS 17.0, *) {
-                                Chart(chartPoints(from: s.daily_breakdown), id: \.id) { p in
-                                    BarMark(
-                                        x: .value("Дата", p.dayLabel),
-                                        y: .value("Минуты", p.minutes)
-                                    )
-                                    .foregroundStyle(by: .value("Сон", p.kindLabel))
-                                    .cornerRadius(3)
+                                let points = chartPoints(from: s.daily_breakdown)
+                                let grouped = Dictionary(grouping: points, by: \.dayLabel)
+                                Chart {
+                                    ForEach(points, id: \.id) { p in
+                                        BarMark(
+                                            x: .value("Дата", p.dayLabel),
+                                            y: .value("Минуты", p.minutes)
+                                        )
+                                        .foregroundStyle(by: .value("Сон", p.kindLabel))
+                                        .cornerRadius(3)
+                                    }
+                                    if let selectedDayLabel, let rows = grouped[selectedDayLabel] {
+                                        RuleMark(x: .value("Дата", selectedDayLabel))
+                                            .foregroundStyle(.secondary.opacity(0.35))
+                                            .annotation(position: .top, alignment: .leading) {
+                                                TrackerChartCallout(
+                                                    title: selectedDayLabel,
+                                                    rows: rows
+                                                        .sorted { $0.kindLabel < $1.kindLabel }
+                                                        .map { ($0.kindLabel, AnalyticsFormatters.sleepDurationWithMinutesHint($0.minutes)) }
+                                                )
+                                            }
+                                    }
                                 }
                                 .chartForegroundStyleScale([
                                     "Ночной": FamilyAppStyle.accent,
                                     "Дневной": FamilyAppStyle.captionMuted
                                 ])
+                                .chartXSelection(value: $selectedDayLabel)
+                                .chartOverlay { proxy in
+                                    GeometryReader { geo in
+                                        Rectangle()
+                                            .fill(.clear)
+                                            .contentShape(Rectangle())
+                                            .gesture(
+                                                DragGesture(minimumDistance: 0)
+                                                    .onChanged { value in
+                                                        let origin = geo[proxy.plotAreaFrame].origin
+                                                        let x = value.location.x - origin.x
+                                                        if let label: String = proxy.value(atX: x) {
+                                                            selectedDayLabel = label
+                                                        }
+                                                    }
+                                            )
+                                    }
+                                }
                                 .frame(height: 240)
                             }
 
@@ -1049,7 +1288,7 @@ struct TrackerDayNightReportView: View {
     }
 
     private func formatDay(_ iso: String) -> String {
-        TrackerReportDateFormatters.dayLabel(from: iso)
+        AnalyticsFormatters.dayLabelDDMM(fromISO: iso)
     }
 
     private func reportScroll<Content: View>(@ViewBuilder content: () -> Content) -> some View {
@@ -1081,6 +1320,7 @@ struct TrackerFullDayAnalytics24hReportView: View {
     @State private var isLoading = true
     @State private var error: String?
     @State private var windowDays: Int = 30
+    @State private var selectedDayLabel: String?
 
     private static func lastDaysWithData(_ days: [DailyStat], count: Int) -> [DailyStat] {
         let sorted = days.sorted { $0.date < $1.date }.filter { $0.sleep_minutes > 0 }
@@ -1105,7 +1345,7 @@ struct TrackerFullDayAnalytics24hReportView: View {
         var out: [BarPoint] = []
         out.reserveCapacity(days.count * 2)
         for d in days {
-            let label = TrackerReportDateFormatters.dayLabel(from: d.date)
+            let label = AnalyticsFormatters.dayLabelDDMM(fromISO: d.date)
             let sleep = max(0, d.sleep_minutes)
             let wake = max(0, 1440 - sleep)
             out.append(.init(dayLabel: label, series: "Сон", minutes: sleep))
@@ -1117,7 +1357,7 @@ struct TrackerFullDayAnalytics24hReportView: View {
     private func linePoints(from days: [DailyStat]) -> [LinePoint] {
         days.map { d in
             .init(
-                dayLabel: TrackerReportDateFormatters.dayLabel(from: d.date),
+                dayLabel: AnalyticsFormatters.dayLabelDDMM(fromISO: d.date),
                 series: "Тренд (сон)",
                 minutes: max(0, d.sleep_minutes)
             )
@@ -1132,6 +1372,8 @@ struct TrackerFullDayAnalytics24hReportView: View {
                 let days = Self.lastDaysWithData(s.daily_breakdown, count: windowDays)
                 let bars = barPoints(from: days)
                 let line = linePoints(from: days)
+                let groupedBars = Dictionary(grouping: bars, by: \.dayLabel)
+                let groupedLine = Dictionary(grouping: line, by: \.dayLabel)
 
                 ScrollView {
                     VStack(alignment: .leading, spacing: 16) {
@@ -1166,6 +1408,23 @@ struct TrackerFullDayAnalytics24hReportView: View {
                                     .symbol(.circle)
                                     .symbolSize(26)
                                 }
+                                if let selectedDayLabel {
+                                    RuleMark(x: .value("Дата", selectedDayLabel))
+                                        .foregroundStyle(.secondary.opacity(0.35))
+                                        .annotation(position: .top, alignment: .leading) {
+                                            let rows: [(String, String)] = {
+                                                var out: [(String, String)] = []
+                                                if let r = groupedBars[selectedDayLabel] {
+                                                    out.append(contentsOf: r.sorted { $0.series < $1.series }.map { ($0.series, AnalyticsFormatters.sleepDurationWithMinutesHint($0.minutes)) })
+                                                }
+                                                if let r = groupedLine[selectedDayLabel]?.first {
+                                                    out.append((r.series, AnalyticsFormatters.sleepDurationWithMinutesHint(r.minutes)))
+                                                }
+                                                return out
+                                            }()
+                                            TrackerChartCallout(title: selectedDayLabel, rows: rows)
+                                        }
+                                }
                             }
                             .chartYScale(domain: 0...1440)
                             .chartForegroundStyleScale([
@@ -1174,6 +1433,24 @@ struct TrackerFullDayAnalytics24hReportView: View {
                                 "Тренд (сон)": FamilyAppStyle.pixsoInk.opacity(0.65)
                             ])
                             .chartLegend(position: .bottom, alignment: .leading)
+                            .chartXSelection(value: $selectedDayLabel)
+                            .chartOverlay { proxy in
+                                GeometryReader { geo in
+                                    Rectangle()
+                                        .fill(.clear)
+                                        .contentShape(Rectangle())
+                                        .gesture(
+                                            DragGesture(minimumDistance: 0)
+                                                .onChanged { value in
+                                                    let origin = geo[proxy.plotAreaFrame].origin
+                                                    let x = value.location.x - origin.x
+                                                    if let label: String = proxy.value(atX: x) {
+                                                        selectedDayLabel = label
+                                                    }
+                                                }
+                                        )
+                                }
+                            }
                             .frame(height: 260)
                         }
 

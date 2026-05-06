@@ -12,6 +12,7 @@ struct TrackerStatsView: View {
     @State private var isLoading = true
     @State private var errorMessage: String?
     @State private var selectedDays = 7
+    @State private var selectedDayLabel: String?
 
     var body: some View {
         let page = Group {
@@ -38,13 +39,13 @@ struct TrackerStatsView: View {
                             HStack {
                                 StatCard(
                                     title: "Всего сна",
-                                    value: formatHours(stats.total_sleep_minutes),
+                                    value: AnalyticsFormatters.sleepDurationWithMinutesHint(stats.total_sleep_minutes),
                                     icon: "moon.fill",
                                     color: FamilyAppStyle.accent
                                 )
                                 StatCard(
                                     title: "Средний сон",
-                                    value: formatHours(stats.average_sleep_minutes),
+                                    value: AnalyticsFormatters.sleepDurationWithMinutesHint(stats.average_sleep_minutes),
                                     icon: "clock.fill",
                                     color: FamilyAppStyle.accent
                                 )
@@ -74,17 +75,45 @@ struct TrackerStatsView: View {
                             .padding(.horizontal)
 
                         if #available(iOS 17.0, *) {
-                            Chart(stats.daily_breakdown, id: \.date) { item in
-                                BarMark(
-                                    x: .value("Дата", formatDateShort(item.date)),
-                                    y: .value("Минуты", item.sleep_minutes)
-                                )
-                                .foregroundStyle(FamilyAppStyle.accent.gradient)
-                                .cornerRadius(4)
-                                .annotation(position: .top) {
-                                    Text(formatHours(item.sleep_minutes))
-                                        .font(.caption2)
-                                        .foregroundColor(.secondary)
+                            let ordered = stats.daily_breakdown.sorted { $0.date < $1.date }.filter { $0.sleep_minutes > 0 }
+                            let points: [(dayLabel: String, minutes: Int)] = ordered.map { (AnalyticsFormatters.dayLabelDDMM(fromISO: $0.date), $0.sleep_minutes) }
+                            let minutesByDay = Dictionary(uniqueKeysWithValues: points.map { ($0.dayLabel, $0.minutes) })
+                            Chart {
+                                ForEach(points, id: \.dayLabel) { p in
+                                    BarMark(
+                                        x: .value("Дата", p.dayLabel),
+                                        y: .value("Минуты", p.minutes)
+                                    )
+                                    .foregroundStyle(FamilyAppStyle.accent.gradient)
+                                    .cornerRadius(4)
+                                }
+                                if let selectedDayLabel, let v = minutesByDay[selectedDayLabel] {
+                                    RuleMark(x: .value("Дата", selectedDayLabel))
+                                        .foregroundStyle(.secondary.opacity(0.35))
+                                        .annotation(position: .top, alignment: .leading) {
+                                            TrackerChartCallout(
+                                                title: selectedDayLabel,
+                                                rows: [("Сон", AnalyticsFormatters.sleepDurationWithMinutesHint(v))]
+                                            )
+                                        }
+                                }
+                            }
+                            .chartXSelection(value: $selectedDayLabel)
+                            .chartOverlay { proxy in
+                                GeometryReader { geo in
+                                    Rectangle()
+                                        .fill(.clear)
+                                        .contentShape(Rectangle())
+                                        .gesture(
+                                            DragGesture(minimumDistance: 0)
+                                                .onChanged { value in
+                                                    let origin = geo[proxy.plotAreaFrame].origin
+                                                    let x = value.location.x - origin.x
+                                                    if let label: String = proxy.value(atX: x) {
+                                                        selectedDayLabel = label
+                                                    }
+                                                }
+                                        )
                                 }
                             }
                             .frame(height: 200)
@@ -92,9 +121,9 @@ struct TrackerStatsView: View {
                         } else {
                             List(stats.daily_breakdown) { item in
                                 HStack {
-                                    Text(formatDateShort(item.date))
+                                    Text(AnalyticsFormatters.dayLabelDDMM(fromISO: item.date))
                                     Spacer()
-                                    Text(formatHours(item.sleep_minutes))
+                                    Text(AnalyticsFormatters.sleepDurationWithMinutesHint(item.sleep_minutes))
                                         .fontWeight(.bold)
                                 }
                             }
@@ -173,24 +202,7 @@ struct TrackerStatsView: View {
         }.resume()
     }
     
-    func formatHours(_ minutes: Int) -> String {
-        let h = minutes / 60
-        let m = minutes % 60
-        if h > 0 { return "\(h)ч \(m)м" }
-        return "\(m)м"
-    }
-    
-    func formatDateShort(_ isoString: String) -> String {
-        let formatter = DateFormatter()
-        formatter.dateFormat = "yyyy-MM-dd"
-        if let date = formatter.date(from: isoString) {
-            let outFormatter = DateFormatter()
-            outFormatter.dateFormat = "dd.MM"
-            outFormatter.locale = Locale(identifier: "ru_RU")
-            return outFormatter.string(from: date)
-        }
-        return isoString
-    }
+    // форматирование вынесено в AnalyticsFormatters
 }
 
 struct TrackerStats: Codable {

@@ -38,12 +38,6 @@ struct BudgetAnalyticsHubView: View {
             } else {
                 List {
                     Section {
-                        monthSwitcher
-                    }
-                    .listRowInsets(EdgeInsets(top: 6, leading: 16, bottom: 2, trailing: 16))
-                    .listRowBackground(Color.clear)
-
-                    Section {
                         snapshotBlock
                     }
                     .listRowInsets(EdgeInsets(top: 12, leading: 16, bottom: 12, trailing: 16))
@@ -124,6 +118,12 @@ struct BudgetAnalyticsHubView: View {
             }
         }
         .background(FamilyAppStyle.screenBackground)
+        .safeAreaInset(edge: .top, spacing: 0) {
+            monthSwitcher
+                .padding(.top, 4)
+                .padding(.bottom, 8)
+                .background(FamilyAppStyle.screenBackground)
+        }
         .navigationTitle("Аналитика")
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
@@ -183,7 +183,6 @@ struct BudgetAnalyticsHubView: View {
                 Image(systemName: "chevron.right")
             }
             .buttonStyle(.borderless)
-            .disabled(isAtCurrentMonth)
         }
         .frame(maxWidth: .infinity, alignment: .center)
     }
@@ -315,18 +314,10 @@ struct BudgetAnalyticsHubView: View {
         return "\(name) \(y)"
     }
 
-    private var isAtCurrentMonth: Bool {
-        let cal = Calendar.current
-        let now = Date()
-        return cal.component(.year, from: anchorMonth) == cal.component(.year, from: now) &&
-        cal.component(.month, from: anchorMonth) == cal.component(.month, from: now)
-    }
-
     private func shiftAnchorMonth(by delta: Int) {
         let cal = Calendar.current
         let next = cal.date(byAdding: .month, value: delta, to: anchorMonth) ?? anchorMonth
-        let nowStart = monthStart(Date())
-        anchorMonth = min(next, nowStart)
+        anchorMonth = monthStart(next)
 
         // При смене периода считаем, что ИИ-ответ неактуален
         hasAttemptedLLM = false

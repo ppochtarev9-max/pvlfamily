@@ -43,6 +43,10 @@ struct BudgetView: View {
     @State private var showErrorAlert = false
     @State private var isSaving = false
 
+    // Скролл к «Сегодня» в списке операций
+    @State private var didAutoScrollToToday = false
+    @State private var visibleSectionId: String? = nil
+
     // Вычисляемые свойства для фильтров
     var availableGroups: [CategoryGroup] {
         categoryGroups.filter { !$0.is_hidden }.sorted { $0.name < $1.name }
@@ -129,12 +133,17 @@ struct BudgetView: View {
             let summary = prefix + String(format: "%.0f", abs(total))
             return TransactionDaySection(
                 id: "\(day.timeIntervalSince1970)",
+                day: day,
                 title: title,
                 summary: summary,
                 summaryHasIncome: total >= 0,
                 items: items
             )
         }
+    }
+
+    private var todaySectionId: String? {
+        transactionDaySections.first(where: { Calendar.current.isDateInToday($0.day) })?.id
     }
     
     enum DateFilter: String, CaseIterable {
@@ -167,6 +176,7 @@ struct BudgetView: View {
 
     fileprivate struct TransactionDaySection: Identifiable {
         let id: String
+        let day: Date
         let title: String
         let summary: String
         let summaryHasIncome: Bool
@@ -267,60 +277,93 @@ struct BudgetView: View {
                     if transactionDaySections.isEmpty {
                         ContentUnavailableView("Нет записей", systemImage: "list.bullet.rectangle", description: Text("Измените фильтры или добавьте операцию"))
                     } else {
-                        List {
-                            ForEach(transactionDaySections) { section in
-                                let n = section.items.count
-                                Section {
-                                    ForEach(Array(section.items.enumerated()), id: \.element.id) { index, t in
-                                        TransactionCard(t: t, isLastInGroup: index == n - 1)
-                                            .listRowInsets(EdgeInsets(top: 0, leading: 16, bottom: 0, trailing: 16))
-                                            .listRowSeparator(.hidden, edges: .all)
-                                            .listRowBackground(
-                                                PVLGroupedRowBackground(
-                                                    isFirst: index == 0,
-                                                    isLast: index == n - 1,
-                                                    isSingle: n == 1
+                        ScrollViewReader { proxy in
+                            List {
+                                ForEach(transactionDaySections) { section in
+                                    let n = section.items.count
+                                    Section {
+                                        ForEach(Array(section.items.enumerated()), id: \.element.id) { index, t in
+                                            TransactionCard(t: t, isLastInGroup: index == n - 1)
+                                                .listRowInsets(EdgeInsets(top: 0, leading: 16, bottom: 0, trailing: 16))
+                                                .listRowSeparator(.hidden, edges: .all)
+                                                .listRowBackground(
+                                                    PVLGroupedRowBackground(
+                                                        isFirst: index == 0,
+                                                        isLast: index == n - 1,
+                                                        isSingle: n == 1
+                                                    )
                                                 )
-                                            )
-                                            .swipeActions {
-                                                Button(role: .destructive) { deleteTransaction(id: t.id) } label: { Label("Удалить", systemImage: "trash") }
-                                                Button { editTransaction(t) } label: { Label("Изменить", systemImage: "pencil") }.tint(FamilyAppStyle.accent)
+                                                .swipeActions {
+                                                    Button(role: .destructive) { deleteTransaction(id: t.id) } label: { Label("Удалить", systemImage: "trash") }
+                                                    Button { editTransaction(t) } label: { Label("Изменить", systemImage: "pencil") }.tint(FamilyAppStyle.accent)
+                                                }
+                                        }
+                                    } header: {
+                                        HStack {
+                                            Text(section.title)
+                                                .font(.system(size: 13, weight: .semibold))
+                                                .foregroundColor(FamilyAppStyle.sectionHeaderForeground)
+                                            Spacer()
+                                            Text(section.summary)
+                                                .font(.system(size: 12, weight: .medium))
+                                                .foregroundColor(section.summaryHasIncome ? FamilyAppStyle.incomeGreen : FamilyAppStyle.expenseCoral)
+                                        }
+                                        .textCase(nil)
+                                        .onAppear { visibleSectionId = section.id }
+                                    }
+                                    .id(section.id)
+                                }
+                                if hasMoreTransactions {
+                                    Section {
+                                        HStack {
+                                            Spacer()
+                                            if isLoadingMoreTransactions {
+                                                ProgressView()
+                                            } else {
+                                                Color.clear
+                                                    .frame(height: 1)
+                                                    .onAppear { loadMoreTransactionsIfNeeded() }
                                             }
+                                            Spacer()
+                                        }
+                                        .listRowBackground(Color.clear)
                                     }
-                                } header: {
-                                    HStack {
-                                        Text(section.title)
-                                            .font(.system(size: 13, weight: .semibold))
-                                            .foregroundColor(FamilyAppStyle.sectionHeaderForeground)
-                                        Spacer()
-                                        Text(section.summary)
-                                            .font(.system(size: 12, weight: .medium))
-                                            .foregroundColor(section.summaryHasIncome ? FamilyAppStyle.incomeGreen : FamilyAppStyle.expenseCoral)
-                                    }
-                                    .textCase(nil)
                                 }
                             }
-                            if hasMoreTransactions {
-                                Section {
-                                    HStack {
-                                        Spacer()
-                                        if isLoadingMoreTransactions {
-                                            ProgressView()
-                                        } else {
-                                            Color.clear
-                                                .frame(height: 1)
-                                                .onAppear { loadMoreTransactionsIfNeeded() }
+                            .listStyle(.plain)
+                            .listRowSpacing(0)
+                            .listSectionSpacing(8)
+                            .scrollContentBackground(.hidden)
+                            .onAppear {
+                                guard !didAutoScrollToToday, let todayId = todaySectionId else { return }
+                                didAutoScrollToToday = true
+                                DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
+                                    withAnimation(.easeInOut) { proxy.scrollTo(todayId, anchor: .top) }
+                                }
+                            }
+                            .overlay(alignment: .bottomTrailing) {
+                                if let todayId = todaySectionId,
+                                   let visible = visibleSectionId,
+                                   visible != todayId {
+                                    Button {
+                                        withAnimation(.easeInOut) { proxy.scrollTo(todayId, anchor: .top) }
+                                    } label: {
+                                        HStack(spacing: 8) {
+                                            Image(systemName: "arrow.down.to.line.compact")
+                                            Text("К сегодня")
                                         }
-                                        Spacer()
+                                        .font(.system(size: 13, weight: .semibold))
+                                        .padding(.horizontal, 12)
+                                        .padding(.vertical, 10)
+                                        .background(FamilyAppStyle.listCardFill)
+                                        .clipShape(Capsule())
+                                        .overlay(Capsule().stroke(FamilyAppStyle.cardStroke, lineWidth: 1))
                                     }
-                                    .listRowBackground(Color.clear)
+                                    .padding(.trailing, 16)
+                                    .padding(.bottom, 14)
                                 }
                             }
                         }
-                        .listStyle(.plain)
-                        .listRowSpacing(0)
-                        .listSectionSpacing(8)
-                        .scrollContentBackground(.hidden)
                     }
                 }
             }

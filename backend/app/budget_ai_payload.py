@@ -4,7 +4,7 @@ from dataclasses import dataclass
 from datetime import date, datetime
 from typing import Any, Dict, List, Optional, Tuple
 
-from sqlalchemy import func
+from sqlalchemy import case, func
 from sqlalchemy.orm import Session
 
 from . import models
@@ -86,13 +86,13 @@ def build_budget_safe_payload(
         q.with_entities(
             month_key.label("ym"),
             func.sum(
-                func.case(
+                case(
                     (models.Transaction.transaction_type == "income", models.Transaction.amount),
                     else_=0.0,
                 )
             ).label("income"),
             func.sum(
-                func.case(
+                case(
                     (models.Transaction.transaction_type == "expense", func.abs(models.Transaction.amount)),
                     else_=0.0,
                 )
@@ -119,12 +119,12 @@ def build_budget_safe_payload(
         if user_id is not None:
             qq = qq.filter(models.Transaction.created_by_user_id == user_id)
         inc = (
-            qq.with_entities(func.sum(func.case((models.Transaction.transaction_type == "income", models.Transaction.amount), else_=0.0)))
+            qq.with_entities(func.sum(case((models.Transaction.transaction_type == "income", models.Transaction.amount), else_=0.0)))
             .scalar()
             or 0.0
         )
         exp = (
-            qq.with_entities(func.sum(func.case((models.Transaction.transaction_type == "expense", func.abs(models.Transaction.amount)), else_=0.0)))
+            qq.with_entities(func.sum(case((models.Transaction.transaction_type == "expense", func.abs(models.Transaction.amount)), else_=0.0)))
             .scalar()
             or 0.0
         )

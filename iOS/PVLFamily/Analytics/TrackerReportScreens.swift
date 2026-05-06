@@ -2,6 +2,27 @@ import SwiftUI
 import Foundation
 import Charts
 
+private enum TrackerReportDateFormatters {
+    static let isoDay: DateFormatter = {
+        let f = DateFormatter()
+        f.dateFormat = "yyyy-MM-dd"
+        f.locale = Locale(identifier: "en_US_POSIX")
+        return f
+    }()
+
+    static let dayLabelRU: DateFormatter = {
+        let f = DateFormatter()
+        f.dateFormat = "dd.MM"
+        f.locale = Locale(identifier: "ru_RU")
+        return f
+    }()
+
+    static func dayLabel(from iso: String) -> String {
+        guard let d = isoDay.date(from: iso) else { return iso }
+        return dayLabelRU.string(from: d)
+    }
+}
+
 // MARK: - Сон vs Бодрствование (по дням)
 
 struct TrackerSleepWakeDailyReportView: View {
@@ -31,10 +52,12 @@ struct TrackerSleepWakeDailyReportView: View {
             else if let s = stats {
                 let points = Self.lastDays(s.daily_breakdown, count: windowDays)
                 let kpi = Self.kpi(from: points)
-                let chartPoints = Self.toChartPoints(points)
+                let chartPoints = Self.toSeriesPoints(points)
                 reportScroll {
                     VStack(alignment: .leading, spacing: 16) {
                         Picker("Окно", selection: $windowDays) {
+                            Text("7д").tag(7)
+                            Text("10д").tag(10)
                             Text("30д").tag(30)
                             Text("60д").tag(60)
                             Text("90д").tag(90)
@@ -46,22 +69,24 @@ struct TrackerSleepWakeDailyReportView: View {
 
                         if #available(iOS 17.0, *) {
                             Chart {
-                                ForEach(chartPoints, id: \.dateLabel) { d in
+                                ForEach(chartPoints, id: \.id) { p in
                                     LineMark(
-                                        x: .value("Дата", d.dateLabel),
-                                        y: .value("Сон", d.sleepMinutes)
+                                        x: .value("Дата", p.dateLabel),
+                                        y: .value("Минуты", p.minutes)
                                     )
-                                    .foregroundStyle(FamilyAppStyle.accent)
-                                    .lineStyle(StrokeStyle(lineWidth: 2))
-
-                                    LineMark(
-                                        x: .value("Дата", d.dateLabel),
-                                        y: .value("Бодрствование", d.wakeMinutes)
-                                    )
-                                    .foregroundStyle(FamilyAppStyle.captionMuted)
-                                    .lineStyle(StrokeStyle(lineWidth: 2, dash: [6, 4]))
+                                    .foregroundStyle(by: .value("Серия", p.series))
+                                    .lineStyle(p.series == "Бодрствование"
+                                               ? StrokeStyle(lineWidth: 2.5, dash: [6, 4])
+                                               : StrokeStyle(lineWidth: 2.5))
+                                    .symbol(p.series == "Бодрствование" ? .square : .circle)
+                                    .symbolSize(p.series == "Бодрствование" ? 38 : 30)
                                 }
                             }
+                            .chartForegroundStyleScale([
+                                "Сон": FamilyAppStyle.accent,
+                                "Бодрствование": FamilyAppStyle.expenseCoral
+                            ])
+                            .chartLegend(position: .bottom, alignment: .leading)
                             .frame(height: 240)
                         }
 
@@ -92,12 +117,15 @@ struct TrackerSleepWakeDailyReportView: View {
     
     private struct ChartPoint {
         let dateLabel: String
-        let sleepMinutes: Int
-        let wakeMinutes: Int
+        let series: String
+        let minutes: Int
+        var id: String { "\(dateLabel)-\(series)" }
     }
     
-    private static func toChartPoints(_ days: [DailyStat]) -> [ChartPoint] {
-        days.map { d in
+    private static func toSeriesPoints(_ days: [DailyStat]) -> [ChartPoint] {
+        var out: [ChartPoint] = []
+        out.reserveCapacity(days.count * 2)
+        for d in days {
             let dateLabel: String
             if let date = isoDateFormatter.date(from: d.date) {
                 dateLabel = dayLabelFormatterRU.string(from: date)
@@ -106,8 +134,10 @@ struct TrackerSleepWakeDailyReportView: View {
             }
             let sleep = max(0, d.sleep_minutes)
             let wake = max(0, 1440 - sleep)
-            return ChartPoint(dateLabel: dateLabel, sleepMinutes: sleep, wakeMinutes: wake)
+            out.append(.init(dateLabel: dateLabel, series: "Сон", minutes: sleep))
+            out.append(.init(dateLabel: dateLabel, series: "Бодрствование", minutes: wake))
         }
+        return out
     }
 
     private static func kpi(from days: [DailyStat]) -> KPI {
@@ -576,6 +606,8 @@ struct TrackerOutlierDaysReportView: View {
                 ScrollView {
                     VStack(alignment: .leading, spacing: 12) {
                         Picker("Окно", selection: $windowDays) {
+                            Text("7д").tag(7)
+                            Text("10д").tag(10)
                             Text("30д").tag(30)
                             Text("60д").tag(60)
                             Text("90д").tag(90)
@@ -635,14 +667,7 @@ struct TrackerOutlierDaysReportView: View {
     }
 
     private func formatDay(_ iso: String) -> String {
-        let f = DateFormatter()
-        f.dateFormat = "yyyy-MM-dd"
-        f.locale = Locale(identifier: "en_US_POSIX")
-        guard let d = f.date(from: iso) else { return iso }
-        let o = DateFormatter()
-        o.dateFormat = "dd.MM"
-        o.locale = Locale(identifier: "ru_RU")
-        return o.string(from: d)
+        TrackerReportDateFormatters.dayLabel(from: iso)
     }
 
     private func load() {
@@ -676,6 +701,8 @@ struct TrackerSleepTrendReportView: View {
                 ScrollView {
                     VStack(alignment: .leading, spacing: 12) {
                         Picker("Окно", selection: $windowDays) {
+                            Text("7д").tag(7)
+                            Text("10д").tag(10)
                             Text("30д").tag(30)
                             Text("60д").tag(60)
                             Text("90д").tag(90)
@@ -728,14 +755,7 @@ struct TrackerSleepTrendReportView: View {
     }
 
     private func formatDay(_ iso: String) -> String {
-        let f = DateFormatter()
-        f.dateFormat = "yyyy-MM-dd"
-        f.locale = Locale(identifier: "en_US_POSIX")
-        guard let d = f.date(from: iso) else { return iso }
-        let o = DateFormatter()
-        o.dateFormat = "dd.MM"
-        o.locale = Locale(identifier: "ru_RU")
-        return o.string(from: d)
+        TrackerReportDateFormatters.dayLabel(from: iso)
     }
 
     private static func lastDays(_ days: [DailyStat], count: Int) -> [DailyStat] {
@@ -789,6 +809,8 @@ struct TrackerSleepDistributionReportView: View {
                 ScrollView {
                     VStack(alignment: .leading, spacing: 14) {
                         Picker("Окно", selection: $windowDays) {
+                            Text("7д").tag(7)
+                            Text("10д").tag(10)
                             Text("30д").tag(30)
                             Text("60д").tag(60)
                             Text("90д").tag(90)
@@ -888,6 +910,8 @@ struct TrackerDayNightReportView: View {
                     reportScroll {
                         VStack(alignment: .leading, spacing: 16) {
                             Picker("Окно", selection: $windowDays) {
+                                Text("7д").tag(7)
+                                Text("10д").tag(10)
                                 Text("30д").tag(30)
                                 Text("60д").tag(60)
                                 Text("90д").tag(90)
@@ -1025,14 +1049,7 @@ struct TrackerDayNightReportView: View {
     }
 
     private func formatDay(_ iso: String) -> String {
-        let f = DateFormatter()
-        f.dateFormat = "yyyy-MM-dd"
-        f.locale = Locale(identifier: "en_US_POSIX")
-        guard let d = f.date(from: iso) else { return iso }
-        let o = DateFormatter()
-        o.dateFormat = "dd.MM"
-        o.locale = Locale(identifier: "ru_RU")
-        return o.string(from: d)
+        TrackerReportDateFormatters.dayLabel(from: iso)
     }
 
     private func reportScroll<Content: View>(@ViewBuilder content: () -> Content) -> some View {
@@ -1042,6 +1059,136 @@ struct TrackerDayNightReportView: View {
             }
             .padding()
         }
+    }
+
+    private func load() {
+        isLoading = true
+        authManager.getTrackerStats(days: windowDays) { r in
+            isLoading = false
+            switch r {
+            case .success(let s): stats = s
+            case .failure(let e): error = e.localizedDescription
+            }
+        }
+    }
+}
+
+// MARK: - Полная аналитика дня (24 часа)
+
+struct TrackerFullDayAnalytics24hReportView: View {
+    @EnvironmentObject var authManager: AuthManager
+    @State private var stats: TrackerStats?
+    @State private var isLoading = true
+    @State private var error: String?
+    @State private var windowDays: Int = 30
+
+    private static func lastDaysWithData(_ days: [DailyStat], count: Int) -> [DailyStat] {
+        let sorted = days.sorted { $0.date < $1.date }.filter { $0.sleep_minutes > 0 }
+        return Array(sorted.suffix(max(1, count)))
+    }
+
+    private struct BarPoint: Identifiable {
+        let dayLabel: String
+        let series: String
+        let minutes: Int
+        var id: String { "\(dayLabel)-\(series)" }
+    }
+
+    private struct LinePoint: Identifiable {
+        let dayLabel: String
+        let series: String
+        let minutes: Int
+        var id: String { "\(dayLabel)-\(series)" }
+    }
+
+    private func barPoints(from days: [DailyStat]) -> [BarPoint] {
+        var out: [BarPoint] = []
+        out.reserveCapacity(days.count * 2)
+        for d in days {
+            let label = TrackerReportDateFormatters.dayLabel(from: d.date)
+            let sleep = max(0, d.sleep_minutes)
+            let wake = max(0, 1440 - sleep)
+            out.append(.init(dayLabel: label, series: "Сон", minutes: sleep))
+            out.append(.init(dayLabel: label, series: "Бодрствование", minutes: wake))
+        }
+        return out
+    }
+
+    private func linePoints(from days: [DailyStat]) -> [LinePoint] {
+        days.map { d in
+            .init(
+                dayLabel: TrackerReportDateFormatters.dayLabel(from: d.date),
+                series: "Тренд (сон)",
+                minutes: max(0, d.sleep_minutes)
+            )
+        }
+    }
+
+    var body: some View {
+        Group {
+            if isLoading { ProgressView().frame(maxWidth: .infinity, minHeight: 200) }
+            else if let error { ContentUnavailableView("Ошибка", systemImage: "exclamationmark.triangle", description: Text(error)) }
+            else if let s = stats {
+                let days = Self.lastDaysWithData(s.daily_breakdown, count: windowDays)
+                let bars = barPoints(from: days)
+                let line = linePoints(from: days)
+
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 16) {
+                        Picker("Окно", selection: $windowDays) {
+                            Text("7д").tag(7)
+                            Text("10д").tag(10)
+                            Text("30д").tag(30)
+                            Text("60д").tag(60)
+                            Text("90д").tag(90)
+                        }
+                        .pickerStyle(.segmented)
+                        .onChange(of: windowDays) { _, _ in load() }
+
+                        if #available(iOS 17.0, *) {
+                            Chart {
+                                ForEach(bars) { p in
+                                    BarMark(
+                                        x: .value("Дата", p.dayLabel),
+                                        y: .value("Минуты", p.minutes)
+                                    )
+                                    .foregroundStyle(by: .value("Серия", p.series))
+                                    .position(by: .value("Тип", "24h"), axis: .horizontal)
+                                    .cornerRadius(3)
+                                }
+                                ForEach(line) { p in
+                                    LineMark(
+                                        x: .value("Дата", p.dayLabel),
+                                        y: .value("Минуты", p.minutes)
+                                    )
+                                    .foregroundStyle(by: .value("Серия", p.series))
+                                    .lineStyle(StrokeStyle(lineWidth: 2))
+                                    .symbol(.circle)
+                                    .symbolSize(26)
+                                }
+                            }
+                            .chartYScale(domain: 0...1440)
+                            .chartForegroundStyleScale([
+                                "Сон": FamilyAppStyle.accent,
+                                "Бодрствование": FamilyAppStyle.expenseCoral,
+                                "Тренд (сон)": FamilyAppStyle.pixsoInk.opacity(0.65)
+                            ])
+                            .chartLegend(position: .bottom, alignment: .leading)
+                            .frame(height: 260)
+                        }
+
+                        Text("Каждый столбик — 24 часа: сон и бодрствование (1440 − сон). Линия — тренд сна по дням.")
+                            .font(.caption2)
+                            .foregroundStyle(FamilyAppStyle.captionMuted)
+                    }
+                    .padding()
+                }
+            }
+        }
+        .background(FamilyAppStyle.screenBackground)
+        .navigationTitle("Полная аналитика дня")
+        .navigationBarTitleDisplayMode(.inline)
+        .onAppear(perform: load)
     }
 
     private func load() {

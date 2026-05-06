@@ -35,6 +35,9 @@ struct TrackerAnalyticsHubView: View {
                         NavigationLink { TrackerSleepWakeDailyReportView() } label: {
                             Label("Сон vs Бодрствование (по дням)", systemImage: "arrow.up.and.down")
                         }
+                        NavigationLink { TrackerFullDayAnalytics24hReportView() } label: {
+                            Label("Полная аналитика дня (24 часа)", systemImage: "chart.bar.fill")
+                        }
                         NavigationLink { TrackerSleepWake7v7ReportView() } label: {
                             Label("Сравнение 7 дней vs 7 дней", systemImage: "calendar.badge.clock")
                         }

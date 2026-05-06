@@ -19,6 +19,9 @@ backups/
 .env.local
 .env.*
 
+# CSV-история импорта (локальные данные)
+backend/history.csv
+
 # Editors
 .vscode/
 .idea/

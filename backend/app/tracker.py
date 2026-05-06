@@ -1,7 +1,7 @@
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 from sqlalchemy import func, or_, and_
-from datetime import datetime, timezone, timedelta
+from datetime import datetime, timezone, timedelta, time
 from typing import List, Optional, Dict, Any
 import io
 from openpyxl import Workbook
@@ -17,10 +17,15 @@ from .auth import get_current_user
 from fastapi import Request
 from .rate_limit import limiter
 
+from zoneinfo import ZoneInfo
+
 router = APIRouter()
 
 def get_utc_now():
     return datetime.now(timezone.utc)
+
+
+MOSCOW_TZ = ZoneInfo("Europe/Moscow")
 
 @router.get("/stats", response_model=Dict[str, Any])
 def get_tracker_stats(
@@ -29,7 +34,12 @@ def get_tracker_stats(
     current_user: User = Depends(get_current_user)
 ):
     now = get_utc_now()
-    start_date = now - timedelta(days=days)
+    # Логи пишем/храним в UTC, но "день" и период считаем по Москве.
+    now_local = now.astimezone(MOSCOW_TZ)
+    days = max(1, min(int(days or 7), 365))
+    start_local_date = (now_local - timedelta(days=days - 1)).date()
+    start_local_dt = datetime.combine(start_local_date, time.min, tzinfo=MOSCOW_TZ)
+    start_date = start_local_dt.astimezone(timezone.utc).replace(tzinfo=None)
 
     logs = db.query(BabyLog).filter(
         BabyLog.user_id == current_user.id,
@@ -41,7 +51,7 @@ def get_tracker_stats(
     stats_map = {}
     
     for i in range(days):
-        d = (now - timedelta(days=i)).date()
+        d = (now_local - timedelta(days=i)).date()
         key = d.isoformat()
         stats_map[key] = {"date": key, "sleep_minutes": 0, "sessions_count": 0}
 
@@ -57,7 +67,11 @@ def get_tracker_stats(
             delta = log.end_time - log.start_time
             duration_min = int(delta.total_seconds() / 60)
         
-        day_key = log.start_time.date().isoformat()
+        # ВАЖНО: ночной сон не режем по полуночи — целиком относим в день старта (по Москве).
+        st = log.start_time
+        if st.tzinfo is None:
+            st = st.replace(tzinfo=timezone.utc)
+        day_key = st.astimezone(MOSCOW_TZ).date().isoformat()
         
         if day_key in stats_map:
             stats_map[day_key]["sleep_minutes"] += duration_min

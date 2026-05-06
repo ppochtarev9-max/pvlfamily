@@ -140,6 +140,29 @@ struct TrackerView: View {
         return ends.min()
     }
 
+    private func sectionSleepMinutes(_ section: LogDaySection) -> Int {
+        let cal = Calendar.current
+        let now = Date()
+        let isToday = cal.isDateInToday(section.day)
+        var total = 0
+
+        for log in section.items where log.event_type == "sleep" {
+            if let dur = log.duration_minutes {
+                total += dur
+            } else if isToday, log.is_active, let start = parseDate(log.start_time) {
+                let dur = Int(now.timeIntervalSince(start) / 60)
+                if dur > 0 { total += dur }
+            }
+        }
+        return max(0, total)
+    }
+
+    private func sectionSleepHeaderText(_ section: LogDaySection) -> String {
+        let total = sectionSleepMinutes(section)
+        guard total > 0 else { return "—" }
+        return AnalyticsFormatters.sleepDuration(total)
+    }
+
     var body: some View {
         NavigationStack {
             VStack(spacing: 0) {
@@ -226,7 +249,7 @@ struct TrackerView: View {
                                             .font(.system(size: 13, weight: .semibold))
                                             .foregroundColor(FamilyAppStyle.sectionHeaderForeground)
                                         Spacer()
-                                        Text("\(n) \(PVLDateParsing.eventWord(n))")
+                                        Text(sectionSleepHeaderText(section))
                                             .font(.system(size: 12, weight: .medium))
                                             .foregroundColor(FamilyAppStyle.captionMuted)
                                     }

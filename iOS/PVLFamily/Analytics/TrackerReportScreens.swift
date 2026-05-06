@@ -2,6 +2,352 @@ import SwiftUI
 import Foundation
 import Charts
 
+// MARK: - Сон vs Бодрствование (по дням)
+
+struct TrackerSleepWakeDailyReportView: View {
+    @EnvironmentObject var authManager: AuthManager
+    @State private var stats: TrackerStats?
+    @State private var isLoading = true
+    @State private var error: String?
+    @State private var windowDays: Int = 30
+    
+    private static let isoDateFormatter: DateFormatter = {
+        let f = DateFormatter()
+        f.dateFormat = "yyyy-MM-dd"
+        f.locale = Locale(identifier: "en_US_POSIX")
+        return f
+    }()
+    private static let dayLabelFormatterRU: DateFormatter = {
+        let f = DateFormatter()
+        f.dateFormat = "dd.MM"
+        f.locale = Locale(identifier: "ru_RU")
+        return f
+    }()
+
+    var body: some View {
+        Group {
+            if isLoading { ProgressView().frame(maxWidth: .infinity, minHeight: 200) }
+            else if let error { ContentUnavailableView("Ошибка", systemImage: "exclamationmark.triangle", description: Text(error)) }
+            else if let s = stats {
+                let points = Self.lastDays(s.daily_breakdown, count: windowDays)
+                let kpi = Self.kpi(from: points)
+                let chartPoints = Self.toChartPoints(points)
+                reportScroll {
+                    VStack(alignment: .leading, spacing: 16) {
+                        Picker("Окно", selection: $windowDays) {
+                            Text("30д").tag(30)
+                            Text("60д").tag(60)
+                            Text("90д").tag(90)
+                        }
+                        .pickerStyle(.segmented)
+                        .onChange(of: windowDays) { _, _ in load() }
+
+                        kpiBlock(kpi: kpi)
+
+                        if #available(iOS 17.0, *) {
+                            Chart {
+                                ForEach(chartPoints, id: \.dateLabel) { d in
+                                    LineMark(
+                                        x: .value("Дата", d.dateLabel),
+                                        y: .value("Сон", d.sleepMinutes)
+                                    )
+                                    .foregroundStyle(FamilyAppStyle.accent)
+                                    .lineStyle(StrokeStyle(lineWidth: 2))
+
+                                    LineMark(
+                                        x: .value("Дата", d.dateLabel),
+                                        y: .value("Бодрствование", d.wakeMinutes)
+                                    )
+                                    .foregroundStyle(FamilyAppStyle.captionMuted)
+                                    .lineStyle(StrokeStyle(lineWidth: 2, dash: [6, 4]))
+                                }
+                            }
+                            .frame(height: 240)
+                        }
+
+                        Text("Бодрствование считается как 1440 − сон (в минутах). Пунктир — бодрствование.")
+                            .font(.caption2)
+                            .foregroundStyle(FamilyAppStyle.captionMuted)
+                    }
+                }
+            }
+        }
+        .background(FamilyAppStyle.screenBackground)
+        .navigationTitle("Сон vs Бодрствование")
+        .navigationBarTitleDisplayMode(.inline)
+        .onAppear(perform: load)
+    }
+
+    private struct KPI {
+        let avgSleep: Int
+        let avgWake: Int
+        let sleepShare: Double
+        let days: Int
+    }
+
+    private static func lastDays(_ days: [DailyStat], count: Int) -> [DailyStat] {
+        let sorted = days.sorted { $0.date < $1.date }.filter { $0.sleep_minutes > 0 }
+        return Array(sorted.suffix(max(1, count)))
+    }
+    
+    private struct ChartPoint {
+        let dateLabel: String
+        let sleepMinutes: Int
+        let wakeMinutes: Int
+    }
+    
+    private static func toChartPoints(_ days: [DailyStat]) -> [ChartPoint] {
+        days.map { d in
+            let dateLabel: String
+            if let date = isoDateFormatter.date(from: d.date) {
+                dateLabel = dayLabelFormatterRU.string(from: date)
+            } else {
+                dateLabel = d.date
+            }
+            let sleep = max(0, d.sleep_minutes)
+            let wake = max(0, 1440 - sleep)
+            return ChartPoint(dateLabel: dateLabel, sleepMinutes: sleep, wakeMinutes: wake)
+        }
+    }
+
+    private static func kpi(from days: [DailyStat]) -> KPI {
+        let vals = days.filter { $0.sleep_minutes > 0 }
+        let n = max(1, vals.count)
+        let totalSleep = vals.map(\.sleep_minutes).reduce(0, +)
+        let totalWake = vals.map { max(0, 1440 - $0.sleep_minutes) }.reduce(0, +)
+        let avgSleep = totalSleep / n
+        let avgWake = totalWake / n
+        let denom = max(1, totalSleep + totalWake)
+        let share = Double(totalSleep) / Double(denom)
+        return KPI(avgSleep: avgSleep, avgWake: avgWake, sleepShare: share, days: vals.count)
+    }
+
+    private func kpiBlock(kpi: KPI) -> some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack(alignment: .top) {
+                kpiCard(title: "Средний сон", value: kpi.days > 0 ? AnalyticsFormatters.sleepDuration(kpi.avgSleep) : "—")
+                kpiCard(title: "Среднее бодрств.", value: kpi.days > 0 ? AnalyticsFormatters.sleepDuration(kpi.avgWake) : "—")
+            }
+            HStack(alignment: .top) {
+                kpiCard(title: "Доля сна", value: kpi.days > 0 ? percent(kpi.sleepShare) : "—")
+                kpiCard(title: "Дней с данными", value: "\(kpi.days)")
+            }
+        }
+    }
+
+    private func kpiCard(title: String, value: String) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text(title)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            Text(value)
+                .font(.title3.weight(.bold))
+                .foregroundStyle(.primary)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding()
+        .background(FamilyAppStyle.listCardFill)
+        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .strokeBorder(FamilyAppStyle.cardStroke, lineWidth: 1)
+        )
+    }
+
+    private func percent(_ v: Double) -> String {
+        let p = Int((v * 100).rounded())
+        return "\(p)%"
+    }
+
+    private func reportScroll<Content: View>(@ViewBuilder content: () -> Content) -> some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 16) {
+                content()
+            }
+            .padding()
+        }
+    }
+
+    private func load() {
+        isLoading = true
+        authManager.getTrackerStats(days: windowDays) { r in
+            isLoading = false
+            switch r {
+            case .success(let s): stats = s
+            case .failure(let e): error = e.localizedDescription
+            }
+        }
+    }
+}
+
+// MARK: - Сравнение окон: последние 7 vs предыдущие 7
+
+struct TrackerSleepWake7v7ReportView: View {
+    @EnvironmentObject var authManager: AuthManager
+    @State private var stats: TrackerStats?
+    @State private var isLoading = true
+    @State private var error: String?
+
+    var body: some View {
+        Group {
+            if isLoading { ProgressView().frame(maxWidth: .infinity, minHeight: 200) }
+            else if let error { ContentUnavailableView("Ошибка", systemImage: "exclamationmark.triangle", description: Text(error)) }
+            else if let s = stats {
+                let ordered = s.daily_breakdown.sorted { $0.date < $1.date }.filter { $0.sleep_minutes > 0 }
+                let last14 = Array(ordered.suffix(14))
+                let prev7 = Array(last14.prefix(7))
+                let cur7 = Array(last14.suffix(7))
+                let cmp = compare(prev: prev7, cur: cur7)
+                reportScroll {
+                    VStack(alignment: .leading, spacing: 16) {
+                        Text("Сравнение средних значений за последние 7 дней и предыдущие 7 дней.")
+                            .font(.subheadline)
+                            .foregroundStyle(FamilyAppStyle.captionMuted)
+
+                        kpiBlock(cmp: cmp)
+
+                        if #available(iOS 17.0, *) {
+                            Chart(cmp.bars, id: \.id) { b in
+                                BarMark(
+                                    x: .value("Период", b.period),
+                                    y: .value("Минуты", b.minutes)
+                                )
+                                .foregroundStyle(by: .value("Метрика", b.metric))
+                                .cornerRadius(4)
+                            }
+                            .chartForegroundStyleScale([
+                                "Сон": FamilyAppStyle.accent,
+                                "Бодрствование": FamilyAppStyle.captionMuted
+                            ])
+                            .frame(height: 220)
+                        }
+
+                        Text("Бодрствование считается как 1440 − сон. Дельты показаны как «последние 7» минус «предыдущие 7».")
+                            .font(.caption2)
+                            .foregroundStyle(FamilyAppStyle.captionMuted)
+                    }
+                }
+            }
+        }
+        .background(FamilyAppStyle.screenBackground)
+        .navigationTitle("7 дней vs 7 дней")
+        .navigationBarTitleDisplayMode(.inline)
+        .onAppear(perform: load)
+    }
+
+    private struct Comparison {
+        let prevAvgSleep: Int
+        let curAvgSleep: Int
+        let deltaAvgSleep: Int
+        let prevAvgWake: Int
+        let curAvgWake: Int
+        let deltaAvgWake: Int
+        let bars: [Bar]
+    }
+
+    private struct Bar: Identifiable {
+        let period: String
+        let metric: String
+        let minutes: Int
+        var id: String { "\(period)-\(metric)" }
+    }
+
+    private func compare(prev: [DailyStat], cur: [DailyStat]) -> Comparison {
+        let pN = max(1, prev.count)
+        let cN = max(1, cur.count)
+        let pSleep = prev.map(\.sleep_minutes).reduce(0, +)
+        let cSleep = cur.map(\.sleep_minutes).reduce(0, +)
+        let pWake = prev.map { max(0, 1440 - $0.sleep_minutes) }.reduce(0, +)
+        let cWake = cur.map { max(0, 1440 - $0.sleep_minutes) }.reduce(0, +)
+
+        let pAvgSleep = pSleep / pN
+        let cAvgSleep = cSleep / cN
+        let pAvgWake = pWake / pN
+        let cAvgWake = cWake / cN
+
+        let bars: [Bar] = [
+            .init(period: "пред. 7", metric: "Сон", minutes: pAvgSleep),
+            .init(period: "посл. 7", metric: "Сон", minutes: cAvgSleep),
+            .init(period: "пред. 7", metric: "Бодрствование", minutes: pAvgWake),
+            .init(period: "посл. 7", metric: "Бодрствование", minutes: cAvgWake),
+        ]
+
+        return Comparison(
+            prevAvgSleep: pAvgSleep,
+            curAvgSleep: cAvgSleep,
+            deltaAvgSleep: cAvgSleep - pAvgSleep,
+            prevAvgWake: pAvgWake,
+            curAvgWake: cAvgWake,
+            deltaAvgWake: cAvgWake - pAvgWake,
+            bars: bars
+        )
+    }
+
+    private func kpiBlock(cmp: Comparison) -> some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack(alignment: .top) {
+                kpiCard(
+                    title: "Сон (сред.)",
+                    value: "\(AnalyticsFormatters.sleepDuration(cmp.curAvgSleep))",
+                    delta: deltaString(cmp.deltaAvgSleep)
+                )
+                kpiCard(
+                    title: "Бодрств. (сред.)",
+                    value: "\(AnalyticsFormatters.sleepDuration(cmp.curAvgWake))",
+                    delta: deltaString(cmp.deltaAvgWake)
+                )
+            }
+        }
+    }
+
+    private func deltaString(_ minutes: Int) -> String {
+        let sign = minutes >= 0 ? "+" : "−"
+        return "\(sign)\(AnalyticsFormatters.sleepDuration(abs(minutes)))"
+    }
+
+    private func kpiCard(title: String, value: String, delta: String) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text(title)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            Text(value)
+                .font(.title3.weight(.bold))
+                .foregroundStyle(.primary)
+            Text("Δ \(delta)")
+                .font(.caption2)
+                .foregroundStyle(FamilyAppStyle.captionMuted)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding()
+        .background(FamilyAppStyle.listCardFill)
+        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .strokeBorder(FamilyAppStyle.cardStroke, lineWidth: 1)
+        )
+    }
+
+    private func reportScroll<Content: View>(@ViewBuilder content: () -> Content) -> some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 16) {
+                content()
+            }
+            .padding()
+        }
+    }
+
+    private func load() {
+        isLoading = true
+        authManager.getTrackerStats(days: 14) { r in
+            isLoading = false
+            switch r {
+            case .success(let s): stats = s
+            case .failure(let e): error = e.localizedDescription
+            }
+        }
+    }
+}
+
 // MARK: - Сравнение двух последних недель
 
 struct TrackerCompareWeeksReportView: View {

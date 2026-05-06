@@ -265,3 +265,193 @@ struct TrackerOutlierDaysReportView: View {
         }
     }
 }
+
+// MARK: - Тренд 30 дней + среднее (rolling)
+
+struct TrackerSleepTrendReportView: View {
+    @EnvironmentObject var authManager: AuthManager
+    @State private var stats: TrackerStats?
+    @State private var isLoading = true
+    @State private var error: String?
+
+    var body: some View {
+        Group {
+            if isLoading { ProgressView().frame(maxWidth: .infinity, minHeight: 200) }
+            else if let error { ContentUnavailableView("Ошибка", systemImage: "exclamationmark.triangle", description: Text(error)) }
+            else if let s = stats {
+                let points = Self.lastDays(s.daily_breakdown, count: 30)
+                let avg = Self.rollingAverage(points, window: 7)
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 12) {
+                        if #available(iOS 17.0, *) {
+                            Chart {
+                                ForEach(points, id: \.date) { d in
+                                    LineMark(
+                                        x: .value("Дата", formatDay(d.date)),
+                                        y: .value("Минуты", d.sleep_minutes)
+                                    )
+                                    .foregroundStyle(FamilyAppStyle.accent.opacity(0.35))
+                                    PointMark(
+                                        x: .value("Дата", formatDay(d.date)),
+                                        y: .value("Минуты", d.sleep_minutes)
+                                    )
+                                    .foregroundStyle(FamilyAppStyle.accent.opacity(0.6))
+                                }
+                                ForEach(avg, id: \.date) { d in
+                                    LineMark(
+                                        x: .value("Дата", formatDay(d.date)),
+                                        y: .value("Среднее7", d.sleep_minutes)
+                                    )
+                                    .foregroundStyle(FamilyAppStyle.accent)
+                                    .lineStyle(StrokeStyle(lineWidth: 2))
+                                }
+                            }
+                            .frame(height: 240)
+                        }
+
+                        let perDay = points.isEmpty ? 0 : points.map(\.sleep_minutes).reduce(0, +) / max(1, points.count)
+                        Text("Средне за сутки (последние \(points.count) дней с данными): \(AnalyticsFormatters.sleepDuration(perDay))")
+                            .font(.footnote)
+                            .foregroundStyle(FamilyAppStyle.captionMuted)
+
+                        Text("Тонкая линия — фактический сон по дням, жирная — сглаживание (среднее за 7 дней).")
+                            .font(.caption2)
+                            .foregroundStyle(FamilyAppStyle.captionMuted)
+                    }
+                    .padding()
+                }
+            }
+        }
+        .background(FamilyAppStyle.screenBackground)
+        .navigationTitle("Тренд сна")
+        .navigationBarTitleDisplayMode(.inline)
+        .onAppear(perform: load)
+    }
+
+    private func formatDay(_ iso: String) -> String {
+        let f = DateFormatter()
+        f.dateFormat = "yyyy-MM-dd"
+        f.locale = Locale(identifier: "en_US_POSIX")
+        guard let d = f.date(from: iso) else { return iso }
+        let o = DateFormatter()
+        o.dateFormat = "dd.MM"
+        o.locale = Locale(identifier: "ru_RU")
+        return o.string(from: d)
+    }
+
+    private static func lastDays(_ days: [DailyStat], count: Int) -> [DailyStat] {
+        let sorted = days.sorted { $0.date < $1.date }.filter { $0.sleep_minutes > 0 }
+        return Array(sorted.suffix(max(1, count)))
+    }
+
+    private struct AvgPoint {
+        let date: String
+        let sleep_minutes: Int
+    }
+
+    private static func rollingAverage(_ days: [DailyStat], window: Int) -> [AvgPoint] {
+        guard window >= 2, days.count >= window else { return [] }
+        var out: [AvgPoint] = []
+        for i in (window - 1)..<days.count {
+            let slice = days[(i - (window - 1))...i]
+            let v = slice.map(\.sleep_minutes).reduce(0, +) / window
+            out.append(AvgPoint(date: days[i].date, sleep_minutes: v))
+        }
+        return out
+    }
+
+    private func load() {
+        isLoading = true
+        authManager.getTrackerStats(days: 60) { r in
+            isLoading = false
+            switch r {
+            case .success(let s): stats = s
+            case .failure(let e): error = e.localizedDescription
+            }
+        }
+    }
+}
+
+// MARK: - Распределение сна (гистограмма по диапазонам)
+
+struct TrackerSleepDistributionReportView: View {
+    @EnvironmentObject var authManager: AuthManager
+    @State private var stats: TrackerStats?
+    @State private var isLoading = true
+    @State private var error: String?
+
+    var body: some View {
+        Group {
+            if isLoading { ProgressView().frame(maxWidth: .infinity, minHeight: 200) }
+            else if let error { ContentUnavailableView("Ошибка", systemImage: "exclamationmark.triangle", description: Text(error)) }
+            else if let s = stats {
+                let rows = Self.buckets(from: s.daily_breakdown)
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 14) {
+                        if #available(iOS 17.0, *) {
+                            Chart(rows, id: \.name) { row in
+                                BarMark(
+                                    x: .value("Диапазон", row.name),
+                                    y: .value("Дней", row.days)
+                                )
+                                .foregroundStyle(FamilyAppStyle.accent.gradient)
+                            }
+                            .frame(height: 220)
+                        }
+                        VStack(spacing: 8) {
+                            ForEach(rows, id: \.name) { r in
+                                HStack {
+                                    Text(r.name)
+                                    Spacer()
+                                    Text("\(r.days)")
+                                        .foregroundStyle(.secondary)
+                                }
+                            }
+                        }
+                        Text("Гистограмма помогает понять, насколько часто сон попадает в «нормальный» диапазон и как распределены дни.")
+                            .font(.caption2)
+                            .foregroundStyle(FamilyAppStyle.captionMuted)
+                    }
+                    .padding()
+                }
+            }
+        }
+        .background(FamilyAppStyle.screenBackground)
+        .navigationTitle("Распределение сна")
+        .navigationBarTitleDisplayMode(.inline)
+        .onAppear(perform: load)
+    }
+
+    private struct BucketRow {
+        let name: String
+        let days: Int
+    }
+
+    private static func bucketName(_ minutes: Int) -> String {
+        if minutes < 300 { return "<5ч" }
+        if minutes < 390 { return "5–6.5ч" }
+        if minutes < 480 { return "6.5–8ч" }
+        if minutes < 600 { return "8–10ч" }
+        return "10ч+"
+    }
+
+    private static func buckets(from days: [DailyStat]) -> [BucketRow] {
+        let vals = days.map(\.sleep_minutes).filter { $0 > 0 }
+        var counts: [String: Int] = [:]
+        for v in vals { counts[bucketName(v), default: 0] += 1 }
+        let order = ["<5ч", "5–6.5ч", "6.5–8ч", "8–10ч", "10ч+"]
+        return order.map { BucketRow(name: $0, days: counts[$0, default: 0]) }
+            .filter { $0.days > 0 }
+    }
+
+    private func load() {
+        isLoading = true
+        authManager.getTrackerStats(days: 60) { r in
+            isLoading = false
+            switch r {
+            case .success(let s): stats = s
+            case .failure(let e): error = e.localizedDescription
+            }
+        }
+    }
+}

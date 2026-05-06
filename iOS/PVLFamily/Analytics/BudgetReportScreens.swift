@@ -323,6 +323,213 @@ struct BudgetSixMonthStripView: View {
     }
 }
 
+// MARK: - 6 месяцев: доходы / расходы / сальдо (линии)
+
+struct BudgetSixMonthIncomeExpenseTrendView: View {
+    @EnvironmentObject var authManager: AuthManager
+    var userId: Int?
+
+    @State private var months: [MonthlyStats] = []
+    @State private var isLoading = true
+    @State private var error: String?
+
+    var body: some View {
+        Group {
+            if isLoading { ProgressView().frame(maxWidth: .infinity, minHeight: 200) }
+            else if let error { ContentUnavailableView("Ошибка", systemImage: "exclamationmark.triangle", description: Text(error)) }
+            else {
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 14) {
+                        if #available(iOS 17.0, *) {
+                            Chart(seriesRows(), id: \.id) { row in
+                                LineMark(
+                                    x: .value("Месяц", row.monthLabel),
+                                    y: .value("Сумма", row.value)
+                                )
+                                .foregroundStyle(by: .value("Серия", row.series))
+                                PointMark(
+                                    x: .value("Месяц", row.monthLabel),
+                                    y: .value("Сумма", row.value)
+                                )
+                                .foregroundStyle(by: .value("Серия", row.series))
+                            }
+                            .chartForegroundStyleScale([
+                                "Доходы": FamilyAppStyle.incomeGreen,
+                                "Расходы": FamilyAppStyle.expenseCoral,
+                                "Сальдо": FamilyAppStyle.accent
+                            ])
+                            .frame(height: 260)
+                        }
+                        VStack(spacing: 8) {
+                            ForEach(months, id: \.month) { m in
+                                HStack {
+                                    Text(String(format: "%02d.%d", m.month, m.year))
+                                        .foregroundStyle(.secondary)
+                                    Spacer()
+                                    Text("Доход \(AnalyticsFormatters.moneyRU(m.total_income))")
+                                        .font(.caption)
+                                        .foregroundStyle(FamilyAppStyle.incomeGreen)
+                                    Text("Расход \(AnalyticsFormatters.moneyRU(abs(m.total_expense)))")
+                                        .font(.caption)
+                                        .foregroundStyle(FamilyAppStyle.expenseCoral)
+                                }
+                            }
+                        }
+                        Text("Три линии: доходы, расходы и сальдо. Это лучше, чем 3 отдельных графика — видно динамику и разрыв.")
+                            .font(.caption2)
+                            .foregroundStyle(FamilyAppStyle.captionMuted)
+                    }
+                    .padding()
+                }
+            }
+        }
+        .background(FamilyAppStyle.screenBackground)
+        .navigationTitle("6 месяцев: тренды")
+        .navigationBarTitleDisplayMode(.inline)
+        .onAppear(perform: load)
+    }
+
+    private struct Row: Identifiable {
+        let id: String
+        let monthLabel: String
+        let series: String
+        let value: Double
+    }
+
+    private func seriesRows() -> [Row] {
+        months.flatMap { m in
+            let label = String(format: "%02d.%d", m.month, m.year)
+            return [
+                Row(id: "\(label)-inc", monthLabel: label, series: "Доходы", value: m.total_income),
+                Row(id: "\(label)-exp", monthLabel: label, series: "Расходы", value: abs(m.total_expense)),
+                Row(id: "\(label)-bal", monthLabel: label, series: "Сальдо", value: m.balance)
+            ]
+        }
+    }
+
+    private func load() {
+        isLoading = true
+        error = nil
+        let cal = Calendar.current
+        let d = Date()
+        let y = cal.component(.year, from: d)
+        let m = cal.component(.month, from: d)
+        var targets: [(Int, Int)] = []
+        for i in 0..<6 {
+            var mm = m - i
+            var yy = y
+            while mm < 1 { mm += 12; yy -= 1 }
+            targets.append((yy, mm))
+        }
+        let g = DispatchGroup()
+        var collected: [MonthlyStats] = []
+        for t in targets {
+            g.enter()
+            authManager.getMonthlyStats(year: t.0, month: t.1, userId: userId) { r in
+                defer { g.leave() }
+                if case .success(let s) = r { collected.append(s) }
+            }
+        }
+        g.notify(queue: .main) {
+            isLoading = false
+            months = collected.sorted { a, b in
+                if a.year != b.year { return a.year < b.year }
+                return a.month < b.month
+            }
+            if months.isEmpty { error = "Нет данных" }
+        }
+    }
+}
+
+// MARK: - Структура расходов (donut)
+
+struct BudgetExpenseStructureDonutView: View {
+    @EnvironmentObject var authManager: AuthManager
+    var userId: Int?
+
+    @State private var stats: MonthlyStats?
+    @State private var isLoading = true
+    @State private var error: String?
+
+    var body: some View {
+        Group {
+            if isLoading { ProgressView().frame(maxWidth: .infinity, minHeight: 200) }
+            else if let error { ContentUnavailableView("Ошибка", systemImage: "exclamationmark.triangle", description: Text(error)) }
+            else if let s = stats {
+                let rows = Self.expenseSlices(from: s)
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 14) {
+                        if #available(iOS 17.0, *) {
+                            Chart(rows, id: \.name) { item in
+                                SectorMark(
+                                    angle: .value("Доля", item.value),
+                                    innerRadius: .ratio(0.6),
+                                    angularInset: 1.0
+                                )
+                                .foregroundStyle(by: .value("Категория", item.name))
+                            }
+                            .frame(height: 260)
+                        }
+                        VStack(spacing: 8) {
+                            ForEach(rows, id: \.name) { item in
+                                HStack {
+                                    Text(item.name).lineLimit(1)
+                                    Spacer()
+                                    Text(AnalyticsFormatters.moneyRU(item.value))
+                                        .foregroundStyle(.secondary)
+                                }
+                            }
+                        }
+                        Text("Сектора показывают структуру расходов за месяц: топ-категории + «прочее».")
+                            .font(.caption2)
+                            .foregroundStyle(FamilyAppStyle.captionMuted)
+                    }
+                    .padding()
+                }
+            }
+        }
+        .background(FamilyAppStyle.screenBackground)
+        .navigationTitle("Структура расходов")
+        .navigationBarTitleDisplayMode(.inline)
+        .onAppear(perform: load)
+    }
+
+    private struct Slice {
+        let name: String
+        let value: Double
+    }
+
+    private static func expenseSlices(from s: MonthlyStats) -> [Slice] {
+        let exp = s.details
+            .filter { $0.type == "expense" }
+            .map { (name: $0.category_name, value: abs($0.amount)) }
+            .sorted { $0.value > $1.value }
+        let top = exp.prefix(6)
+        let topSum = top.map(\.value).reduce(0, +)
+        let total = exp.map(\.value).reduce(0, +)
+        var out = top.map { Slice(name: $0.name, value: $0.value) }
+        let other = max(0, total - topSum)
+        if other > 0 { out.append(Slice(name: "Прочее", value: other)) }
+        return out
+    }
+
+    private func load() {
+        isLoading = true
+        error = nil
+        let cal = Calendar.current
+        let d = Date()
+        let y = cal.component(.year, from: d)
+        let m = cal.component(.month, from: d)
+        authManager.getMonthlyStats(year: y, month: m, userId: userId) { r in
+            isLoading = false
+            switch r {
+            case .success(let s): stats = s
+            case .failure(let e): error = e.localizedDescription
+            }
+        }
+    }
+}
+
 // MARK: - Заглушки под будущие «выбросы по суммам» и кастомный период
 
 struct BudgetAnomaliesScaffoldView: View {

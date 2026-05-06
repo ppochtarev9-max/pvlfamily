@@ -4,6 +4,7 @@ from sqlalchemy import func, or_, and_
 from datetime import datetime, timezone, timedelta, time
 from typing import List, Optional, Dict, Any
 import io
+import re
 from openpyxl import Workbook
 from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
 from openpyxl.worksheet.table import Table, TableStyleInfo
@@ -26,6 +27,7 @@ def get_utc_now():
 
 
 MOSCOW_TZ = ZoneInfo("Europe/Moscow")
+KIND_RE = re.compile(r"\bkind=(day|night)\b")
 
 @router.get("/stats", response_model=Dict[str, Any])
 def get_tracker_stats(
@@ -53,10 +55,23 @@ def get_tracker_stats(
     for i in range(days):
         d = (now_local - timedelta(days=i)).date()
         key = d.isoformat()
-        stats_map[key] = {"date": key, "sleep_minutes": 0, "sessions_count": 0}
+        stats_map[key] = {
+            "date": key,
+            "sleep_minutes": 0,
+            "sessions_count": 0,
+            # Разрез по типу сна (если есть kind в note при импорте).
+            "day_sleep_minutes": 0,
+            "night_sleep_minutes": 0,
+            "day_sessions_count": 0,
+            "night_sessions_count": 0,
+        }
 
     total_sleep_minutes = 0
     total_sessions = 0
+    total_day_sleep_minutes = 0
+    total_night_sleep_minutes = 0
+    total_day_sessions = 0
+    total_night_sessions = 0
 
     for log in logs:
         if not log.end_time:
@@ -73,12 +88,34 @@ def get_tracker_stats(
             st = st.replace(tzinfo=timezone.utc)
         day_key = st.astimezone(MOSCOW_TZ).date().isoformat()
         
+        kind: Optional[str] = None
+        if log.note:
+            m = KIND_RE.search(log.note)
+            if m:
+                kind = m.group(1)
+        # Fallback для ручных логов (без note): грубая эвристика по локальному времени старта.
+        if kind is None:
+            h = st.astimezone(MOSCOW_TZ).hour
+            kind = "night" if (h >= 20 or h < 6) else "day"
+
         if day_key in stats_map:
             stats_map[day_key]["sleep_minutes"] += duration_min
             stats_map[day_key]["sessions_count"] += 1
+            if kind == "day":
+                stats_map[day_key]["day_sleep_minutes"] += duration_min
+                stats_map[day_key]["day_sessions_count"] += 1
+            else:
+                stats_map[day_key]["night_sleep_minutes"] += duration_min
+                stats_map[day_key]["night_sessions_count"] += 1
             
         total_sleep_minutes += duration_min
         total_sessions += 1
+        if kind == "day":
+            total_day_sleep_minutes += duration_min
+            total_day_sessions += 1
+        else:
+            total_night_sleep_minutes += duration_min
+            total_night_sessions += 1
 
     daily_stats = sorted(stats_map.values(), key=lambda x: x["date"])
 
@@ -87,6 +124,10 @@ def get_tracker_stats(
         "total_sleep_minutes": total_sleep_minutes,
         "total_sessions": total_sessions,
         "average_sleep_minutes": int(total_sleep_minutes / total_sessions) if total_sessions > 0 else 0,
+        "total_day_sleep_minutes": total_day_sleep_minutes,
+        "total_night_sleep_minutes": total_night_sleep_minutes,
+        "total_day_sessions": total_day_sessions,
+        "total_night_sessions": total_night_sessions,
         "daily_breakdown": daily_stats
     }
 

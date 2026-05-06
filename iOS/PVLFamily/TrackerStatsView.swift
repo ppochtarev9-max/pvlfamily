@@ -198,6 +198,10 @@ struct TrackerStats: Codable {
     let total_sleep_minutes: Int
     let total_sessions: Int
     let average_sleep_minutes: Int
+    let total_day_sleep_minutes: Int?
+    let total_night_sleep_minutes: Int?
+    let total_day_sessions: Int?
+    let total_night_sessions: Int?
     let daily_breakdown: [DailyStat]
 }
 
@@ -205,6 +209,10 @@ struct DailyStat: Codable, Identifiable {
     let date: String
     let sleep_minutes: Int
     let sessions_count: Int
+    let day_sleep_minutes: Int?
+    let night_sleep_minutes: Int?
+    let day_sessions_count: Int?
+    let night_sessions_count: Int?
     var id: String { date }
 }
 

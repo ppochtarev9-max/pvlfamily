@@ -516,3 +516,196 @@ struct TrackerSleepDistributionReportView: View {
         }
     }
 }
+
+// MARK: - Дневной vs Ночной (разрез по kind)
+
+struct TrackerDayNightReportView: View {
+    @EnvironmentObject var authManager: AuthManager
+    @State private var stats: TrackerStats?
+    @State private var isLoading = true
+    @State private var error: String?
+    @State private var windowDays: Int = 60
+
+    var body: some View {
+        Group {
+            if isLoading { ProgressView().frame(maxWidth: .infinity, minHeight: 200) }
+            else if let error { ContentUnavailableView("Ошибка", systemImage: "exclamationmark.triangle", description: Text(error)) }
+            else if let s = stats {
+                let total = totals(from: s, windowDays: windowDays)
+                if total.totalDay == 0, total.totalNight == 0, total.hasSplitData == false {
+                    ContentUnavailableView(
+                        "Нет разреза «дневной/ночной»",
+                        systemImage: "moon.circle",
+                        description: Text("Похоже, сервер ещё не отдаёт разметку сна по типу. Обновите сервер и перезагрузите приложение, либо проверьте, что в базе проставляется kind для эпизодов.")
+                    )
+                } else {
+                    reportScroll {
+                        VStack(alignment: .leading, spacing: 16) {
+                            Picker("Окно", selection: $windowDays) {
+                                Text("30д").tag(30)
+                                Text("60д").tag(60)
+                                Text("90д").tag(90)
+                            }
+                            .pickerStyle(.segmented)
+                            .onChange(of: windowDays) { _, _ in load() }
+
+                            kpiBlock(total: total)
+
+                            if #available(iOS 17.0, *) {
+                                Chart(chartPoints(from: s.daily_breakdown), id: \.id) { p in
+                                    BarMark(
+                                        x: .value("Дата", p.dayLabel),
+                                        y: .value("Минуты", p.minutes)
+                                    )
+                                    .foregroundStyle(by: .value("Сон", p.kindLabel))
+                                    .cornerRadius(3)
+                                }
+                                .chartForegroundStyleScale([
+                                    "Ночной": FamilyAppStyle.accent,
+                                    "Дневной": FamilyAppStyle.captionMuted
+                                ])
+                                .frame(height: 240)
+                            }
+
+                            Text("График показывает разрез по дням: ночной и дневной сон. Если в какие-то дни разметки нет, они будут отображаться как нули.")
+                                .font(.caption2)
+                                .foregroundStyle(FamilyAppStyle.captionMuted)
+                        }
+                    }
+                }
+            }
+        }
+        .background(FamilyAppStyle.screenBackground)
+        .navigationTitle("Дневной vs Ночной")
+        .navigationBarTitleDisplayMode(.inline)
+        .onAppear(perform: load)
+    }
+
+    private struct Totals {
+        let totalDay: Int
+        let totalNight: Int
+        let nightShare: Double
+        let dayAvg: Int
+        let nightAvg: Int
+        let hasSplitData: Bool
+    }
+
+    private func totals(from s: TrackerStats, windowDays: Int) -> Totals {
+        let fromTotalsDay = s.total_day_sleep_minutes
+        let fromTotalsNight = s.total_night_sleep_minutes
+
+        let summedDay = s.daily_breakdown.map { $0.day_sleep_minutes ?? 0 }.reduce(0, +)
+        let summedNight = s.daily_breakdown.map { $0.night_sleep_minutes ?? 0 }.reduce(0, +)
+
+        let day = fromTotalsDay ?? summedDay
+        let night = fromTotalsNight ?? summedNight
+
+        let denom = max(1, day + night)
+        let share = Double(night) / Double(denom)
+
+        let avgDay = day / max(1, windowDays)
+        let avgNight = night / max(1, windowDays)
+
+        let hasAnySplit = s.daily_breakdown.contains { ($0.day_sleep_minutes != nil) || ($0.night_sleep_minutes != nil) }
+            || (fromTotalsDay != nil) || (fromTotalsNight != nil)
+
+        return Totals(
+            totalDay: day,
+            totalNight: night,
+            nightShare: share,
+            dayAvg: avgDay,
+            nightAvg: avgNight,
+            hasSplitData: hasAnySplit
+        )
+    }
+
+    private func kpiBlock(total: Totals) -> some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack(alignment: .top) {
+                kpiCard(title: "Ночной (Σ)", value: AnalyticsFormatters.sleepDuration(total.totalNight))
+                kpiCard(title: "Дневной (Σ)", value: AnalyticsFormatters.sleepDuration(total.totalDay))
+            }
+            HStack(alignment: .top) {
+                kpiCard(title: "Доля ночного", value: percent(total.nightShare))
+                kpiCard(title: "Средне за сутки", value: "\(AnalyticsFormatters.sleepDuration(total.nightAvg)) / \(AnalyticsFormatters.sleepDuration(total.dayAvg))")
+            }
+        }
+    }
+
+    private func kpiCard(title: String, value: String) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text(title)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            Text(value)
+                .font(.title3.weight(.bold))
+                .foregroundStyle(.primary)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding()
+        .background(FamilyAppStyle.listCardFill)
+        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .strokeBorder(FamilyAppStyle.cardStroke, lineWidth: 1)
+        )
+    }
+
+    private func percent(_ v: Double) -> String {
+        let p = Int((v * 100).rounded())
+        return "\(p)%"
+    }
+
+    private struct DayNightBarPoint: Identifiable {
+        enum Kind: String { case night, day }
+        let dayLabel: String
+        let kind: Kind
+        let minutes: Int
+        var id: String { "\(dayLabel)-\(kind.rawValue)" }
+        var kindLabel: String { kind == .night ? "Ночной" : "Дневной" }
+    }
+
+    private func chartPoints(from days: [DailyStat]) -> [DayNightBarPoint] {
+        let sorted = days.sorted { $0.date < $1.date }
+        let last = Array(sorted.suffix(max(1, windowDays)))
+        var out: [DayNightBarPoint] = []
+        out.reserveCapacity(last.count * 2)
+        for d in last {
+            let dayLabel = formatDay(d.date)
+            out.append(.init(dayLabel: dayLabel, kind: .night, minutes: d.night_sleep_minutes ?? 0))
+            out.append(.init(dayLabel: dayLabel, kind: .day, minutes: d.day_sleep_minutes ?? 0))
+        }
+        return out
+    }
+
+    private func formatDay(_ iso: String) -> String {
+        let f = DateFormatter()
+        f.dateFormat = "yyyy-MM-dd"
+        f.locale = Locale(identifier: "en_US_POSIX")
+        guard let d = f.date(from: iso) else { return iso }
+        let o = DateFormatter()
+        o.dateFormat = "dd.MM"
+        o.locale = Locale(identifier: "ru_RU")
+        return o.string(from: d)
+    }
+
+    private func reportScroll<Content: View>(@ViewBuilder content: () -> Content) -> some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 16) {
+                content()
+            }
+            .padding()
+        }
+    }
+
+    private func load() {
+        isLoading = true
+        authManager.getTrackerStats(days: windowDays) { r in
+            isLoading = false
+            switch r {
+            case .success(let s): stats = s
+            case .failure(let e): error = e.localizedDescription
+            }
+        }
+    }
+}

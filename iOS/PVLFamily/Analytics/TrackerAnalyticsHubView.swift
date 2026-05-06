@@ -32,6 +32,9 @@ struct TrackerAnalyticsHubView: View {
                         } label: {
                             Label("Сон по дням (график и KPI)", systemImage: "chart.bar.xaxis")
                         }
+                        NavigationLink { TrackerDayNightReportView() } label: {
+                            Label("Дневной vs Ночной", systemImage: "moon.stars")
+                        }
                         NavigationLink { TrackerSleepTrendReportView() } label: {
                             Label("Тренд сна + среднее (30 дней)", systemImage: "chart.xyaxis.line")
                         }
@@ -81,20 +84,24 @@ struct TrackerAnalyticsHubView: View {
             if let t = todayStats {
                 let m = t.total_sleep_minutes
                 let ses = t.total_sessions
+                let split = splitLine(totalDay: t.total_day_sleep_minutes, totalNight: t.total_night_sleep_minutes)
                 snapshotCard(
                     title: "На сегодня (завершённый сон)",
                     primary: AnalyticsFormatters.sleepDuration(m),
-                    secondary: "Эпизодов: \(ses)",
+                    secondary: split != nil ? "\(split!) · эпизодов \(ses)" : "Эпизодов: \(ses)",
                     caption: TrackerSleepInsightBuilder.todayLine(sleepMinutes: m, sessions: ses)
                 )
             }
 
             if let slice = thisMonthSlice {
                 let avgSession = slice.sessions > 0 ? slice.minutes / slice.sessions : 0
+                let split = splitLine(totalDay: slice.dayMinutes, totalNight: slice.nightMinutes)
                 snapshotCard(
                     title: "В этом месяце",
                     primary: "Всего \(AnalyticsFormatters.sleepDuration(slice.minutes))",
-                    secondary: "Дней с данными: \(slice.days) · эпизодов \(slice.sessions)",
+                    secondary: split != nil
+                        ? "Дней с данными: \(slice.days) · \(split!) · эпизодов \(slice.sessions)"
+                        : "Дней с данными: \(slice.days) · эпизодов \(slice.sessions)",
                     caption: TrackerSleepInsightBuilder.monthLine(
                         totalMinutes: slice.minutes,
                         daysWithData: slice.days,
@@ -108,13 +115,14 @@ struct TrackerAnalyticsHubView: View {
         }
     }
 
-    private var thisMonthSlice: (minutes: Int, days: Int, sessions: Int)? {
+    private var thisMonthSlice: (minutes: Int, days: Int, sessions: Int, dayMinutes: Int, nightMinutes: Int)? {
         guard let s = longStats else { return nil }
         let cal = Calendar.current
         let now = Date()
         let y = cal.component(.year, from: now)
         let m = cal.component(.month, from: now)
         var min = 0, days = 0, ses = 0
+        var dayMin = 0, nightMin = 0
         for d in s.daily_breakdown {
             let parts = d.date.split(separator: "-")
             guard parts.count == 3,
@@ -122,10 +130,17 @@ struct TrackerAnalyticsHubView: View {
             if yy == y && mm == m {
                 min += d.sleep_minutes
                 ses += d.sessions_count
+                dayMin += d.day_sleep_minutes ?? 0
+                nightMin += d.night_sleep_minutes ?? 0
                 if d.sleep_minutes > 0 { days += 1 }
             }
         }
-        return (min, days, ses)
+        return (min, days, ses, dayMin, nightMin)
+    }
+
+    private func splitLine(totalDay: Int?, totalNight: Int?) -> String? {
+        guard let totalDay, let totalNight, (totalDay + totalNight) > 0 else { return nil }
+        return "ночной \(AnalyticsFormatters.sleepDuration(totalNight)) · дневной \(AnalyticsFormatters.sleepDuration(totalDay))"
     }
 
     private func snapshotCard(title: String, primary: String, secondary: String? = nil, caption: String) -> some View {

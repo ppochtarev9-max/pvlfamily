@@ -50,6 +50,9 @@ struct TrackerAnalyticsHubView: View {
                         } label: {
                             Label("Сон по дням (график и KPI)", systemImage: "chart.bar.xaxis")
                         }
+                        NavigationLink { TrackerSleepTrendReportView() } label: {
+                            Label("Тренд сна + среднее (30 дней)", systemImage: "chart.xyaxis.line")
+                        }
                         NavigationLink { TrackerCompareWeeksReportView() } label: {
                             Label("Сравнение двух недель", systemImage: "arrow.left.arrow.right")
                         }
@@ -59,6 +62,9 @@ struct TrackerAnalyticsHubView: View {
                     } header: { Text("Тренды и сравнения") }
 
                     Section {
+                        NavigationLink { TrackerSleepDistributionReportView() } label: {
+                            Label("Распределение сна (гистограмма)", systemImage: "chart.bar")
+                        }
                         NavigationLink { TrackerOutlierDaysReportView() } label: {
                             Label("Дни с необычным сном (выбросы)", systemImage: "flag.checkered.2.crossed")
                         }
@@ -280,6 +286,11 @@ struct TrackerAnalyticsHubView: View {
         isAILoading = true
         if force { llmError = nil }
         let month = thisMonthSlice
+
+        let series = buildTrackerSeries(from: longWindow.daily_breakdown)
+        let breakdowns = buildTrackerBreakdowns(from: longWindow.daily_breakdown)
+        let comparisons = buildTrackerComparisons(from: longWindow.daily_breakdown)
+
         let payload = InsightPayload(
             report_type: "tracker",
             period: "current_month",
@@ -294,6 +305,9 @@ struct TrackerAnalyticsHubView: View {
                 today.total_sleep_minutes > 0 ? "day_has_sleep" : "day_no_sleep"
             ],
             anomalies: trackerAnomalies(from: longWindow.daily_breakdown),
+            series: series.isEmpty ? nil : series,
+            breakdowns: breakdowns.isEmpty ? nil : breakdowns,
+            comparisons: comparisons.isEmpty ? nil : comparisons,
             notes: "safe_payload_only"
         )
         authManager.getInsight(kind: "tracker", payload: payload, provider: nil) { result in
@@ -312,6 +326,91 @@ struct TrackerAnalyticsHubView: View {
                 }
             }
         }
+    }
+
+    private func buildTrackerSeries(from days: [DailyStat]) -> [InsightSeries] {
+        // Серия по дням: последние 30 дней (если есть), только дни с данными.
+        let ordered = days.sorted { $0.date < $1.date }
+        let withData = ordered.filter { $0.sleep_minutes > 0 }
+        if withData.isEmpty { return [] }
+
+        let last = Array(withData.suffix(30))
+        let points = last.map { InsightPoint(t: $0.date, v: Double($0.sleep_minutes)) }
+
+        // Простейшие средние: 7 и 30 дней.
+        let last7 = Array(withData.suffix(7))
+        let avg7 = last7.isEmpty ? 0.0 : Double(last7.map(\.sleep_minutes).reduce(0, +)) / Double(last7.count)
+        let avg30 = last.isEmpty ? 0.0 : Double(last.map { $0.sleep_minutes }.reduce(0, +)) / Double(last.count)
+
+        return [
+            InsightSeries(name: "Сон по дням (мин)", points: points, unit: "minutes"),
+            InsightSeries(
+                name: "Среднее (последние 7 дней)",
+                points: [InsightPoint(t: (last7.last?.date ?? ""), v: avg7)],
+                unit: "minutes"
+            ),
+            InsightSeries(
+                name: "Среднее (последние 30 дней)",
+                points: [InsightPoint(t: (last.last?.date ?? ""), v: avg30)],
+                unit: "minutes"
+            ),
+        ]
+    }
+
+    private func buildTrackerComparisons(from days: [DailyStat]) -> [InsightComparison] {
+        let ordered = days.sorted { $0.date < $1.date }.filter { $0.sleep_minutes > 0 }
+        guard ordered.count >= 8 else { return [] }
+
+        let last14 = Array(ordered.suffix(14))
+        let prev7 = Array(last14.prefix(7))
+        let cur7 = Array(last14.suffix(7))
+        guard !prev7.isEmpty, !cur7.isEmpty else { return [] }
+
+        let prevSum = Double(prev7.map(\.sleep_minutes).reduce(0, +))
+        let curSum = Double(cur7.map(\.sleep_minutes).reduce(0, +))
+        let delta = curSum - prevSum
+        let deltaPct = prevSum > 0 ? (delta / prevSum) * 100 : nil
+
+        return [
+            InsightComparison(
+                name: "Сон: 7 дней vs предыдущие 7",
+                a_label: "последние 7",
+                a_value: curSum,
+                b_label: "предыдущие 7",
+                b_value: prevSum,
+                delta: delta,
+                delta_pct: deltaPct,
+                unit: "minutes"
+            )
+        ]
+    }
+
+    private func buildTrackerBreakdowns(from days: [DailyStat]) -> [InsightBreakdown] {
+        // Распределение длительности сна по диапазонам (только дни с данными).
+        let vals = days.map(\.sleep_minutes).filter { $0 > 0 }
+        guard vals.count >= 5 else { return [] }
+
+        func bucket(_ minutes: Int) -> String {
+            if minutes < 300 { return "<5ч" }
+            if minutes < 390 { return "5–6.5ч" }
+            if minutes < 480 { return "6.5–8ч" }
+            if minutes < 600 { return "8–10ч" }
+            return "10ч+"
+        }
+
+        var counts: [String: Int] = [:]
+        for v in vals { counts[bucket(v), default: 0] += 1 }
+        let total = Double(vals.count)
+
+        let order = ["<5ч", "5–6.5ч", "6.5–8ч", "8–10ч", "10ч+"]
+        let items: [InsightBreakdownItem] = order.compactMap { name in
+            guard let c = counts[name], c > 0 else { return nil }
+            return InsightBreakdownItem(name: name, value: Double(c), share: Double(c) / total)
+        }
+        if items.isEmpty { return [] }
+        return [
+            InsightBreakdown(name: "Распределение сна по длительности (дни)", items: items, unit: "days")
+        ]
     }
 
     private func trackerAnomalies(from days: [DailyStat]) -> [[String: Double]] {

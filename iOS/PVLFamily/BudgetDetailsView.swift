@@ -10,12 +10,36 @@ struct BudgetDetailsView: View {
     @Binding var customEndDate: Date
     @Binding var selectedGroupId: Int?      // ИЗМЕНЕНО: было categoryId
     @Binding var selectedSubcategoryId: Int?
+
+    let initialMonth: Date?
     
     @State private var stats: MonthlyStats?
     @State private var isLoading = false
-    @State private var statsMonth = Date()
+    @State private var statsMonth: Date
     @State private var isIncomeExpanded = false
     @State private var isExpenseExpanded = false
+
+    init(
+        selectedUserId: Binding<Int?>,
+        selectedDateFilter: Binding<BudgetView.DateFilter>,
+        customStartDate: Binding<Date>,
+        customEndDate: Binding<Date>,
+        selectedGroupId: Binding<Int?>,
+        selectedSubcategoryId: Binding<Int?>,
+        initialMonth: Date? = nil
+    ) {
+        _selectedUserId = selectedUserId
+        _selectedDateFilter = selectedDateFilter
+        _customStartDate = customStartDate
+        _customEndDate = customEndDate
+        _selectedGroupId = selectedGroupId
+        _selectedSubcategoryId = selectedSubcategoryId
+        self.initialMonth = initialMonth
+        let cal = Calendar.current
+        let base = initialMonth ?? Date()
+        let comps = cal.dateComponents([.year, .month], from: base)
+        _statsMonth = State(initialValue: cal.date(from: comps) ?? base)
+    }
     
     var body: some View {
         ScrollView {

@@ -547,7 +547,46 @@ struct InsightPayload: Codable {
     let metrics: [String: Double]
     let trend_flags: [String]
     let anomalies: [[String: Double]]
+    /// Дополнительные агрегаты (safe_payload): серии/разбивки/сравнения.
+    /// Поля опциональные: backend и клиент совместимы со старым контрактом.
+    let series: [InsightSeries]?
+    let breakdowns: [InsightBreakdown]?
+    let comparisons: [InsightComparison]?
     let notes: String?
+}
+
+struct InsightPoint: Codable {
+    let t: String
+    let v: Double
+}
+
+struct InsightSeries: Codable {
+    let name: String
+    let points: [InsightPoint]
+    let unit: String?
+}
+
+struct InsightBreakdownItem: Codable {
+    let name: String
+    let value: Double
+    let share: Double?
+}
+
+struct InsightBreakdown: Codable {
+    let name: String
+    let items: [InsightBreakdownItem]
+    let unit: String?
+}
+
+struct InsightComparison: Codable {
+    let name: String
+    let a_label: String
+    let a_value: Double
+    let b_label: String
+    let b_value: Double
+    let delta: Double?
+    let delta_pct: Double?
+    let unit: String?
 }
 
 struct InsightRequest: Codable {

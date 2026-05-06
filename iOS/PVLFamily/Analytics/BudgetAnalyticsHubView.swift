@@ -13,6 +13,7 @@ struct BudgetAnalyticsHubView: View {
     @State private var selectedGroupId: Int? = nil
     @State private var selectedSubcategoryId: Int? = nil
 
+    @State private var anchorMonth = Date()
     @State private var todaySummary: DashboardSummary?
     @State private var monthStats: MonthlyStats?
     @State private var previousMonthStats: MonthlyStats?
@@ -54,24 +55,34 @@ struct BudgetAnalyticsHubView: View {
 
                     Section {
                         NavigationLink {
-                            BudgetTopExpenseCategoriesView(userId: selectedUserId)
+                            BudgetTopExpenseCategoriesView(userId: selectedUserId, initialMonth: anchorMonth)
                         } label: {
                             Label("Топ категорий расхода (месяц)", systemImage: "list.number")
                         }
                         NavigationLink {
-                            BudgetMonthOverMonthView(userId: selectedUserId)
+                            BudgetExpenseStructureDonutView(userId: selectedUserId, initialMonth: anchorMonth)
+                        } label: {
+                            Label("Структура расходов (месяц)", systemImage: "chart.pie")
+                        }
+                        NavigationLink {
+                            BudgetMonthOverMonthView(userId: selectedUserId, initialMonth: anchorMonth)
                         } label: {
                             Label("Сравнение с прошлым месяцем", systemImage: "arrow.left.arrow.right")
                         }
                         NavigationLink {
-                            BudgetThreeMonthAverageView(userId: selectedUserId)
+                            BudgetThreeMonthAverageView(userId: selectedUserId, initialMonth: anchorMonth)
                         } label: {
                             Label("Средние за 3 месяца", systemImage: "function")
                         }
                         NavigationLink {
-                            BudgetSixMonthStripView(userId: selectedUserId)
+                            BudgetSixMonthStripView(userId: selectedUserId, initialMonth: anchorMonth)
                         } label: {
                             Label("6 месяцев: сальдо (тренд-таблица)", systemImage: "tablecells")
+                        }
+                        NavigationLink {
+                            BudgetSixMonthIncomeExpenseTrendView(userId: selectedUserId, initialMonth: anchorMonth)
+                        } label: {
+                            Label("6 месяцев: доходы/расходы (тренд)", systemImage: "chart.xyaxis.line")
                         }
                     } header: { Text("Тренды и сравнения") }
 
@@ -83,7 +94,8 @@ struct BudgetAnalyticsHubView: View {
                                 customStartDate: $customStartDate,
                                 customEndDate: $customEndDate,
                                 selectedGroupId: $selectedGroupId,
-                                selectedSubcategoryId: $selectedSubcategoryId
+                                selectedSubcategoryId: $selectedSubcategoryId,
+                                initialMonth: anchorMonth
                             )
                         } label: {
                             Label("Детализация по категориям (месяц)", systemImage: "chart.pie.fill")
@@ -125,6 +137,7 @@ struct BudgetAnalyticsHubView: View {
         }
         .onAppear {
             if selectedUserId == nil { selectedUserId = initialUserId }
+            anchorMonth = monthStart(Date())
             loadSnapshot()
         }
     }
@@ -135,14 +148,7 @@ struct BudgetAnalyticsHubView: View {
                 .font(.system(size: 13, weight: .semibold))
                 .foregroundStyle(FamilyAppStyle.captionMuted)
 
-            if let s = todaySummary {
-                snapshotCard(
-                    title: "На сегодня",
-                    primary: formatMoney(s.balance),
-                    secondary: nil,
-                    caption: BudgetInsightBuilder.todayLine(balance: s.balance)
-                )
-            }
+            monthSwitcher
 
             if let m = monthStats {
                 snapshotCard(
@@ -155,6 +161,31 @@ struct BudgetAnalyticsHubView: View {
             Text("ИИ: нажмите «ИИ-вывод» вверху, чтобы получить развёрнутый анализ без лишних запросов.")
                 .font(.caption2)
                 .foregroundStyle(.tertiary)
+        }
+    }
+
+    private var monthSwitcher: some View {
+        HStack(spacing: 10) {
+            Button {
+                shiftAnchorMonth(by: -1)
+            } label: {
+                Image(systemName: "chevron.left")
+            }
+            .buttonStyle(.borderless)
+
+            Text(monthLabel(anchorMonth))
+                .font(.subheadline.weight(.semibold))
+                .foregroundStyle(.secondary)
+
+            Button {
+                shiftAnchorMonth(by: 1)
+            } label: {
+                Image(systemName: "chevron.right")
+            }
+            .buttonStyle(.borderless)
+            .disabled(isAtCurrentMonth)
+
+            Spacer()
         }
     }
 
@@ -270,6 +301,45 @@ struct BudgetAnalyticsHubView: View {
         return (n < 0 ? "−" : "") + out + " ₽"
     }
 
+    private func monthStart(_ date: Date) -> Date {
+        let cal = Calendar.current
+        let comps = cal.dateComponents([.year, .month], from: date)
+        return cal.date(from: comps) ?? date
+    }
+
+    private func monthLabel(_ date: Date) -> String {
+        let cal = Calendar.current
+        let y = cal.component(.year, from: date)
+        let m = cal.component(.month, from: date)
+        let names = ["", "январь", "февраль", "март", "апрель", "май", "июнь", "июль", "август", "сентябрь", "октябрь", "ноябрь", "декабрь"]
+        let name = m >= 1 && m <= 12 ? names[m] : "\(m)"
+        return "\(name) \(y)"
+    }
+
+    private var isAtCurrentMonth: Bool {
+        let cal = Calendar.current
+        let now = Date()
+        return cal.component(.year, from: anchorMonth) == cal.component(.year, from: now) &&
+        cal.component(.month, from: anchorMonth) == cal.component(.month, from: now)
+    }
+
+    private func shiftAnchorMonth(by delta: Int) {
+        let cal = Calendar.current
+        let next = cal.date(byAdding: .month, value: delta, to: anchorMonth) ?? anchorMonth
+        let nowStart = monthStart(Date())
+        anchorMonth = min(next, nowStart)
+
+        // При смене периода считаем, что ИИ-ответ неактуален
+        hasAttemptedLLM = false
+        llmError = nil
+        llmTodaySummary = nil
+        llmMonthSummary = nil
+        llmBullets = []
+        llmProviderLabel = nil
+
+        loadSnapshot()
+    }
+
     private func loadSnapshot() {
         isLoading = true
         loadError = nil
@@ -281,8 +351,8 @@ struct BudgetAnalyticsHubView: View {
         f.locale = Locale(identifier: "en_US_POSIX")
         let dayStr = f.string(from: now)
 
-        let y = cal.component(.year, from: now)
-        let m = cal.component(.month, from: now)
+        let y = cal.component(.year, from: anchorMonth)
+        let m = cal.component(.month, from: anchorMonth)
         var py = y
         var pm = m - 1
         if pm < 1 { pm = 12; py -= 1 }
@@ -320,7 +390,7 @@ struct BudgetAnalyticsHubView: View {
 
         group.notify(queue: .main) {
             isLoading = false
-            if today == nil || curMonth == nil {
+            if curMonth == nil {
                 loadError = blockError ?? "Не удалось получить сводку"
                 return
             }
@@ -331,50 +401,153 @@ struct BudgetAnalyticsHubView: View {
     }
 
     private func runBudgetLLMRequest(force: Bool = false) {
-        guard let today = todaySummary, let month = monthStats else { return }
+        guard let month = monthStats else { return }
         if isAILoading { return }
         if !force, hasAttemptedLLM { return }
         isAILoading = true
         if force { llmError = nil }
         let prev = previousMonthStats
-        let deltaExpensePct: Double
-        if let previous = prev, abs(previous.total_expense) > 0 {
-            deltaExpensePct = (abs(month.total_expense) - abs(previous.total_expense)) / abs(previous.total_expense) * 100
-        } else {
-            deltaExpensePct = 0
-        }
-        let payload = InsightPayload(
-            report_type: "budget",
-            period: "current_month",
-            metrics: [
-                "balance_today": today.balance,
-                "income_month": month.total_income,
-                "expense_month": abs(month.total_expense),
-                "expense_delta_vs_prev_pct": deltaExpensePct
-            ],
-            trend_flags: [
-                today.balance >= 0 ? "balance_positive" : "balance_negative",
-                deltaExpensePct > 5 ? "expense_up" : "expense_stable"
-            ],
-            anomalies: [],
-            notes: "safe_payload_only"
-        )
-        authManager.getInsight(kind: "budget", payload: payload, provider: nil) { result in
-            DispatchQueue.main.async {
-                isAILoading = false
-                hasAttemptedLLM = true
-                switch result {
-                case .success(let insight):
-                    llmError = nil
-                    llmTodaySummary = insight.summary_today
-                    llmMonthSummary = insight.summary_month
-                    llmBullets = insight.bullets
-                    llmProviderLabel = insight.provider
-                case .failure(let err):
-                    llmError = err.localizedDescription
+        let todayBalance = todaySummary?.balance ?? 0
+
+        // На запрос ИИ подгружаем ещё 6 месяцев агрегатов (safe, без транзакций).
+        fetchRecentMonthlyStats(monthsBack: 6, baseDate: anchorMonth, userId: selectedUserId) { recent in
+            let deltaExpensePct: Double
+            if let previous = prev, abs(previous.total_expense) > 0 {
+                deltaExpensePct = (abs(month.total_expense) - abs(previous.total_expense)) / abs(previous.total_expense) * 100
+            } else {
+                deltaExpensePct = 0
+            }
+
+            let series = buildBudgetSeries(from: recent)
+            let breakdowns = buildBudgetBreakdowns(currentMonth: month)
+            let comparisons = buildBudgetComparisons(current: month, previous: prev)
+
+            let payload = InsightPayload(
+                report_type: "budget",
+                period: "current_month",
+                metrics: [
+                    "balance_today": todayBalance,
+                    "income_month": month.total_income,
+                    "expense_month": abs(month.total_expense),
+                    "expense_delta_vs_prev_pct": deltaExpensePct
+                ],
+                trend_flags: [
+                    todayBalance >= 0 ? "balance_positive" : "balance_negative",
+                    deltaExpensePct > 5 ? "expense_up" : "expense_stable"
+                ],
+                anomalies: [],
+                series: series.isEmpty ? nil : series,
+                breakdowns: breakdowns.isEmpty ? nil : breakdowns,
+                comparisons: comparisons.isEmpty ? nil : comparisons,
+                notes: "safe_payload_only"
+            )
+            authManager.getInsight(kind: "budget", payload: payload, provider: nil) { result in
+                DispatchQueue.main.async {
+                    isAILoading = false
+                    hasAttemptedLLM = true
+                    switch result {
+                    case .success(let insight):
+                        llmError = nil
+                        llmTodaySummary = insight.summary_today
+                        llmMonthSummary = insight.summary_month
+                        llmBullets = insight.bullets
+                        llmProviderLabel = insight.provider
+                    case .failure(let err):
+                        llmError = err.localizedDescription
+                    }
                 }
             }
         }
+    }
+
+    private func fetchRecentMonthlyStats(monthsBack: Int, baseDate: Date, userId: Int?, completion: @escaping ([MonthlyStats]) -> Void) {
+        let cal = Calendar.current
+        var d = baseDate
+        var targets: [(y: Int, m: Int)] = []
+        for _ in 0..<max(1, monthsBack) {
+            let y = cal.component(.year, from: d)
+            let m = cal.component(.month, from: d)
+            targets.append((y, m))
+            d = cal.date(byAdding: .month, value: -1, to: d) ?? d
+        }
+        let g = DispatchGroup()
+        var out: [MonthlyStats] = []
+        for t in targets {
+            g.enter()
+            authManager.getMonthlyStats(year: t.y, month: t.m, userId: userId) { r in
+                defer { g.leave() }
+                if case .success(let s) = r { out.append(s) }
+            }
+        }
+        g.notify(queue: .main) {
+            // Сортируем по времени по возрастанию (для графика/серий)
+            let sorted = out.sorted { a, b in
+                if a.year != b.year { return a.year < b.year }
+                return a.month < b.month
+            }
+            completion(sorted)
+        }
+    }
+
+    private func buildBudgetSeries(from months: [MonthlyStats]) -> [InsightSeries] {
+        guard !months.isEmpty else { return [] }
+        let pointsBalance = months.map { m in
+            InsightPoint(t: String(format: "%04d-%02d", m.year, m.month), v: m.balance)
+        }
+        let pointsExpense = months.map { m in
+            InsightPoint(t: String(format: "%04d-%02d", m.year, m.month), v: abs(m.total_expense))
+        }
+        return [
+            InsightSeries(name: "Сальдо по месяцам", points: pointsBalance, unit: "RUB"),
+            InsightSeries(name: "Расходы по месяцам", points: pointsExpense, unit: "RUB"),
+        ]
+    }
+
+    private func buildBudgetBreakdowns(currentMonth: MonthlyStats) -> [InsightBreakdown] {
+        let rows = currentMonth.details
+            .filter { $0.type == "expense" }
+            .sorted { abs($0.amount) > abs($1.amount) }
+        let top = rows.prefix(8)
+        let total = max(1.0, rows.map { abs($0.amount) }.reduce(0, +))
+        let items = top.map { row in
+            let v = abs(row.amount)
+            return InsightBreakdownItem(name: row.category_name, value: v, share: v / total)
+        }
+        if items.isEmpty { return [] }
+        return [
+            InsightBreakdown(name: "Топ расходов по категориям (месяц)", items: items, unit: "RUB")
+        ]
+    }
+
+    private func buildBudgetComparisons(current: MonthlyStats, previous: MonthlyStats?) -> [InsightComparison] {
+        guard let previous else { return [] }
+        let curExp = abs(current.total_expense)
+        let prevExp = abs(previous.total_expense)
+        let expDelta = curExp - prevExp
+        let expDeltaPct = prevExp > 0 ? (expDelta / prevExp) * 100 : nil
+
+        return [
+            InsightComparison(
+                name: "Расходы: текущий vs прошлый",
+                a_label: "текущий",
+                a_value: curExp,
+                b_label: "прошлый",
+                b_value: prevExp,
+                delta: expDelta,
+                delta_pct: expDeltaPct,
+                unit: "RUB"
+            ),
+            InsightComparison(
+                name: "Сальдо: текущий vs прошлый",
+                a_label: "текущий",
+                a_value: current.balance,
+                b_label: "прошлый",
+                b_value: previous.balance,
+                delta: current.balance - previous.balance,
+                delta_pct: nil,
+                unit: "RUB"
+            ),
+        ]
     }
 }
 

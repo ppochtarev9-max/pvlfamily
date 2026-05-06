@@ -179,6 +179,11 @@ class InsightPayload(BaseModel):
     metrics: dict = {}
     trend_flags: List[str] = []
     anomalies: List[dict] = []
+    # Дополнительные агрегаты для более глубокого анализа (safe_payload, без сырых строк)
+    # Обратная совместимость: поля опциональные.
+    series: Optional[List[dict]] = None
+    breakdowns: Optional[List[dict]] = None
+    comparisons: Optional[List[dict]] = None
     notes: Optional[str] = None
 
 

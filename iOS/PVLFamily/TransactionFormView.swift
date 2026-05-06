@@ -37,7 +37,7 @@ struct TransactionFormView: View {
             _amount = State(initialValue: String(format: "%.2f", abs(t.amount)))
             _type = State(initialValue: t.transaction_type)
             _note = State(initialValue: t.description ?? "")
-            _date = State(initialValue: Date())
+            _date = State(initialValue: PVLDateParsing.parse(t.date) ?? Date())
             
             if let gid = findGroupId(forSubcategoryId: t.category_id, in: categoryGroups) {
                 _selectedGroupId = State(initialValue: gid)

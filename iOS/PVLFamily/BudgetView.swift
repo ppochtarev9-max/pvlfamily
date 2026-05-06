@@ -396,13 +396,14 @@ struct BudgetView: View {
                 TransactionFormView(
                     isPresented: $showingAddSheet,
                     categoryGroups: categoryGroups,          // Обновлено
-                    transactionToEdit: editingTransactionId != nil ? allTransactions.first { $0.id == editingTransactionId } : nil,
+                    transactionToEdit: editingTransactionId != nil ? editingTransaction : nil,
                     onSave: { id, amount, type, catId, desc, date in
                         let finalCategoryId = catId ?? 17
                         saveTransaction(id: id, amount: amount, type: type, categoryId: finalCategoryId, description: desc, date: date)
                     },
                     onDelete: deleteTransaction
                 )
+                .id(editingTransactionId ?? -1)
             }
             .alert("Ошибка", isPresented: $showErrorAlert) {
                 Button("OK", role: .cancel) { }
@@ -442,6 +443,7 @@ struct BudgetView: View {
     
     @State private var showingAddSheet = false
     @State private var editingTransactionId: Int? = nil
+    @State private var editingTransaction: Transaction? = nil
     
     func colorForType(_ type: String) -> Color {
         switch type { case "income": return .green; case "expense": return .red; default: return .primary }
@@ -693,8 +695,17 @@ struct BudgetView: View {
         }.resume()
     }
     
-    func startNewTransaction() { editingTransactionId = nil; showingAddSheet = true }
-    func editTransaction(_ t: Transaction) { editingTransactionId = t.id; showingAddSheet = true }
+    func startNewTransaction() {
+        editingTransactionId = nil
+        editingTransaction = nil
+        showingAddSheet = true
+    }
+
+    func editTransaction(_ t: Transaction) {
+        editingTransactionId = t.id
+        editingTransaction = t
+        showingAddSheet = true
+    }
     
     func saveTransaction(id: Int?, amount: Double, type: String, categoryId: Int, description: String, date: Date) {
         guard let token = authManager.token else {
@@ -808,11 +819,12 @@ struct TransactionCard: View {
                     .font(.system(size: 15, weight: .semibold))
                     .lineLimit(1)
 
-                Text((t.description?.isEmpty == false ? t.description! : defaultSubtitle))
+                Text(subtitleText)
                     .font(.system(size: 12))
                     .italic()
                     .foregroundColor(FamilyAppStyle.captionMuted)
-                    .lineLimit(1)
+                    .lineLimit(2)
+                    .truncationMode(.tail)
             }
 
             Spacer()
@@ -853,6 +865,13 @@ struct TransactionCard: View {
 
     private var defaultSubtitle: String {
         t.transaction_type == "income" ? "Поступление" : "Трата"
+    }
+
+    private var subtitleText: String {
+        let base = defaultSubtitle
+        let c = (t.description ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        if c.isEmpty { return base }
+        return "\(base) | \(c)"
     }
 
     private var timeText: String {

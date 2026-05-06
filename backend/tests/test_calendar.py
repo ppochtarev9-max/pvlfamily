@@ -1,9 +1,9 @@
-def get_token(client, name):
-    resp = client.post("/auth/login", json={"name": name})
+def get_token(client, name, password):
+    resp = client.post("/auth/login", json={"name": name, "password": password})
     return resp.json()["access_token"]
 
 def test_create_event(client, test_user):
-    token = get_token(client, test_user["name"])
+    token = get_token(client, test_user["name"], test_user["password"])
     headers = {"Authorization": f"Bearer {token}"}
     
     response = client.post("/calendar/events", json={
@@ -19,7 +19,7 @@ def test_create_event(client, test_user):
     assert response.json()["title"] == "День рождения"
 
 def test_get_events(client, test_user):
-    token = get_token(client, test_user["name"])
+    token = get_token(client, test_user["name"], test_user["password"])
     headers = {"Authorization": f"Bearer {token}"}
     
     response = client.get("/calendar/events", headers=headers)
@@ -27,7 +27,7 @@ def test_get_events(client, test_user):
     assert isinstance(response.json(), list)
 
 def test_delete_event(client, test_user):
-    token = get_token(client, test_user["name"])
+    token = get_token(client, test_user["name"], test_user["password"])
     headers = {"Authorization": f"Bearer {token}"}
     
     ev_resp = client.post("/calendar/events", json={

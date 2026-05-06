@@ -13,6 +13,7 @@ struct BudgetAnalyticsHubView: View {
     @State private var selectedGroupId: Int? = nil
     @State private var selectedSubcategoryId: Int? = nil
 
+    @State private var anchorMonth = Date()
     @State private var todaySummary: DashboardSummary?
     @State private var monthStats: MonthlyStats?
     @State private var previousMonthStats: MonthlyStats?
@@ -54,32 +55,32 @@ struct BudgetAnalyticsHubView: View {
 
                     Section {
                         NavigationLink {
-                            BudgetTopExpenseCategoriesView(userId: selectedUserId)
+                            BudgetTopExpenseCategoriesView(userId: selectedUserId, initialMonth: anchorMonth)
                         } label: {
                             Label("Топ категорий расхода (месяц)", systemImage: "list.number")
                         }
                         NavigationLink {
-                            BudgetExpenseStructureDonutView(userId: selectedUserId)
+                            BudgetExpenseStructureDonutView(userId: selectedUserId, initialMonth: anchorMonth)
                         } label: {
                             Label("Структура расходов (месяц)", systemImage: "chart.pie")
                         }
                         NavigationLink {
-                            BudgetMonthOverMonthView(userId: selectedUserId)
+                            BudgetMonthOverMonthView(userId: selectedUserId, initialMonth: anchorMonth)
                         } label: {
                             Label("Сравнение с прошлым месяцем", systemImage: "arrow.left.arrow.right")
                         }
                         NavigationLink {
-                            BudgetThreeMonthAverageView(userId: selectedUserId)
+                            BudgetThreeMonthAverageView(userId: selectedUserId, initialMonth: anchorMonth)
                         } label: {
                             Label("Средние за 3 месяца", systemImage: "function")
                         }
                         NavigationLink {
-                            BudgetSixMonthStripView(userId: selectedUserId)
+                            BudgetSixMonthStripView(userId: selectedUserId, initialMonth: anchorMonth)
                         } label: {
                             Label("6 месяцев: сальдо (тренд-таблица)", systemImage: "tablecells")
                         }
                         NavigationLink {
-                            BudgetSixMonthIncomeExpenseTrendView(userId: selectedUserId)
+                            BudgetSixMonthIncomeExpenseTrendView(userId: selectedUserId, initialMonth: anchorMonth)
                         } label: {
                             Label("6 месяцев: доходы/расходы (тренд)", systemImage: "chart.xyaxis.line")
                         }
@@ -93,7 +94,8 @@ struct BudgetAnalyticsHubView: View {
                                 customStartDate: $customStartDate,
                                 customEndDate: $customEndDate,
                                 selectedGroupId: $selectedGroupId,
-                                selectedSubcategoryId: $selectedSubcategoryId
+                                selectedSubcategoryId: $selectedSubcategoryId,
+                                initialMonth: anchorMonth
                             )
                         } label: {
                             Label("Детализация по категориям (месяц)", systemImage: "chart.pie.fill")
@@ -135,6 +137,7 @@ struct BudgetAnalyticsHubView: View {
         }
         .onAppear {
             if selectedUserId == nil { selectedUserId = initialUserId }
+            anchorMonth = monthStart(Date())
             loadSnapshot()
         }
     }
@@ -145,14 +148,7 @@ struct BudgetAnalyticsHubView: View {
                 .font(.system(size: 13, weight: .semibold))
                 .foregroundStyle(FamilyAppStyle.captionMuted)
 
-            if let s = todaySummary {
-                snapshotCard(
-                    title: "На сегодня",
-                    primary: formatMoney(s.balance),
-                    secondary: nil,
-                    caption: BudgetInsightBuilder.todayLine(balance: s.balance)
-                )
-            }
+            monthSwitcher
 
             if let m = monthStats {
                 snapshotCard(
@@ -165,6 +161,31 @@ struct BudgetAnalyticsHubView: View {
             Text("ИИ: нажмите «ИИ-вывод» вверху, чтобы получить развёрнутый анализ без лишних запросов.")
                 .font(.caption2)
                 .foregroundStyle(.tertiary)
+        }
+    }
+
+    private var monthSwitcher: some View {
+        HStack(spacing: 10) {
+            Button {
+                shiftAnchorMonth(by: -1)
+            } label: {
+                Image(systemName: "chevron.left")
+            }
+            .buttonStyle(.borderless)
+
+            Text(monthLabel(anchorMonth))
+                .font(.subheadline.weight(.semibold))
+                .foregroundStyle(.secondary)
+
+            Button {
+                shiftAnchorMonth(by: 1)
+            } label: {
+                Image(systemName: "chevron.right")
+            }
+            .buttonStyle(.borderless)
+            .disabled(isAtCurrentMonth)
+
+            Spacer()
         }
     }
 
@@ -280,6 +301,45 @@ struct BudgetAnalyticsHubView: View {
         return (n < 0 ? "−" : "") + out + " ₽"
     }
 
+    private func monthStart(_ date: Date) -> Date {
+        let cal = Calendar.current
+        let comps = cal.dateComponents([.year, .month], from: date)
+        return cal.date(from: comps) ?? date
+    }
+
+    private func monthLabel(_ date: Date) -> String {
+        let cal = Calendar.current
+        let y = cal.component(.year, from: date)
+        let m = cal.component(.month, from: date)
+        let names = ["", "январь", "февраль", "март", "апрель", "май", "июнь", "июль", "август", "сентябрь", "октябрь", "ноябрь", "декабрь"]
+        let name = m >= 1 && m <= 12 ? names[m] : "\(m)"
+        return "\(name) \(y)"
+    }
+
+    private var isAtCurrentMonth: Bool {
+        let cal = Calendar.current
+        let now = Date()
+        return cal.component(.year, from: anchorMonth) == cal.component(.year, from: now) &&
+        cal.component(.month, from: anchorMonth) == cal.component(.month, from: now)
+    }
+
+    private func shiftAnchorMonth(by delta: Int) {
+        let cal = Calendar.current
+        let next = cal.date(byAdding: .month, value: delta, to: anchorMonth) ?? anchorMonth
+        let nowStart = monthStart(Date())
+        anchorMonth = min(next, nowStart)
+
+        // При смене периода считаем, что ИИ-ответ неактуален
+        hasAttemptedLLM = false
+        llmError = nil
+        llmTodaySummary = nil
+        llmMonthSummary = nil
+        llmBullets = []
+        llmProviderLabel = nil
+
+        loadSnapshot()
+    }
+
     private func loadSnapshot() {
         isLoading = true
         loadError = nil
@@ -291,8 +351,8 @@ struct BudgetAnalyticsHubView: View {
         f.locale = Locale(identifier: "en_US_POSIX")
         let dayStr = f.string(from: now)
 
-        let y = cal.component(.year, from: now)
-        let m = cal.component(.month, from: now)
+        let y = cal.component(.year, from: anchorMonth)
+        let m = cal.component(.month, from: anchorMonth)
         var py = y
         var pm = m - 1
         if pm < 1 { pm = 12; py -= 1 }
@@ -330,7 +390,7 @@ struct BudgetAnalyticsHubView: View {
 
         group.notify(queue: .main) {
             isLoading = false
-            if today == nil || curMonth == nil {
+            if curMonth == nil {
                 loadError = blockError ?? "Не удалось получить сводку"
                 return
             }
@@ -341,15 +401,16 @@ struct BudgetAnalyticsHubView: View {
     }
 
     private func runBudgetLLMRequest(force: Bool = false) {
-        guard let today = todaySummary, let month = monthStats else { return }
+        guard let month = monthStats else { return }
         if isAILoading { return }
         if !force, hasAttemptedLLM { return }
         isAILoading = true
         if force { llmError = nil }
         let prev = previousMonthStats
+        let todayBalance = todaySummary?.balance ?? 0
 
         // На запрос ИИ подгружаем ещё 6 месяцев агрегатов (safe, без транзакций).
-        fetchRecentMonthlyStats(monthsBack: 6, userId: selectedUserId) { recent in
+        fetchRecentMonthlyStats(monthsBack: 6, baseDate: anchorMonth, userId: selectedUserId) { recent in
             let deltaExpensePct: Double
             if let previous = prev, abs(previous.total_expense) > 0 {
                 deltaExpensePct = (abs(month.total_expense) - abs(previous.total_expense)) / abs(previous.total_expense) * 100
@@ -365,13 +426,13 @@ struct BudgetAnalyticsHubView: View {
                 report_type: "budget",
                 period: "current_month",
                 metrics: [
-                    "balance_today": today.balance,
+                    "balance_today": todayBalance,
                     "income_month": month.total_income,
                     "expense_month": abs(month.total_expense),
                     "expense_delta_vs_prev_pct": deltaExpensePct
                 ],
                 trend_flags: [
-                    today.balance >= 0 ? "balance_positive" : "balance_negative",
+                    todayBalance >= 0 ? "balance_positive" : "balance_negative",
                     deltaExpensePct > 5 ? "expense_up" : "expense_stable"
                 ],
                 anomalies: [],
@@ -399,9 +460,9 @@ struct BudgetAnalyticsHubView: View {
         }
     }
 
-    private func fetchRecentMonthlyStats(monthsBack: Int, userId: Int?, completion: @escaping ([MonthlyStats]) -> Void) {
+    private func fetchRecentMonthlyStats(monthsBack: Int, baseDate: Date, userId: Int?, completion: @escaping ([MonthlyStats]) -> Void) {
         let cal = Calendar.current
-        var d = Date()
+        var d = baseDate
         var targets: [(y: Int, m: Int)] = []
         for _ in 0..<max(1, monthsBack) {
             let y = cal.component(.year, from: d)

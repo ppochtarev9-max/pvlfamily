@@ -38,6 +38,16 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="Удалить существующие транзакции пользователя перед импортом.",
     )
+    parser.add_argument(
+        "--wipe-all-transactions",
+        action="store_true",
+        help="ОПАСНО: удалить ВСЕ транзакции ВСЕХ пользователей перед импортом (требует --yes, если не dry-run).",
+    )
+    parser.add_argument(
+        "--yes",
+        action="store_true",
+        help="Подтверждение опасных операций (нужно для --wipe-all-transactions в режиме записи).",
+    )
     return parser.parse_args()
 
 
@@ -63,9 +73,26 @@ def main() -> None:
             print(f"❌ Пользователь '{args.user}' не найден")
             return
 
+        if args.wipe_all_transactions and args.replace_user_transactions:
+            print("❌ Нельзя одновременно использовать --wipe-all-transactions и --replace-user-transactions")
+            return
+
+        if args.wipe_all_transactions and (not args.dry_run) and (not args.yes):
+            print("❌ Для удаления ВСЕХ транзакций нужен флаг подтверждения --yes")
+            print("   Пример: python import_history.py --wipe-all-transactions --yes")
+            return
+
+        if args.wipe_all_transactions:
+            total_tx = db.query(models.Transaction).count()
+            print(f"🧨 Удаление ВСЕХ транзакций в БД: {total_tx}")
+            if not args.dry_run:
+                db.query(models.Transaction).delete(synchronize_session=False)
+                db.commit()
+
         if args.replace_user_transactions:
-            print("🧹 Удаление существующих транзакций пользователя...")
-            db.query(models.Transaction).filter(models.Transaction.created_by_user_id == user.id).delete()
+            n = db.query(models.Transaction).filter(models.Transaction.created_by_user_id == user.id).count()
+            print(f"🧹 Удаление существующих транзакций пользователя: {n}")
+            db.query(models.Transaction).filter(models.Transaction.created_by_user_id == user.id).delete(synchronize_session=False)
             if not args.dry_run:
                 db.commit()
 
@@ -81,13 +108,44 @@ def main() -> None:
         skipped_rows = 0
 
         with open(args.csv, "r", encoding=enc) as f:
-            reader = csv.DictReader(f, delimiter=";")
-            for row_num, row in enumerate(reader, start=2):
-                date_str = (row.get("Дата") or "").strip()
-                kind_str = (row.get("Вид") or "").strip()
-                group_name = (row.get("Категория") or "").strip()
-                sub_name = (row.get("Подкатегория") or "").strip()
-                amount_str = row.get("Сумма", "0")
+            # В некоторых экспортерах перед заголовком могут быть пустые строки вида ';;;;;;'.
+            # Найдём реальную строку заголовка (где есть «Дата» и «Категория») и начнём читать после неё.
+            raw_reader = csv.reader(f, delimiter=";")
+            header: list[str] | None = None
+            header_row_num = 0
+            for row_num, row in enumerate(raw_reader, start=1):
+                if not row or all((c or "").strip() == "" for c in row):
+                    continue
+                if any((c or "").strip() == "Дата" for c in row) and any((c or "").strip() == "Категория" for c in row):
+                    header = [(c or "").strip() for c in row]
+                    header_row_num = row_num
+                    break
+
+            if not header:
+                print("❌ Не найден заголовок CSV (ожидались колонки «Дата» и «Категория»).")
+                return
+
+            # Часто CSV идёт с ведущим ';' → первая колонка без имени. Уберём её.
+            if header and header[0] == "":
+                header = header[1:]
+
+            for row_num, row in enumerate(raw_reader, start=header_row_num + 1):
+                if not row or all((c or "").strip() == "" for c in row):
+                    continue
+                if header and len(row) > 0 and (row[0] or "").strip() == "" and len(row) == len(header) + 1:
+                    # Аналогично: ведущий пустой столбец в данных.
+                    row = row[1:]
+                if len(row) < len(header):
+                    skipped_rows += 1
+                    continue
+
+                row_dict = {header[i]: (row[i] if i < len(row) else "") for i in range(len(header))}
+                date_str = (row_dict.get("Дата") or "").strip()
+                kind_str = (row_dict.get("Вид") or "").strip()
+                group_name = (row_dict.get("Категория") or "").strip()
+                sub_name = (row_dict.get("Подкатегория") or "").strip()
+                amount_str = row_dict.get("Сумма", "0")
+                comment = (row_dict.get("Комментарий") or "").strip()
 
                 if not date_str or not group_name:
                     skipped_rows += 1
@@ -150,7 +208,7 @@ def main() -> None:
                     amount=amount,
                     transaction_type=tx_type,
                     category_id=sub.id,
-                    description=None,
+                    description=comment or None,
                     date=tx_date,
                     created_by_user_id=user.id,
                     creator_name_snapshot=user.name,

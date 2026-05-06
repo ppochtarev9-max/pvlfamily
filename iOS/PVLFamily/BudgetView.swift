@@ -145,6 +145,18 @@ struct BudgetView: View {
     private var todaySectionId: String? {
         transactionDaySections.first(where: { Calendar.current.isDateInToday($0.day) })?.id
     }
+
+    private var nearestToTodaySectionId: String? {
+        guard !transactionDaySections.isEmpty else { return nil }
+        let today = Calendar.current.startOfDay(for: Date())
+        return transactionDaySections
+            .min(by: { abs($0.day.timeIntervalSince(today)) < abs($1.day.timeIntervalSince(today)) })?
+            .id
+    }
+
+    private var initialScrollTargetSectionId: String? {
+        todaySectionId ?? nearestToTodaySectionId
+    }
     
     enum DateFilter: String, CaseIterable {
         case all = "Все даты"
@@ -335,10 +347,18 @@ struct BudgetView: View {
                             .listSectionSpacing(8)
                             .scrollContentBackground(.hidden)
                             .onAppear {
-                                guard !didAutoScrollToToday, let todayId = todaySectionId else { return }
+                                guard !didAutoScrollToToday, let targetId = initialScrollTargetSectionId else { return }
                                 didAutoScrollToToday = true
                                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
-                                    withAnimation(.easeInOut) { proxy.scrollTo(todayId, anchor: .top) }
+                                    withAnimation(.easeInOut) { proxy.scrollTo(targetId, anchor: .top) }
+                                }
+                            }
+                            .onChange(of: transactionDaySections.count) { _, _ in
+                                // Данные часто приходят после первого render — доскроллим один раз, когда секции появились.
+                                guard !didAutoScrollToToday, let targetId = initialScrollTargetSectionId else { return }
+                                didAutoScrollToToday = true
+                                DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
+                                    withAnimation(.easeInOut) { proxy.scrollTo(targetId, anchor: .top) }
                                 }
                             }
                             .overlay(alignment: .bottomTrailing) {

@@ -15,6 +15,7 @@ struct TrackerAnalyticsHubView: View {
     @State private var llmMonthSummary: String?
     @State private var llmBullets: [String] = []
     @State private var llmProviderLabel: String?
+    @State private var aiQuestion: String = ""
     @State private var isLoading = true
     @State private var loadError: String?
 
@@ -132,6 +133,8 @@ struct TrackerAnalyticsHubView: View {
 
     private var aiInsightPanel: some View {
         VStack(alignment: .leading, spacing: 12) {
+            aiQuestionBlock
+
             if isAILoading {
                 HStack(spacing: 8) {
                     ProgressView()
@@ -195,6 +198,57 @@ struct TrackerAnalyticsHubView: View {
             RoundedRectangle(cornerRadius: 16, style: .continuous)
                 .stroke(FamilyAppStyle.cardStroke, lineWidth: 1)
         )
+    }
+
+    private var aiQuestionBlock: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text("Вопрос к ИИ")
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(FamilyAppStyle.captionMuted)
+
+            TextField("Например: «Почему последние 2 недели сон хуже?»", text: $aiQuestion, axis: .vertical)
+                .textFieldStyle(.roundedBorder)
+                .lineLimit(1...4)
+
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 8) {
+                    ForEach(trackerQuestionChips, id: \.self) { chip in
+                        Button(chip) {
+                            aiQuestion = chip
+                            runTrackerLLMRequest(force: true, question: chip)
+                        }
+                        .font(.caption)
+                        .buttonStyle(.bordered)
+                    }
+                }
+            }
+
+            HStack(spacing: 10) {
+                Button {
+                    runTrackerLLMRequest(force: true, question: aiQuestion)
+                } label: {
+                    Label("Спросить", systemImage: "paperplane.fill")
+                }
+                .buttonStyle(.borderedProminent)
+                .disabled(aiQuestion.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || isAILoading)
+
+                Button("Очистить") {
+                    aiQuestion = ""
+                }
+                .buttonStyle(.bordered)
+                .disabled(isAILoading)
+            }
+        }
+    }
+
+    private var trackerQuestionChips: [String] {
+        [
+            "Почему последние 2 недели сон хуже/лучше, чем предыдущие?",
+            "В какие дни недели сон обычно лучше?",
+            "Есть ли выбросы по короткому сну и как часто они случаются?",
+            "Какой у меня средний сон за 7 и 30 дней и куда движется тренд?",
+            "Какие 3 простых рекомендации можно попробовать на этой неделе?"
+        ]
     }
 
     private var thisMonthSlice: (minutes: Int, days: Int, sessions: Int)? {
@@ -279,13 +333,14 @@ struct TrackerAnalyticsHubView: View {
         }
     }
 
-    private func runTrackerLLMRequest(force: Bool = false) {
+    private func runTrackerLLMRequest(force: Bool = false, question: String? = nil) {
         guard let today = todayStats, let longWindow = longStats else { return }
         if isAILoading { return }
         if !force, hasAttemptedLLM { return }
         isAILoading = true
         if force { llmError = nil }
         let month = thisMonthSlice
+        let q = question?.trimmingCharacters(in: .whitespacesAndNewlines)
 
         let series = buildTrackerSeries(from: longWindow.daily_breakdown)
         let breakdowns = buildTrackerBreakdowns(from: longWindow.daily_breakdown)
@@ -310,7 +365,15 @@ struct TrackerAnalyticsHubView: View {
             comparisons: comparisons.isEmpty ? nil : comparisons,
             notes: "safe_payload_only"
         )
-        authManager.getInsight(kind: "tracker", payload: payload, provider: nil) { result in
+        authManager.getInsight(
+            kind: "tracker",
+            payload: payload,
+            provider: nil,
+            question: (q?.isEmpty == true) ? nil : q,
+            anchorMonth: nil,
+            windowMonths: nil,
+            userId: nil
+        ) { result in
             DispatchQueue.main.async {
                 isAILoading = false
                 hasAttemptedLLM = true

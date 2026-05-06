@@ -190,6 +190,11 @@ class InsightPayload(BaseModel):
 class InsightRequest(BaseModel):
     payload: InsightPayload
     provider: Optional[str] = None  # openai|anthropic|deepseek|gigachat|qwen|auto
+    # Доп. параметры для режима Q/A и server-built payload (обратная совместимость: опционально)
+    question: Optional[str] = None
+    anchor_month: Optional[str] = None  # "YYYY-MM"
+    window_months: Optional[int] = None
+    user_id: Optional[int] = None
 
 
 class InsightResponse(BaseModel):

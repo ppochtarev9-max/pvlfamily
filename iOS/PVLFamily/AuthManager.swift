@@ -592,6 +592,10 @@ struct InsightComparison: Codable {
 struct InsightRequest: Codable {
     let payload: InsightPayload
     let provider: String?
+    let question: String?
+    let anchor_month: String?
+    let window_months: Int?
+    let user_id: Int?
 }
 
 struct InsightResponse: Codable {
@@ -759,10 +763,21 @@ extension AuthManager {
         kind: String,
         payload: InsightPayload,
         provider: String? = nil,
+        question: String? = nil,
+        anchorMonth: String? = nil,
+        windowMonths: Int? = nil,
+        userId: Int? = nil,
         completion: @escaping (Result<InsightResponse, Error>) -> Void
     ) {
         let safeKind = (kind == "tracker") ? "tracker" : "budget"
-        let reqBody = InsightRequest(payload: payload, provider: provider)
+        let reqBody = InsightRequest(
+            payload: payload,
+            provider: provider,
+            question: question,
+            anchor_month: anchorMonth,
+            window_months: windowMonths,
+            user_id: userId
+        )
         guard let token = token else { completion(.failure(APIError.unauthorized)); return }
         guard let url = URL(string: "\(baseURL)/insights/\(safeKind)") else { completion(.failure(APIError.invalidURL)); return }
         var req = URLRequest(url: url)

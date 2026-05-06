@@ -64,6 +64,24 @@ enum PVLDateParsing {
         guard !s0.isEmpty else { return nil }
         if let cached = parseCache[s0] { return cached }
 
+        // Важно: timestamps из нашего API часто приходят *без* timezone (без `Z`/offset),
+        // но подразумевают локальное время. Принудительное добавление `Z` превращает их в UTC
+        // и сдвигает сутки → ломает группировку по дням и `isDateInToday`.
+        if s0.contains("T") {
+            let hasTz = s0.contains("Z")
+                || s0.range(of: #"[+-]\d{2}:\d{2}$"#, options: .regularExpression) != nil
+            if !hasTz {
+                // Пробуем строго локальный парсинг до ISO8601 (который требует TZ).
+                for fmt in ["yyyy-MM-dd'T'HH:mm:ss.SSSSSS", "yyyy-MM-dd'T'HH:mm:ss.SSS", "yyyy-MM-dd'T'HH:mm:ss"] {
+                    posixDateFormatter.dateFormat = fmt
+                    if let d = posixDateFormatter.date(from: s0) {
+                        cachePut(s0, d)
+                        return d
+                    }
+                }
+            }
+        }
+
         if let d = isoWithFractionalSeconds.date(from: s0) {
             cachePut(s0, d)
             return d
@@ -71,21 +89,6 @@ enum PVLDateParsing {
         if let d = isoNoFractionalSeconds.date(from: s0) {
             cachePut(s0, d)
             return d
-        }
-        if s0.contains("T") {
-            let hasTz = s0.contains("Z")
-                || s0.range(of: #"[+-]\d{2}:\d{2}$"#, options: .regularExpression) != nil
-            if !hasTz {
-                let withZ = s0 + "Z"
-                if let d = isoWithZAndFractionalSeconds.date(from: withZ) {
-                    cachePut(s0, d)
-                    return d
-                }
-                if let d = isoWithZNoFractionalSeconds.date(from: withZ) {
-                    cachePut(s0, d)
-                    return d
-                }
-            }
         }
         for fmt in [
             "yyyy-MM-dd'T'HH:mm:ss.SSSSSS",

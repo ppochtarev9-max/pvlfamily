@@ -46,6 +46,9 @@ struct BudgetView: View {
     // Скролл к «Сегодня» в списке операций
     @State private var didAutoScrollToToday = false
     @State private var visibleSectionId: String? = nil
+    @State private var pendingAutoScrollWorkItem: DispatchWorkItem? = nil
+    @State private var didAutoScrollLoadMoreAttempts = 0
+    private let autoScrollMaxLoadMoreAttempts = 8
 
     // Вычисляемые свойства для фильтров
     var availableGroups: [CategoryGroup] {
@@ -132,7 +135,7 @@ struct BudgetView: View {
             let prefix = total >= 0 ? "+₽ " : "−₽ "
             let summary = prefix + String(format: "%.0f", abs(total))
             return TransactionDaySection(
-                id: "\(day.timeIntervalSince1970)",
+                id: String(Int64(day.timeIntervalSince1970)),
                 day: day,
                 title: title,
                 summary: summary,
@@ -150,12 +153,45 @@ struct BudgetView: View {
         guard !transactionDaySections.isEmpty else { return nil }
         let today = Calendar.current.startOfDay(for: Date())
         return transactionDaySections
-            .min(by: { abs($0.day.timeIntervalSince(today)) < abs($1.day.timeIntervalSince(today)) })?
+            .min(by: { a, b in
+                let da = abs(a.day.timeIntervalSince(today))
+                let db = abs(b.day.timeIntervalSince(today))
+                if da != db { return da < db }
+                return a.day > b.day
+            })?
             .id
     }
 
     private var initialScrollTargetSectionId: String? {
         todaySectionId ?? nearestToTodaySectionId
+    }
+
+    private var transactionSectionsSignature: String {
+        "\(transactionDaySections.count)|\(transactionDaySections.first?.id ?? "")|\(transactionDaySections.last?.id ?? "")"
+    }
+
+    private func scheduleAutoScrollIfNeeded(proxy: ScrollViewProxy) {
+        guard !didAutoScrollToToday else { return }
+        guard !transactionDaySections.isEmpty else { return }
+
+        // Если в текущем окне данных нет «Сегодня» (например, сверху много будущих транзакций),
+        // догружаем страницы, пока «Сегодня» не появится или пока не достигнем лимита попыток.
+        if todaySectionId == nil, hasMoreTransactions, !isLoadingMoreTransactions, didAutoScrollLoadMoreAttempts < autoScrollMaxLoadMoreAttempts {
+            didAutoScrollLoadMoreAttempts += 1
+            loadMoreTransactionsIfNeeded()
+            return
+        }
+
+        guard let targetId = initialScrollTargetSectionId else { return }
+
+        pendingAutoScrollWorkItem?.cancel()
+        let work = DispatchWorkItem {
+            guard !didAutoScrollToToday else { return }
+            didAutoScrollToToday = true
+            withAnimation(.easeInOut) { proxy.scrollTo(targetId, anchor: .top) }
+        }
+        pendingAutoScrollWorkItem = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.15, execute: work)
     }
     
     enum DateFilter: String, CaseIterable {
@@ -347,19 +383,10 @@ struct BudgetView: View {
                             .listSectionSpacing(8)
                             .scrollContentBackground(.hidden)
                             .onAppear {
-                                guard !didAutoScrollToToday, let targetId = initialScrollTargetSectionId else { return }
-                                didAutoScrollToToday = true
-                                DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
-                                    withAnimation(.easeInOut) { proxy.scrollTo(targetId, anchor: .top) }
-                                }
+                                scheduleAutoScrollIfNeeded(proxy: proxy)
                             }
-                            .onChange(of: transactionDaySections.count) { _, _ in
-                                // Данные часто приходят после первого render — доскроллим один раз, когда секции появились.
-                                guard !didAutoScrollToToday, let targetId = initialScrollTargetSectionId else { return }
-                                didAutoScrollToToday = true
-                                DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
-                                    withAnimation(.easeInOut) { proxy.scrollTo(targetId, anchor: .top) }
-                                }
+                            .onChange(of: transactionSectionsSignature) { _, _ in
+                                scheduleAutoScrollIfNeeded(proxy: proxy)
                             }
                             .overlay(alignment: .bottomTrailing) {
                                 if let todayId = todaySectionId,
